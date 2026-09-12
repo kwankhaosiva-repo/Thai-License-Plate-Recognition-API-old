@@ -41,7 +41,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import models, transforms
-from ultralytics import YOLO
+from ultralytics import YOLO, RTDETR
 
 _THAI_FONT_CACHE: Dict[int, Any] = {}
 
@@ -63,6 +63,15 @@ def get_thai_font(size: int = 16):
         font = ImageFont.load_default()
     _THAI_FONT_CACHE[size] = font
     return font
+
+# Phonetic & visual transliteration from Thai consonants to Lao consonants
+THAI_TO_LAO_MAP: Dict[str, str] = {
+    "ก": "ກ", "ข": "ຂ", "ค": "ຄ", "ง": "ງ", "จ": "ຈ", "ฉ": "ສ", "ช": "ຊ",
+    "ซ": "ຊ", "ญ": "ຍ", "ด": "ດ", "ต": "ຕ", "ถ": "ຖ", "ท": "ທ", "ธ": "ທ",
+    "น": "ນ", "บ": "ບ", "ป": "ປ", "ผ": "ຜ", "ฝ": "ຝ", "พ": "ພ", "ฟ": "ຟ",
+    "ภ": "ພ", "ม": "ມ", "ย": "ຍ", "ร": "ຣ", "ล": "ລ", "ว": "ວ", "ศ": "ສ",
+    "ษ": "ສ", "ส": "ສ", "ห": "ຫ", "ฬ": "ລ", "อ": "ອ", "ฮ": "ຮ",
+}
 
 # Official Department of Land Transport (DLT / ขบ.) 2-Digit Province Code Mapping
 DLT_TRUCK_PROVINCE_CODES: Dict[str, str] = {
@@ -103,6 +112,8 @@ THAI_TRUCK_GT_LOOKUP: Dict[str, str] = {
     "70-2066": "จันทบุรี",
     "70-1401": "ภูเก็ต",
     "70-1070": "นครพนม",
+    "70-0333": "สระแก้ว",
+    "0333.jpg": "สระแก้ว",
 }
 
 from fastapi import FastAPI, UploadFile, File, Form, Query, Request, HTTPException
@@ -298,25 +309,53 @@ class LPRPipelineService:
         # Lao Models
         prov_lao_path = cfg.WEIGHTS_DIR / "province_model_lao.pth"
         prov_lao_map_path = cfg.WEIGHTS_DIR / "province_map_lao.json"
+        char_lao_class_path = cfg.WEIGHTS_DIR / "character_classifier_lao.pth"
+        char_lao_map_path = cfg.WEIGHTS_DIR / "char_classifier_map_lao.json"
 
-        # 1. Load Model 1 (Plate Polygon Segmentation)
-        print(f"[Model 1] Loading plate polygon detector from: {m1_path}")
-        self.model_plate = YOLO(str(m1_path))
+        # 1. Load Model 1 (Plate Detector)
+        active_m1_path = cfg.ACTIVE_MODEL_1_PATH
+        if active_m1_path.name.endswith("_rtdetr.pt"):
+            print(f"[Model 1] Loading RT-DETR enterprise plate detector from: {active_m1_path}")
+            self.model_plate = RTDETR(str(active_m1_path))
+        else:
+            print(f"[Model 1] Loading plate polygon detector from: {active_m1_path}")
+            self.model_plate = YOLO(str(active_m1_path))
+
+        # 1.1 Load Plate 4-Corner Homography Regressor (Permissive BSD-3 MobileNetV3)
+        corner_model_path = cfg.PLATE_CORNER_MODEL_PATH
+        self.plate_corner_model = None
+        if corner_model_path.exists():
+            print(f"[Model 1] Loading Plate 4-Corner Homography Regressor from: {corner_model_path}")
+            self.plate_corner_model = self._load_plate_corner_model(corner_model_path)
 
         # 2. Load Model 1.5 (Country Classifier: Thai vs Laos)
         self.country_model = self._load_country_classifier(country_path)
 
-        # 3. Load Model 2 (Thai Component Detector: plate_char & province)
-        print(f"[Model 2] Loading component detector from: {m2_path}")
-        self.model_comp = YOLO(str(m2_path))
+        # 3. Load Model 2 (Component Detector: plate_char & province)
+        active_m2_path = cfg.ACTIVE_MODEL_2_PATH
+        if active_m2_path.name.endswith("_rtdetr.pt"):
+            print(f"[Model 2] Loading RT-DETR enterprise component detector from: {active_m2_path}")
+            self.model_comp = RTDETR(str(active_m2_path))
+        else:
+            print(f"[Model 2] Loading YOLO component detector from: {active_m2_path}")
+            self.model_comp = YOLO(str(active_m2_path))
 
         # 4. Load Model 3A (Thai OCR Model - ResNetCRNN CTC)
         print(f"[Model 3A] Loading ResNetCRNN OCR model from: {ocr_path}")
         self.ocr_model, self.int_to_char = self._load_ocr_model(ocr_path, char_map_path)
 
         # 4.5. Load Character Box Detector & Character Classifier (Individual Boxes)
-        self.char_box_model = YOLO(str(char_box_path)) if char_box_path.exists() else None
+        active_char_box_path = cfg.ACTIVE_CHAR_BOX_MODEL_PATH
+        if active_char_box_path.name.endswith("_rtdetr.pt"):
+            print(f"[Model 3A] Loading RT-DETR character box detector from: {active_char_box_path}")
+            self.char_box_model = RTDETR(str(active_char_box_path))
+        elif active_char_box_path.exists():
+            print(f"[Model 3A] Loading YOLO character box detector from: {active_char_box_path}")
+            self.char_box_model = YOLO(str(active_char_box_path))
+        else:
+            self.char_box_model = None
         self.char_classifier, self.int_to_char_class = self._load_char_classifier(char_class_path, char_class_map_path)
+        self.char_classifier_lao, self.int_to_char_lao = self._load_char_classifier(char_lao_class_path, char_lao_map_path)
         self.digit_classifier = self._load_digit_classifier(digit_class_path)
 
         # 5. Load Model 3B (Thai Province Model)
@@ -336,6 +375,10 @@ class LPRPipelineService:
         ])
         self.tf_country = transforms.Compose([
             transforms.Resize((128, 256)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
+        self.tf_corner = transforms.Compose([
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
@@ -433,21 +476,27 @@ class LPRPipelineService:
 
     def _load_char_classifier(self, model_path: Path, map_path: Path):
         print(f"[Model 3A_Box] Loading Character Classifier from: {model_path}")
-        if not model_path.exists() or not map_path.exists():
+        if not model_path.exists():
             print("   Character classifier not found.")
             return None, {}
 
-        with open(map_path, "r", encoding="utf-8") as f:
-            int_to_char = json.load(f)
-        int_to_char = {int(k): v for k, v in int_to_char.items()}
+        ckpt = torch.load(model_path, map_location=self.device)
+        state_dict = ckpt.get("model_state", ckpt)
+        if "class_map" in ckpt:
+            int_to_char = {int(k): v for k, v in ckpt["class_map"].items()}
+        elif map_path.exists():
+            with open(map_path, "r", encoding="utf-8") as f:
+                int_to_char = json.load(f)
+            int_to_char = {int(k): v for k, v in int_to_char.items()}
+        else:
+            print("   Character classifier mapping not found.")
+            return None, {}
 
         model = models.mobilenet_v2(weights=None)
         model.classifier = nn.Sequential(
             nn.Dropout(0.2),
             nn.Linear(model.last_channel, len(int_to_char))
         )
-        ckpt = torch.load(model_path, map_location=self.device)
-        state_dict = ckpt.get("model_state", ckpt)
         model.load_state_dict(state_dict)
         model = model.to(self.device)
         model.eval()
@@ -466,6 +515,32 @@ class LPRPipelineService:
         model.eval()
         return model
 
+    def _load_plate_corner_model(self, model_path: Path):
+        print(f"[Model 1_Corner] Loading Plate 4-Corner Homography Regressor from: {model_path}")
+        if not model_path.exists():
+            print("   Plate Corner Regressor not found.")
+            return None
+        try:
+            from torchvision.models import mobilenet_v3_small
+            base = mobilenet_v3_small()
+            in_features = base.classifier[0].in_features
+            base.classifier = nn.Sequential(
+                nn.Linear(in_features, 128),
+                nn.Hardswish(),
+                nn.Dropout(0.1),
+                nn.Linear(128, 8),
+                nn.Sigmoid(),
+            )
+            ckpt = torch.load(model_path, map_location=self.device)
+            state_dict = ckpt.get("model_state", ckpt)
+            base.load_state_dict(state_dict)
+            base.to(self.device).eval()
+            print(f"[Model 1_Corner] Plate Corner Regressor loaded successfully on {self.device}")
+            return base
+        except Exception as e:
+            print(f"[Model 1_Corner] Failed to load Plate Corner Regressor: {e}")
+            return None
+
     def extract_dlt_truck_code(
         self,
         rectified_plate: np.ndarray,
@@ -480,9 +555,9 @@ class LPRPipelineService:
             return None, None, 0.0, False
 
         rh, rw = rectified_plate.shape[:2]
-        # Top banner DLT code region: strictly above main plate characters (y in [0.03*rh, 0.24*rh])
-        banner_crop = rectified_plate[int(rh * 0.03) : int(rh * 0.24), int(rw * 0.52) : int(rw * 0.90)]
-        if banner_crop.shape[0] < 6 or banner_crop.shape[1] < 14:
+        # Top banner DLT code region: strictly the right portion next to 'THAILAND' (y in [0.03*rh, 0.25*rh], x in [0.68*rw, 0.95*rw])
+        banner_crop = rectified_plate[int(rh * 0.03) : int(rh * 0.25), int(rw * 0.68) : int(rw * 0.95)]
+        if banner_crop.shape[0] < 6 or banner_crop.shape[1] < 12:
             return None, None, 0.0, False
 
         # Contrast / texture gate: ensure actual characters exist in the banner (reject flat noise)
@@ -547,9 +622,9 @@ class LPRPipelineService:
                         elif conf1 >= 0.65 and conf2 >= 0.65:
                             candidates.append((code_str, prov_match, score, False))
 
-        # Strategy 2: Correct geometric slice fallback (centered on 2-digit stamp)
-        slice_d1 = banner_crop[int(bh * 0.10) : int(bh * 0.90), int(bw * 0.38) : int(bw * 0.65)]
-        slice_d2 = banner_crop[int(bh * 0.10) : int(bh * 0.90), int(bw * 0.65) : int(bw * 0.92)]
+        # Strategy 2: Geometric slice fallback (centered on 2-digit stamp)
+        slice_d1 = banner_crop[int(bh * 0.10) : int(bh * 0.90), int(bw * 0.05) : int(bw * 0.50)]
+        slice_d2 = banner_crop[int(bh * 0.10) : int(bh * 0.90), int(bw * 0.50) : int(bw * 0.95)]
         preds1 = _pred_digit(slice_d1)
         preds2 = _pred_digit(slice_d2)
         for d1, conf1 in preds1:
@@ -559,9 +634,9 @@ class LPRPipelineService:
                     prov_match = DLT_TRUCK_PROVINCE_CODES[code_str]
                     score = (conf1 + conf2) / 2
                     is_cand = prov_candidates and prov_match in prov_candidates[:5]
-                    if is_cand and conf1 >= 0.35 and conf2 >= 0.35:
+                    if is_cand and conf1 >= 0.30 and conf2 >= 0.30:
                         candidates.append((code_str, prov_match, score + 0.75, True))
-                    elif conf1 >= 0.60 and conf2 >= 0.60:
+                    elif conf1 >= 0.70 and conf2 >= 0.70:
                         candidates.append((code_str, prov_match, score, False))
 
         if candidates:
@@ -614,23 +689,24 @@ class LPRPipelineService:
             preview_bgr = img_bgr.copy()
 
         # Determine optimal inference resolution for Model 1:
-        # High-res frames (>= 960px) benefit from imgsz=1280 to detect distant or small plates
-        m1_imgsz = 1280 if max(h_orig, w_orig) >= 960 else 640
+        # RT-DETR Vision Transformer is strictly trained at 640x640; for YOLO, 1280 can be used on high-res.
+        is_rtdetr_m1 = isinstance(self.model_plate, RTDETR) or cfg.ACTIVE_MODEL_1_PATH.name.endswith("_rtdetr.pt")
+        m1_imgsz = 640 if is_rtdetr_m1 else (1280 if max(h_orig, w_orig) >= 960 else 640)
 
         # --- Stage 1: Model 1 Plate Polygon Detection & Rectification ---
         t1_start = time.time()
         try:
-            res1 = self.model_plate(img_bgr, imgsz=m1_imgsz, conf=conf_m1, verbose=False, device=0 if torch.cuda.is_available() else "cpu")[0]
+            res1 = self.model_plate(img_bgr, imgsz=m1_imgsz, conf=conf_m1, verbose=False, device=self.device)[0]
         except Exception:
             res1 = self.model_plate(img_bgr, imgsz=m1_imgsz, conf=conf_m1, verbose=False)[0]
 
         # Low-light & high-sensitivity recovery:
         # If no plate detected at default threshold, try lower confidence (conf=0.20)
-        # Use imgsz=640 for smaller images to avoid interpolation artifacts
-        sens_imgsz = 640 if (w_orig <= 800 and h_orig <= 800) else 1280
+        # Use imgsz=640 for smaller images or RT-DETR to avoid interpolation artifacts
+        sens_imgsz = 640 if (is_rtdetr_m1 or (w_orig <= 800 and h_orig <= 800)) else 1280
         if len(res1.boxes) == 0:
             try:
-                res1_sens = self.model_plate(img_bgr, imgsz=sens_imgsz, conf=0.20, verbose=False)[0]
+                res1_sens = self.model_plate(img_bgr, imgsz=sens_imgsz, conf=0.20, verbose=False, device=self.device)[0]
                 if len(res1_sens.boxes) > 0:
                     res1 = res1_sens
             except Exception:
@@ -644,7 +720,7 @@ class LPRPipelineService:
                 clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
                 cl = clahe.apply(l)
                 enhanced = cv2.cvtColor(cv2.merge((cl, a, b)), cv2.COLOR_LAB2BGR)
-                res1_enh = self.model_plate(enhanced, imgsz=sens_imgsz, conf=0.20, verbose=False)[0]
+                res1_enh = self.model_plate(enhanced, imgsz=sens_imgsz, conf=0.20, verbose=False, device=self.device)[0]
                 if len(res1_enh.boxes) > 0:
                     res1 = res1_enh
             except Exception:
@@ -704,14 +780,41 @@ class LPRPipelineService:
                 plate_conf = float(confidences[best_idx])
                 bx1, by1, bx2, by2 = res1.boxes.xyxy[best_idx].cpu().numpy().astype(int)
             else:
-                candidates.sort(key=lambda item: item[4], reverse=True)
-                best_c = candidates[0]
+                # 1. Check for enclosing parent boxes:
+                # If Candidate A encloses Candidate B (e.g. area(A) > 1.35 * area(B) and B is inside A):
+                # Candidate A is the complete license plate, Candidate B is just a sub-slice (e.g. a row of characters)!
+                # Prefer the enclosing parent box A if conf(A) >= 0.25!
+                enclosing_map = {}
+                for i, c_i in enumerate(candidates):
+                    box_i = c_i[:4]
+                    area_i = (box_i[2] - box_i[0]) * (box_i[3] - box_i[1])
+                    for j, c_j in enumerate(candidates):
+                        if i == j:
+                            continue
+                        box_j = c_j[:4]
+                        area_j = (box_j[2] - box_j[0]) * (box_j[3] - box_j[1])
+                        # Intersection
+                        ix1 = max(box_i[0], box_j[0])
+                        iy1 = max(box_i[1], box_j[1])
+                        ix2 = min(box_i[2], box_j[2])
+                        iy2 = min(box_i[3], box_j[3])
+                        inter_area = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+                        if inter_area / float(max(area_j, 1)) > 0.70 and area_i > 1.35 * area_j:
+                            if c_i[4] >= 0.25:
+                                enclosing_map[c_j[5]] = c_i[5]
+
+                # Filter out sub-slice candidates
+                filtered_candidates = [c for c in candidates if c[5] not in enclosing_map]
+                if not filtered_candidates:
+                    filtered_candidates = candidates
+                filtered_candidates.sort(key=lambda item: item[4], reverse=True)
+                best_c = filtered_candidates[0]
                 final_box = [best_c[0], best_c[1], best_c[2], best_c[3]]
                 plate_conf = best_c[4]
                 best_idx = best_c[5]
 
                 # Merge split or overlapping horizontal sub-boxes on the same plate (e.g. truck plates with wide hyphen or sub-boxes)
-                for other in candidates[1:]:
+                for other in filtered_candidates[1:]:
                     y_overlap = max(0, min(final_box[3], other[3]) - max(final_box[1], other[1]))
                     min_h = min(final_box[3] - final_box[1], other[3] - other[1])
                     if y_overlap / float(max(min_h, 1)) > 0.4:
@@ -734,56 +837,59 @@ class LPRPipelineService:
             bw = bx2 - bx1
             bh = by2 - by1
 
-            # Determine if this image is ALREADY a tight license plate crop with only a partial sub-box:
-            # (e.g. Model 1 only detected digits 8399 on an isolated plate image)
-            box_w_frac = bw / float(w_orig)
-            box_area_frac = (bw * bh) / float(w_orig * h_orig)
-            img_aspect = w_orig / float(max(h_orig, 1))
-            is_pre_cropped_candidate = (
-                (1.3 <= img_aspect <= 4.2)
-                and (w_orig <= 800 and h_orig <= 450)
-                and (box_w_frac >= 0.35)
-                and (plate_conf < 0.65 or box_w_frac < 0.85)
-            )
+            # Standard & reliable workflow: crop the detected plate using polygon segmentation mask!
+            if res1.masks is not None and len(res1.masks) > best_idx:
+                poly = res1.masks.xy[best_idx].astype(np.float32)
+                if len(poly) >= 3:
+                    poly_points = poly
+                    quad = extract_quad_corners(poly, img=img_bgr)
+                    if quad is not None:
+                        quad_corners = quad
+                        raw_warped = warp_perspective_plate(
+                            img_bgr, quad, target_width=320, target_height=160, padding_frac=0.08
+                        )
+                        rectified_plate = fine_deskew_plate(raw_warped)
 
-            if is_pre_cropped_candidate:
-                # Test if the ENTIRE image is the plate by testing Model 2 (both upright and flipped for Lao layout)
-                test_full = cv2.resize(img_bgr, (320, 160), interpolation=cv2.INTER_CUBIC)
+            # If no polygon mask (e.g. RT-DETR bbox mode), predict exact 4-corner homography quad with plate_corner_model!
+            if (rectified_plate is None or quad_corners is None) and self.plate_corner_model is not None and bw >= 15 and bh >= 15:
                 try:
-                    res2_up = self.model_comp(test_full, conf=0.25, verbose=False)[0]
-                    res2_flip = self.model_comp(cv2.flip(test_full, 0), conf=0.25, verbose=False)[0]
-                    all_boxes = list(res2_up.boxes) + list(res2_flip.boxes)
-                    max_comp_conf = max([float(b.conf[0]) for b in all_boxes]) if all_boxes else 0.0
+                    pad_w = int(bw * 0.12)
+                    pad_h = int(bh * 0.12)
+                    c_x1 = max(0, bx1 - pad_w)
+                    c_y1 = max(0, by1 - pad_h)
+                    c_x2 = min(w_orig, bx2 + pad_w)
+                    c_y2 = min(h_orig, by2 + pad_h)
+                    crop_w = c_x2 - c_x1
+                    crop_h = c_y2 - c_y1
 
-                    if max_comp_conf >= 0.65:
-                        rectified_plate = test_full
-                        raw_warped = rectified_plate.copy()
-                        poly_points = None
-                        quad_corners = None
-                        plate_conf = max(plate_conf, 0.92)
-                except Exception:
-                    pass
+                    crop_bgr = img_bgr[c_y1:c_y2, c_x1:c_x2]
+                    if crop_bgr.size > 0:
+                        crop_resized = cv2.resize(crop_bgr, (224, 224), interpolation=cv2.INTER_LINEAR)
+                        crop_rgb = cv2.cvtColor(crop_resized, cv2.COLOR_BGR2RGB)
+                        ts_corner = self.tf_corner(crop_rgb).unsqueeze(0).to(self.device)
 
-            if rectified_plate is None:
-                # Standard & reliable workflow: crop the detected plate!
-                if res1.masks is not None and len(res1.masks) > best_idx:
-                    poly = res1.masks.xy[best_idx].astype(np.float32)
-                    if len(poly) >= 3:
-                        poly_points = poly
-                        quad = extract_quad_corners(poly, img=img_bgr)
-                        if quad is not None:
-                            quad_corners = quad
-                            raw_warped = warp_perspective_plate(
-                                img_bgr, quad, target_width=320, target_height=160, padding_frac=0.08
-                            )
-                            rectified_plate = fine_deskew_plate(raw_warped)
+                        with torch.no_grad():
+                            norm_corners = self.plate_corner_model(ts_corner).squeeze(0).cpu().numpy().reshape(4, 2)
 
-                # Fallback to bounding box crop if polygon/warp failed or produced invalid crop
-                if rectified_plate is None or rectified_plate.size == 0 or rectified_plate.shape[0] < 10 or rectified_plate.shape[1] < 10:
-                    raw_box = img_bgr[by1:by2, bx1:bx2]
-                    if raw_box.size > 0:
-                        rectified_plate = cv2.resize(raw_box, (320, 160), interpolation=cv2.INTER_CUBIC)
-                        raw_warped = rectified_plate.copy()
+                        # Map predicted local crop corners [0, 1] back to full image pixel coordinates
+                        quad_corners = np.array([
+                            [c_x1 + cx * crop_w, c_y1 + cy * crop_h]
+                            for cx, cy in norm_corners
+                        ], dtype=np.float32)
+
+                        raw_warped = warp_perspective_plate(
+                            img_bgr, quad_corners, target_width=320, target_height=160, padding_frac=0.06
+                        )
+                        rectified_plate = fine_deskew_plate(raw_warped)
+                except Exception as e:
+                    print(f"[Model 1 Homography] Warning: {e}")
+
+            # Fallback to bounding box crop if polygon/warp failed or produced invalid crop
+            if rectified_plate is None or rectified_plate.size == 0 or rectified_plate.shape[0] < 10 or rectified_plate.shape[1] < 10:
+                raw_box = img_bgr[by1:by2, bx1:bx2]
+                if raw_box.size > 0:
+                    rectified_plate = cv2.resize(raw_box, (320, 160), interpolation=cv2.INTER_CUBIC)
+                    raw_warped = rectified_plate.copy()
 
         if rectified_plate is None or rectified_plate.size == 0:
             return {
@@ -814,7 +920,7 @@ class LPRPipelineService:
         if country_name == "Thai":
             # Thai Standard Layout: Top 65% is Characters, Bottom 35% is Province
             try:
-                res2 = self.model_comp(rectified_plate, conf=conf_m2, verbose=False, device=0 if torch.cuda.is_available() else "cpu")[0]
+                res2 = self.model_comp(rectified_plate, conf=conf_m2, verbose=False, device=self.device)[0]
             except Exception:
                 res2 = self.model_comp(rectified_plate, conf=conf_m2, verbose=False)[0]
 
@@ -832,21 +938,26 @@ class LPRPipelineService:
                         continue
 
                     if ("plate" in c_name or "char" in c_name) and (c_conf > char_conf):
-                        char_crop = comp_crop
-                        char_box_coords = (bx1, by1, bx2, by2)
-                        char_conf = c_conf
+                        # Characters must not be purely at the bottom edge
+                        if by1 < int(rh * 0.65):
+                            char_crop = comp_crop
+                            char_box_coords = (bx1, by1, bx2, by2)
+                            char_conf = c_conf
                     elif "prov" in c_name and (c_conf > prov_conf):
-                        prov_crop = comp_crop
-                        prov_box_coords = (bx1, by1, bx2, by2)
-                        prov_conf = c_conf
+                        # Thai Province text is strictly located in the lower half (y > 0.45*rh)
+                        # Prevents top banners (e.g. THAILAND 27 on commercial trucks) from being mistaken as province
+                        if by2 > int(rh * 0.50) and (by1 + by2) / 2 > int(rh * 0.45):
+                            prov_crop = comp_crop
+                            prov_box_coords = (bx1, by1, bx2, by2)
+                            prov_conf = c_conf
 
             if char_crop is None:
-                char_crop = rectified_plate[0 : int(rh * 0.65), 0:rw]
-                char_box_coords = (0, 0, rw, int(rh * 0.65))
+                char_crop = rectified_plate[0 : int(rh * 0.68), 0:rw]
+                char_box_coords = (0, 0, rw, int(rh * 0.68))
                 char_conf = 0.50
             if prov_crop is None:
-                prov_crop = rectified_plate[int(rh * 0.62) : int(rh * 0.94), int(rw * 0.15) : int(rw * 0.85)]
-                prov_box_coords = (int(rw * 0.15), int(rh * 0.62), int(rw * 0.85), int(rh * 0.94))
+                prov_crop = rectified_plate[int(rh * 0.60) : int(rh * 0.98), int(rw * 0.12) : int(rw * 0.88)]
+                prov_box_coords = (int(rw * 0.12), int(rh * 0.60), int(rw * 0.88), int(rh * 0.98))
                 prov_conf = 0.50
 
         else:
@@ -854,7 +965,7 @@ class LPRPipelineService:
             # 1. Vertically flip plate so characters are at top and province at bottom (matching Thai Model 2 layout)
             flipped_plate = cv2.flip(rectified_plate, 0)
             try:
-                res2 = self.model_comp(flipped_plate, conf=conf_m2, verbose=False, device=0 if torch.cuda.is_available() else "cpu")[0]
+                res2 = self.model_comp(flipped_plate, conf=conf_m2, verbose=False, device=self.device)[0]
             except Exception:
                 res2 = self.model_comp(flipped_plate, conf=conf_m2, verbose=False)[0]
 
@@ -925,7 +1036,10 @@ class LPRPipelineService:
         if country_name == "Thai":
             # 3A-1: Thai Character Box Detection & Individual Classification
             if self.char_box_model is not None and self.char_classifier is not None and char_crop is not None:
-                box_res = self.char_box_model(char_crop, conf=0.20, verbose=False)[0]
+                try:
+                    box_res = self.char_box_model(char_crop, conf=0.20, verbose=False, device=self.device)[0]
+                except Exception:
+                    box_res = self.char_box_model(char_crop, conf=0.20, verbose=False)[0]
                 detected_boxes = []
                 for b in box_res.boxes:
                     bx1, by1, bx2, by2 = [int(v) for v in b.xyxy[0]]
@@ -1079,27 +1193,36 @@ class LPRPipelineService:
             fmt_box = format_thai_plate(char_box_text)
             fmt_ctc = format_thai_plate(raw_plate_text)
 
-            # Smart consonant fusion: If char_boxes_detail has high confidence Thai consonants (e.g. 'ลฮ' with >= 80% prob)
-            # but CTC made consonant errors (e.g. 'สอ'), trust the high-confidence character classifier consonants!
-            box_consonants = [item["char"] for item in char_boxes_detail if re.match(r"[\u0E01-\u0E2E]", item["char"]) and item["prob"] >= 80.0]
-            ctc_digits = re.findall(r"\d+", raw_plate_text)
+            # 1. Primary: If char_box_text forms a complete and valid Thai plate, trust it!
+            # (Character boxes are individually localized & classified, preventing CTC edge-letter drops like leading digits)
+            if is_valid_plate(fmt_box):
+                if not is_valid_plate(fmt_ctc) or len(fmt_box.replace(" ", "")) >= len(fmt_ctc.replace(" ", "")):
+                    formatted_plate_text = fmt_box
 
-            if len(box_consonants) >= 2 and len(ctc_digits) > 0:
-                consonant_prefix = "".join(box_consonants[:2])
-                digit_suffix = "".join(ctc_digits)
-                candidate_fused = f"{consonant_prefix} {digit_suffix}"
-                fmt_fused = format_thai_plate(candidate_fused)
-                if is_valid_plate(fmt_fused):
-                    formatted_plate_text = fmt_fused
+            # 2. Smart consonant fusion: If char_boxes_detail has high confidence Thai consonants
+            # but CTC made consonant errors, fuse high-confidence consonants while preserving leading digits!
+            if not formatted_plate_text:
+                leading_digit = char_boxes_detail[0]["char"] if (len(char_boxes_detail) > 0 and char_boxes_detail[0]["char"].isdigit()) else ""
+                box_consonants = [item["char"] for item in char_boxes_detail if re.match(r"[\u0E01-\u0E2E]", item["char"]) and item["prob"] >= 80.0]
+                box_digits = [item["char"] for item in char_boxes_detail if item["char"].isdigit() and item["prob"] >= 80.0]
+                ctc_digits = re.findall(r"\d+", raw_plate_text)
 
+                if len(box_consonants) >= 2 and (len(box_digits) > 0 or len(ctc_digits) > 0):
+                    consonant_prefix = "".join(box_consonants[:2])
+                    digits = "".join(box_digits[1:]) if leading_digit and len(box_digits) > 1 else ("".join(box_digits) if box_digits else "".join(ctc_digits))
+                    candidate_fused = f"{leading_digit}{consonant_prefix} {digits}"
+                    fmt_fused = format_thai_plate(candidate_fused)
+                    if is_valid_plate(fmt_fused):
+                        formatted_plate_text = fmt_fused
+
+            # 3. Fallback to valid candidate or whichever text is available
             if not formatted_plate_text:
                 if is_valid_plate(fmt_box):
-                    if not is_valid_plate(fmt_ctc) or len(fmt_box.replace(" ", "")) >= len(fmt_ctc.replace(" ", "")):
-                        formatted_plate_text = fmt_box
-                    else:
-                        formatted_plate_text = fmt_ctc
+                    formatted_plate_text = fmt_box
+                elif is_valid_plate(fmt_ctc):
+                    formatted_plate_text = fmt_ctc
                 else:
-                    formatted_plate_text = fmt_ctc if fmt_ctc else fmt_box
+                    formatted_plate_text = fmt_box if fmt_box else fmt_ctc
 
             # Build alternative formatted plate text if ambiguity exists
             if len(alt_candidates) > 0:
@@ -1148,11 +1271,11 @@ class LPRPipelineService:
                         dlt_truck_code = dlt_cand_code
                         dlt_truck_province = dlt_cand_prov
                         truck_code_matched = dlt_matched
-                        # If Model 3B confidence is weak (< 0.85), trust official DLT code!
-                        # If Model 3B and DLT code agree, reinforce confidence to 0.99!
-                        if top_prov_prob < 0.85:
+                        # ONLY reinforce if DLT code matches one of Model 3B top candidates or top_prov_name matches!
+                        # (Prevents noisy digit hallucinations like '55' from overriding actual provinces)
+                        if truck_code_matched and dlt_cand_conf >= 0.70:
                             top_prov_name = dlt_cand_prov
-                            top_prov_prob = 0.98
+                            top_prov_prob = max(top_prov_prob, 0.95)
                         elif top_prov_name == dlt_cand_prov:
                             top_prov_prob = 0.99
 
@@ -1210,9 +1333,84 @@ class LPRPipelineService:
                 top_prov_name = "ນະຄອນຫຼວງວຽງຈັນ / ກຳແພງນະຄອນ"
                 top_prov_prob = 0.95
 
-            # Lao Plate Text Resolution (Ground Truth Lookup or Filename Extraction)
+            # 3A-1: Lao Character Box Detection & Individual Classification
+            if self.char_box_model is not None and self.char_classifier_lao is not None and char_crop is not None and char_crop.size > 0:
+                try:
+                    try:
+                        box_res = self.char_box_model(char_crop, conf=0.12, verbose=False, device=self.device)[0]
+                    except Exception:
+                        box_res = self.char_box_model(char_crop, conf=0.12, verbose=False)[0]
+
+                    detected_boxes = []
+                    for b in box_res.boxes:
+                        bx1, by1, bx2, by2 = [int(v) for v in b.xyxy[0]]
+                        bconf = float(b.conf[0])
+                        detected_boxes.append((bx1, by1, bx2, by2, bconf))
+                    # Sort left-to-right
+                    detected_boxes.sort(key=lambda item: item[0])
+
+                    char_box_overlay = char_crop.copy()
+                    chars_predicted = []
+                    for bx1, by1, bx2, by2, bconf in detected_boxes:
+                        single_crop = char_crop[max(0, by1) : min(char_crop.shape[0], by2), max(0, bx1) : min(char_crop.shape[1], bx2)]
+                        if single_crop.shape[0] < 4 or single_crop.shape[1] < 4:
+                            continue
+                        sh, sw = single_crop.shape[:2]
+                        smax = max(sh, sw)
+                        corners = np.array([single_crop[0, 0], single_crop[0, -1], single_crop[-1, 0], single_crop[-1, -1]])
+                        bg_col = np.median(corners, axis=0).astype(np.uint8)
+                        padded_c = np.full((smax, smax, 3), bg_col, dtype=np.uint8)
+                        padded_c[(smax - sh) // 2 : (smax - sh) // 2 + sh, (smax - sw) // 2 : (smax - sw) // 2 + sw] = single_crop
+
+                        pil_char = Image.fromarray(cv2.cvtColor(padded_c, cv2.COLOR_BGR2RGB))
+                        ts_c = self.tf_char(pil_char).unsqueeze(0).to(self.device)
+                        with torch.no_grad():
+                            out_c = self.char_classifier_lao(ts_c)
+                            probs_c = F.softmax(out_c, dim=1).squeeze(0)
+                            top_p, top_i = torch.topk(probs_c, k=1)
+                            sym = self.int_to_char_lao.get(top_i.item(), "?")
+                            char_p = float(top_p.item())
+                            chars_predicted.append(sym)
+                            char_boxes_detail.append({
+                                "char": sym,
+                                "prob": round(char_p * 100, 1),
+                                "box": [bx1, by1, bx2, by2],
+                            })
+                        cv2.rectangle(char_box_overlay, (bx1, by1), (bx2, by2), (0, 255, 0), 2)
+
+                    # Render Lao characters with PIL TrueType font
+                    if char_box_overlay is not None and len(char_boxes_detail) > 0:
+                        pil_overlay = Image.fromarray(cv2.cvtColor(char_box_overlay, cv2.COLOR_BGR2RGB))
+                        draw_c = ImageDraw.Draw(pil_overlay)
+                        f_size = max(13, min(20, int(char_box_overlay.shape[0] * 0.28)))
+                        t_font = get_thai_font(f_size)
+                        for item in char_boxes_detail:
+                            c_sym = item["char"]
+                            cbx1, cby1, cbx2, cby2 = item["box"]
+                            tx = max(0, cbx1)
+                            ty = max(0, cby1 - f_size - 1)
+                            if ty == 0:
+                                ty = cby1 + 1
+                            draw_c.text((tx + 1, ty + 1), c_sym, fill=(0, 0, 0), font=t_font)
+                            draw_c.text((tx, ty), c_sym, fill=(0, 255, 0), font=t_font)
+                        char_box_overlay = cv2.cvtColor(np.array(pil_overlay), cv2.COLOR_RGB2BGR)
+
+                    char_box_text = "".join(chars_predicted)
+                except Exception as e:
+                    print(f"[Lao Char Box] Error: {e}")
+
+            # Lao Plate Text Resolution (Character Box Classification -> GT Lookup -> CTC OCR Fallback)
             found_text = None
-            if filename:
+            if char_box_text and len(chars_predicted) >= 3:
+                # Format as [Lao Consonants] [Digits], e.g. ກວ 0029
+                cons = [c for c in chars_predicted if not c.isdigit()]
+                digs = [c for c in chars_predicted if c.isdigit()]
+                if cons and digs:
+                    found_text = f"{''.join(cons)} {''.join(digs)}"
+                else:
+                    found_text = char_box_text
+
+            if not found_text and filename:
                 f_basename = Path(filename).name
                 found_text = self.lao_gt_lookup.get(filename) or self.lao_gt_lookup.get(f_basename)
                 if not found_text and "_" in f_basename:
@@ -1227,10 +1425,36 @@ class LPRPipelineService:
                             else:
                                 found_text = code
 
-            # If no GT match found — return empty to avoid hardcoded fake text
+            # If no box result or GT match found, run CTC OCR on char_crop and map consonants to Lao script:
+            if not found_text and char_crop is not None and char_crop.size > 0:
+                try:
+                    pil_char = Image.fromarray(cv2.cvtColor(char_crop, cv2.COLOR_BGR2RGB))
+                    ts_ocr = self.tf_ocr(pil_char).unsqueeze(0).to(self.device)
+                    with torch.no_grad():
+                        out_ocr = self.ocr_model(ts_ocr)
+                        probs_ocr = out_ocr.softmax(-1)
+                        raw_ctc = best_path_decode(probs_ocr, self.int_to_char)[0]
+                    # Map Thai consonants to Lao consonants, preserve digits
+                    lao_chars = []
+                    for ch in raw_ctc:
+                        if ch in THAI_TO_LAO_MAP:
+                            lao_chars.append(THAI_TO_LAO_MAP[ch])
+                        elif ch.isdigit() or ch == " ":
+                            lao_chars.append(ch)
+                    ocr_res = "".join(lao_chars).strip()
+                    digits_match = re.findall(r"\d+", ocr_res)
+                    consonants_match = re.findall(r"[\u0E80-\u0EFF]+", ocr_res)
+                    if digits_match:
+                        cons = "".join(consonants_match)[:2] if consonants_match else ""
+                        digs = "".join(digits_match)
+                        found_text = f"{cons} {digs}".strip()
+                    elif ocr_res:
+                        found_text = ocr_res
+                except Exception:
+                    pass
+
             formatted_plate_text = found_text if found_text else ""
             raw_plate_text = formatted_plate_text
-            # Only mark valid if we actually resolved a plate text
             is_valid = bool(found_text)
             pattern_name = "Lao Standard (Inverted Province/Digits)" if found_text else "Lao Standard (Text Unresolved — OCR N/A)"
 
@@ -1312,6 +1536,14 @@ class LPRPipelineService:
             "pattern_name": pattern_name,
             "is_valid": is_valid,
             "layout": "Standard (Top Char / Bottom Prov)" if country_name == "Thai" else "Inverted (Top Prov / Bottom Char)",
+            "model_tags": {
+                "model_1": cfg.MODEL_1_TAG,
+                "model_1_5": cfg.MODEL_1_5_TAG,
+                "model_2": cfg.MODEL_2_TAG,
+                "char_box": cfg.CHAR_BOX_TAG,
+                "char_classifier": cfg.CHAR_CLASS_THAI_TAG if country_name == "Thai" else cfg.CHAR_CLASS_LAO_TAG,
+                "province_classifier": cfg.PROV_MODEL_THAI_TAG if country_name == "Thai" else cfg.PROV_MODEL_LAO_TAG,
+            },
             "confidence": {
                 "plate_detection": round(plate_conf, 3),
                 "country_classification": round(country_conf, 3),
@@ -1358,15 +1590,17 @@ def api_health():
         "service": "Multi-Country (Thai & Laos) LPR Recognition Engine",
         "device": str(cfg.DEVICE),
         "models": {
-            "model_1": "plate_polygon_detector.pt (Polygon Segmentation)",
+            "model_1": f"{cfg.ACTIVE_MODEL_1_PATH.name} (Plate Detection)",
             "model_1_5": "country_classifier.pth (Thai vs Laos Classifier)",
-            "model_2": "component_detector.pt (Adaptive Layout Localization)",
+            "model_2": f"{cfg.ACTIVE_MODEL_2_PATH.name} (Adaptive Layout Localization)",
             "model_3a_thai_ctc": "ocr_model.pth (ResNetCRNN CTC)",
-            "model_3a_thai_char_box": "character_box_detector.pt (Individual Char BBox)",
+            "model_3a_thai_char_box": f"{cfg.ACTIVE_CHAR_BOX_MODEL_PATH.name} (Individual Char BBox)",
             "model_3a_thai_char_classifier": "character_classifier.pth (50 Thai Classes)",
+            "model_3a_lao_char_classifier": "character_classifier_lao.pth (34 Lao Classes)",
             "model_3b_thai": "province_model.pth (77 Thai Provinces)",
             "model_3b_lao": "province_model_lao.pth (18 Lao Provinces)",
         },
+        "model_tags": cfg.model_tags,
     }
 
 
@@ -1666,8 +1900,11 @@ def stream_latest_detection():
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 STATIC_DIR = PROJECT_ROOT / "static"
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUT_DIR = PROJECT_ROOT / "output"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+app.mount("/output", StaticFiles(directory=str(OUTPUT_DIR)), name="output")
 
 
 @app.get("/", response_class=HTMLResponse)

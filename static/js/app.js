@@ -82,6 +82,11 @@
   const dltTruckCode = document.getElementById('dltTruckCode');
   const dltTruckProvince = document.getElementById('dltTruckProvince');
 
+  // Stage Model Tags
+  const tagModel1 = document.getElementById('tagModel1');
+  const tagModel2 = document.getElementById('tagModel2');
+  const tagModel3 = document.getElementById('tagModel3');
+
   // Debug Drawer
   const debugDrawer = document.getElementById('debugDrawer');
   const dbgPoly = document.getElementById('dbgPoly');
@@ -93,15 +98,64 @@
   const dbgCharBoxesTitle = document.getElementById('dbgCharBoxesTitle');
   const cardDbgCharBoxes = document.getElementById('cardDbgCharBoxes');
 
+  // Debug Model Tags
+  const dbgTagM1 = document.getElementById('dbgTagM1');
+  const dbgTagDeskew = document.getElementById('dbgTagDeskew');
+  const dbgTagM2 = document.getElementById('dbgTagM2');
+  const dbgTagOcr = document.getElementById('dbgTagOcr');
+  const dbgTagProv = document.getElementById('dbgTagProv');
+  const dbgTagCharBox = document.getElementById('dbgTagCharBox');
+
   // --- Initialization ---
   function init() {
     setupModeTabs();
     setupDebugToggle();
     setupDropzone();
     setupRTSPStream();
+    fetchModelTags();
     // Sync debug state from checkbox on page load (in case browser restores checked state)
     if (debugToggle) {
       state.isDebug = debugToggle.checked;
+    }
+  }
+
+  // --- Dynamic Model Tags Management ---
+  async function fetchModelTags() {
+    try {
+      const resp = await fetch('/api/health');
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.model_tags) {
+          applyModelTags(data.model_tags);
+        }
+      }
+    } catch (e) {
+      console.warn('[Model Tags] Could not fetch initial model tags from /api/health:', e);
+    }
+  }
+
+  function applyModelTags(tags) {
+    if (!tags) return;
+    if (tagModel1 && tags.model_1) tagModel1.textContent = tags.model_1;
+    if (tagModel2 && tags.model_2) tagModel2.textContent = tags.model_2;
+    if (tagModel3) {
+      const charBox = tags.char_box ? `${tags.char_box} + ` : '';
+      const charCls = tags.char_classifier || tags.char_class_thai || tags.char_classifier_thai || 'MobileNetV2';
+      tagModel3.textContent = `${charBox}${charCls}`;
+    }
+    if (dbgTagM1 && tags.model_1) dbgTagM1.textContent = tags.model_1;
+    if (dbgTagDeskew) dbgTagDeskew.textContent = 'Homography Deskew';
+    if (dbgTagM2 && tags.model_2) dbgTagM2.textContent = tags.model_2;
+    if (dbgTagOcr) {
+      dbgTagOcr.textContent = tags.ocr_engine || tags.ocr_ctc || 'OCR Engine';
+    }
+    if (dbgTagProv) {
+      dbgTagProv.textContent = tags.province_classifier || tags.prov_thai || tags.province_thai || 'Province Model';
+    }
+    if (dbgTagCharBox) {
+      const charBox = tags.char_box || 'YOLO11-Box';
+      const charCls = tags.char_classifier || tags.char_class_thai || tags.char_classifier_thai || 'MobileNetV2';
+      dbgTagCharBox.textContent = `${charBox} + ${charCls}`;
     }
   }
 
@@ -364,6 +418,11 @@
       if (altPlateContainer) altPlateContainer.style.display = 'none';
       if (debugDrawer) debugDrawer.classList.remove('active');
       return;
+    }
+
+    // Dynamic Model Tags for this detection result (Thai vs Lao models)
+    if (res.model_tags) {
+      applyModelTags(res.model_tags);
     }
 
     // Country Classifier (Model 1.5)

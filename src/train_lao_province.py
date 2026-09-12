@@ -54,10 +54,18 @@ class LaoProvinceCropDataset(Dataset):
             return
 
         for folder in sorted(self.split_dir.iterdir()):
-            if folder.is_dir() and folder.name in class_to_idx:
-                label = class_to_idx[folder.name]
-                for img_p in folder.glob("*.jpg"):
-                    self.samples.append((img_p, label))
+            if folder.is_dir():
+                label = class_to_idx.get(folder.name)
+                if label is None:
+                    try:
+                        prefix_idx = int(folder.name.split("_")[0])
+                        if prefix_idx in class_to_idx.values():
+                            label = prefix_idx
+                    except (ValueError, IndexError):
+                        pass
+                if label is not None:
+                    for img_p in folder.glob("*.jpg"):
+                        self.samples.append((img_p, label))
 
     def __len__(self):
         return len(self.samples)
