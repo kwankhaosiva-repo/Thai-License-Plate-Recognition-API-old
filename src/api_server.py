@@ -126,13 +126,16 @@ from src.models import ResNetCRNN, ProvinceClassifier, ResNetProvinceClassifier,
 from src.preprocess import get_ocr_transforms, get_prov_transforms
 from src.validators import (
     format_thai_plate,
+    format_lao_plate,
     is_valid_plate,
+    is_valid_lao_plate,
     PATTERN_NCC_NNNN,
     PATTERN_CC_NNNN,
     PATTERN_C_NNNN,
     PATTERN_NC_NNNN,
     PATTERN_NN_NNNN,
     PATTERN_NNNNN,
+    PATTERN_LAO_STANDARD,
 )
 from src.prepare_perspective_dataset import (
     extract_quad_corners,
@@ -185,7 +188,9 @@ def pil_to_base64(pil_img: Image.Image, format: str = "JPEG", quality: int = 85)
 def determine_pattern_name(text: str, country: str = "Thai") -> str:
     """Determines the specific license plate pattern type."""
     if country == "Laos":
-        return "Lao Standard (2 Letters + 1-4 Digits)"
+        if is_valid_lao_plate(text):
+            return "Lao Standard (2 Letters + 1-4 Digits)"
+        return "Custom / Unstandardized"
 
     clean = text.strip().replace(" ", "")
     if PATTERN_NCC_NNNN.match(clean):
@@ -1040,13 +1045,42 @@ class LPRPipelineService:
                     box_res = self.char_box_model(char_crop, conf=0.20, verbose=False, device=self.device)[0]
                 except Exception:
                     box_res = self.char_box_model(char_crop, conf=0.20, verbose=False)[0]
-                detected_boxes = []
+                raw_boxes = []
+                crop_w = char_crop.shape[1]
                 for b in box_res.boxes:
                     bx1, by1, bx2, by2 = [int(v) for v in b.xyxy[0]]
                     bconf = float(b.conf[0])
-                    detected_boxes.append((bx1, by1, bx2, by2, bconf))
+                    bw = bx2 - bx1
+                    bh = by2 - by1
+                    # Filter out tiny slivers and edge border artifacts
+                    if bw < 8 or bh < 10:
+                        continue
+                    if bx1 <= 2 and bw < 12:
+                        continue
+                    if bx2 >= crop_w - 2 and bw < 12:
+                        continue
+                    raw_boxes.append((bx1, by1, bx2, by2, bconf))
+
+                # Horizontal NMS / Deduplication (suppress duplicate detections of the same character)
+                raw_boxes.sort(key=lambda x: x[4], reverse=True)
+                kept_boxes = []
+                for b in raw_boxes:
+                    bx1, by1, bx2, by2, bconf = b
+                    bw = bx2 - bx1
+                    overlap = False
+                    for kb in kept_boxes:
+                        kx1, ky1, kx2, ky2, _ = kb
+                        kw = kx2 - kx1
+                        inter_x = max(0, min(bx2, kx2) - max(bx1, kx1))
+                        min_w = min(bw, kw)
+                        if min_w > 0 and (inter_x / min_w) > 0.45:
+                            overlap = True
+                            break
+                    if not overlap:
+                        kept_boxes.append(b)
+
                 # Sort left-to-right
-                detected_boxes.sort(key=lambda item: item[0])
+                detected_boxes = sorted(kept_boxes, key=lambda item: item[0])
 
                 char_box_overlay = char_crop.copy()
                 chars_predicted = []
@@ -1192,35 +1226,54 @@ class LPRPipelineService:
             # Reconcile character box prediction with CTC OCR:
             fmt_box = format_thai_plate(char_box_text)
             fmt_ctc = format_thai_plate(raw_plate_text)
+            clean_box = fmt_box.replace(" ", "").replace("-", "")
+            clean_ctc = fmt_ctc.replace(" ", "").replace("-", "")
 
-            # 1. Primary: If char_box_text forms a complete and valid Thai plate, trust it!
-            # (Character boxes are individually localized & classified, preventing CTC edge-letter drops like leading digits)
-            if is_valid_plate(fmt_box):
-                if not is_valid_plate(fmt_ctc) or len(fmt_box.replace(" ", "")) >= len(fmt_ctc.replace(" ", "")):
+            valid_box = is_valid_plate(fmt_box)
+            valid_ctc = is_valid_plate(fmt_ctc)
+
+            # 1. Primary Reconciliation: Prioritize complete plates over truncated plates
+            if valid_box and valid_ctc:
+                if len(clean_ctc) > len(clean_box):
+                    # CTC recognized full 4-digit plate (e.g. ผว 7697) while box detector dropped digits (ฉว 76)
+                    formatted_plate_text = fmt_ctc
+                elif len(clean_box) > len(clean_ctc):
+                    # Box detector localized extra character (e.g. leading digit) that CTC missed
                     formatted_plate_text = fmt_box
+                else:
+                    # Same length: trust individually localized & classified character boxes
+                    formatted_plate_text = fmt_box
+            elif valid_box and not valid_ctc:
+                formatted_plate_text = fmt_box
+            elif valid_ctc and not valid_box:
+                formatted_plate_text = fmt_ctc
 
             # 2. Smart consonant fusion: If char_boxes_detail has high confidence Thai consonants
-            # but CTC made consonant errors, fuse high-confidence consonants while preserving leading digits!
+            # but CTC made consonant errors, fuse high-confidence consonants while preserving complete digits!
             if not formatted_plate_text:
                 leading_digit = char_boxes_detail[0]["char"] if (len(char_boxes_detail) > 0 and char_boxes_detail[0]["char"].isdigit()) else ""
                 box_consonants = [item["char"] for item in char_boxes_detail if re.match(r"[\u0E01-\u0E2E]", item["char"]) and item["prob"] >= 80.0]
                 box_digits = [item["char"] for item in char_boxes_detail if item["char"].isdigit() and item["prob"] >= 80.0]
                 ctc_digits = re.findall(r"\d+", raw_plate_text)
+                ctc_digits_str = "".join(ctc_digits)
+                box_digits_str = "".join(box_digits[1:] if (leading_digit and len(box_digits) > 1) else box_digits)
 
-                if len(box_consonants) >= 2 and (len(box_digits) > 0 or len(ctc_digits) > 0):
+                # Prioritize complete digit sequence from CTC if it has more digits than boxes
+                chosen_digits = ctc_digits_str if (len(ctc_digits_str) >= len(box_digits_str) and len(ctc_digits_str) > 0) else box_digits_str
+
+                if len(box_consonants) >= 2 and len(chosen_digits) > 0:
                     consonant_prefix = "".join(box_consonants[:2])
-                    digits = "".join(box_digits[1:]) if leading_digit and len(box_digits) > 1 else ("".join(box_digits) if box_digits else "".join(ctc_digits))
-                    candidate_fused = f"{leading_digit}{consonant_prefix} {digits}"
+                    candidate_fused = f"{leading_digit}{consonant_prefix} {chosen_digits}"
                     fmt_fused = format_thai_plate(candidate_fused)
                     if is_valid_plate(fmt_fused):
                         formatted_plate_text = fmt_fused
 
             # 3. Fallback to valid candidate or whichever text is available
             if not formatted_plate_text:
-                if is_valid_plate(fmt_box):
-                    formatted_plate_text = fmt_box
-                elif is_valid_plate(fmt_ctc):
+                if valid_ctc and (not valid_box or len(clean_ctc) >= len(clean_box)):
                     formatted_plate_text = fmt_ctc
+                elif valid_box:
+                    formatted_plate_text = fmt_box
                 else:
                     formatted_plate_text = fmt_box if fmt_box else fmt_ctc
 
@@ -1341,17 +1394,46 @@ class LPRPipelineService:
                     except Exception:
                         box_res = self.char_box_model(char_crop, conf=0.12, verbose=False)[0]
 
-                    detected_boxes = []
+                    raw_boxes = []
+                    crop_w = char_crop.shape[1]
                     for b in box_res.boxes:
                         bx1, by1, bx2, by2 = [int(v) for v in b.xyxy[0]]
                         bconf = float(b.conf[0])
-                        detected_boxes.append((bx1, by1, bx2, by2, bconf))
+                        bw = bx2 - bx1
+                        bh = by2 - by1
+                        if bw < 8 or bh < 10:
+                            continue
+                        if bx1 <= 2 and bw < 12:
+                            continue
+                        if bx2 >= crop_w - 2 and bw < 12:
+                            continue
+                        raw_boxes.append((bx1, by1, bx2, by2, bconf))
+
+                    # Horizontal NMS / Deduplication
+                    raw_boxes.sort(key=lambda x: x[4], reverse=True)
+                    kept_boxes = []
+                    for b in raw_boxes:
+                        bx1, by1, bx2, by2, bconf = b
+                        bw = bx2 - bx1
+                        overlap = False
+                        for kb in kept_boxes:
+                            kx1, ky1, kx2, ky2, _ = kb
+                            kw = kx2 - kx1
+                            inter_x = max(0, min(bx2, kx2) - max(bx1, kx1))
+                            min_w = min(bw, kw)
+                            if min_w > 0 and (inter_x / min_w) > 0.45:
+                                overlap = True
+                                break
+                        if not overlap:
+                            kept_boxes.append(b)
+
                     # Sort left-to-right
-                    detected_boxes.sort(key=lambda item: item[0])
+                    detected_boxes = sorted(kept_boxes, key=lambda item: item[0])
 
                     char_box_overlay = char_crop.copy()
                     chars_predicted = []
-                    for bx1, by1, bx2, by2, bconf in detected_boxes:
+                    num_boxes = len(detected_boxes)
+                    for b_idx, (bx1, by1, bx2, by2, bconf) in enumerate(detected_boxes):
                         single_crop = char_crop[max(0, by1) : min(char_crop.shape[0], by2), max(0, bx1) : min(char_crop.shape[1], bx2)]
                         if single_crop.shape[0] < 4 or single_crop.shape[1] < 4:
                             continue
@@ -1366,7 +1448,16 @@ class LPRPipelineService:
                         ts_c = self.tf_char(pil_char).unsqueeze(0).to(self.device)
                         with torch.no_grad():
                             out_c = self.char_classifier_lao(ts_c)
-                            probs_c = F.softmax(out_c, dim=1).squeeze(0)
+                            masked_out = out_c.clone()
+                            # Positional constraint for Lao plates:
+                            # Positions 0 and 1 are strictly Lao consonants (indices >= 10 in char_classifier_map_lao.json)
+                            # Positions 2+ are strictly digits (indices 0..9)
+                            if num_boxes >= 4:
+                                if b_idx in (0, 1):
+                                    masked_out[:, :10] = -float('inf')
+                                else:
+                                    masked_out[:, 10:] = -float('inf')
+                            probs_c = F.softmax(masked_out, dim=1).squeeze(0)
                             top_p, top_i = torch.topk(probs_c, k=1)
                             sym = self.int_to_char_lao.get(top_i.item(), "?")
                             char_p = float(top_p.item())
@@ -1402,13 +1493,20 @@ class LPRPipelineService:
             # Lao Plate Text Resolution (Character Box Classification -> GT Lookup -> CTC OCR Fallback)
             found_text = None
             if char_box_text and len(chars_predicted) >= 3:
-                # Format as [Lao Consonants] [Digits], e.g. ກວ 0029
-                cons = [c for c in chars_predicted if not c.isdigit()]
-                digs = [c for c in chars_predicted if c.isdigit()]
-                if cons and digs:
-                    found_text = f"{''.join(cons)} {''.join(digs)}"
+                # Strictly format as [2 Lao Consonants] [1-4 Digits], e.g. ກກ 0083
+                if len(chars_predicted) >= 4 and not chars_predicted[0].isdigit() and not chars_predicted[1].isdigit():
+                    prefix = f"{chars_predicted[0]}{chars_predicted[1]}"
+                    digits = "".join([c for c in chars_predicted[2:] if c.isdigit()])
+                    found_text = f"{prefix} {digits}".strip()
                 else:
-                    found_text = char_box_text
+                    cons = [c for c in chars_predicted if not c.isdigit()]
+                    digs = [c for c in chars_predicted if c.isdigit()]
+                    if len(cons) >= 2 and len(digs) > 0:
+                        found_text = f"{''.join(cons[:2])} {''.join(digs[:4])}"
+                    elif cons and digs:
+                        found_text = f"{''.join(cons)} {''.join(digs)}"
+                    else:
+                        found_text = char_box_text
 
             if not found_text and filename:
                 f_basename = Path(filename).name
@@ -1453,10 +1551,10 @@ class LPRPipelineService:
                 except Exception:
                     pass
 
-            formatted_plate_text = found_text if found_text else ""
+            formatted_plate_text = format_lao_plate(found_text) if found_text else ""
             raw_plate_text = formatted_plate_text
-            is_valid = bool(found_text)
-            pattern_name = "Lao Standard (Inverted Province/Digits)" if found_text else "Lao Standard (Text Unresolved — OCR N/A)"
+            is_valid = is_valid_lao_plate(formatted_plate_text)
+            pattern_name = "Lao Standard (2 Letters + 1-4 Digits)" if is_valid else ("Custom / Unstandardized" if formatted_plate_text else "Lao Standard (Text Unresolved — OCR N/A)")
 
         t_m3 = int((time.time() - t3_start) * 1000)
         t_total = int((time.time() - t_start) * 1000)
