@@ -1,32 +1,16 @@
 """
 src/train_lao_character_classifier.py
 
-Trains Model 3A-Box-Lao (MobileNetV2 Character Classifier) on 34 Lao character classes
-(10 digits 0-9 + 24 Lao consonants ก-ฮ) using harvested verified Lao plate character crops:
-  datasets/Lao/lao_character_crops/train/
-  datasets/Lao/lao_character_crops/valid/
-
-Features:
-  - Input: 64x64 RGB square-padded character crops
-  - Minority class oversampling/augmentation to prevent underfitting on rare consonants (e.g. ຖ, ປ, ງ, ຊ)
-  - Class-weighted Cross-Entropy Loss to balance frequent digits vs consonants
-  - Real-time Top-1 and Top-3 accuracy evaluation
-  - Saves best checkpoint to weights/character_classifier_lao.pth
+Trains the Lao Character Classifier (MobileNetV2, BSD-3) on balanced character crops.
+Automatically exports the best checkpoint to standalone ONNX (Opset 18) for C# deployment.
 """
 
 import os
 import sys
 import json
 import shutil
-import random
+import argparse
 from pathlib import Path
-import numpy as np
-import torch
-import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
-from torchvision import models, transforms
-from PIL import Image
-from tqdm import tqdm
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -34,60 +18,43 @@ if str(PROJECT_ROOT) not in sys.path:
 
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms, models
+from PIL import Image
+from tqdm import tqdm
+
+try:
+    import onnx
+except ImportError:
+    onnx = None
+
 BASE_DIR = PROJECT_ROOT / "datasets" / "Lao" / "lao_character_crops"
 TRAIN_DIR = BASE_DIR / "train"
 VALID_DIR = BASE_DIR / "valid"
 WEIGHTS_DIR = PROJECT_ROOT / "weights"
 MAP_PATH = WEIGHTS_DIR / "char_classifier_map_lao.json"
 MODEL_SAVE_PATH = WEIGHTS_DIR / "character_classifier_lao.pth"
+ONNX_SAVE_PATH = WEIGHTS_DIR / "character_classifier_lao_opset18.onnx"
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
 
 
-def ensure_valid_has_samples(train_dir: Path, valid_dir: Path, class_to_idx: dict):
-    """Ensure every class has at least 2 samples in valid for fair evaluation."""
-    for class_name in class_to_idx:
-        v_cls_dir = valid_dir / class_name
-        v_cls_dir.mkdir(parents=True, exist_ok=True)
-        v_files = list(v_cls_dir.glob("*.jpg")) + list(v_cls_dir.glob("*.png"))
-        if len(v_files) == 0:
-            t_cls_dir = train_dir / class_name
-            t_files = list(t_cls_dir.glob("*.jpg")) + list(t_cls_dir.glob("*.png"))
-            if t_files:
-                # Copy at least 1-2 images to valid
-                for f in t_files[:min(2, len(t_files))]:
-                    dest = v_cls_dir / f"valid_rep_{f.name}"
-                    if not dest.exists():
-                        shutil.copy2(f, dest)
-
-
 class LaoCharacterDataset(Dataset):
-    def __init__(self, root_dir: Path, class_to_idx: dict, transform=None, min_samples_per_class=0):
+    def __init__(self, root_dir: Path, class_to_idx: dict, transform=None):
         self.samples = []
         self.transform = transform
         self.root_dir = Path(root_dir)
-
-        class_samples = {cls_idx: [] for cls_idx in class_to_idx.values()}
 
         for folder in sorted(self.root_dir.iterdir()):
             if folder.is_dir() and folder.name in class_to_idx:
                 label = class_to_idx[folder.name]
                 img_list = list(folder.glob("*.jpg")) + list(folder.glob("*.png"))
                 for img_p in img_list:
-                    class_samples[label].append(img_p)
-
-        # Oversample minority classes if requested (for train)
-        for label, paths in class_samples.items():
-            if not paths:
-                continue
-            if min_samples_per_class > 0 and len(paths) < min_samples_per_class:
-                multiplier = (min_samples_per_class // len(paths)) + 1
-                expanded = (paths * multiplier)[:min_samples_per_class]
-                for p in expanded:
-                    self.samples.append((p, label))
-            else:
-                for p in paths:
-                    self.samples.append((p, label))
+                    self.samples.append((img_p, label))
 
     def __len__(self):
         return len(self.samples)
@@ -100,13 +67,13 @@ class LaoCharacterDataset(Dataset):
         return img, label
 
 
-def compute_class_weights(samples, n_classes=34):
+def compute_class_weights(samples, n_classes):
     counts = np.zeros(n_classes, dtype=np.float32)
     for _, label in samples:
         counts[label] += 1
     total = float(len(samples))
     weights = (total / (n_classes * np.maximum(counts, 1.0))) ** 0.5
-    weights = np.clip(weights, 0.2, 5.0)
+    weights = np.clip(weights, 0.4, 3.0)
     return torch.tensor(weights, dtype=torch.float32)
 
 
@@ -138,14 +105,59 @@ def evaluate(model, loader, device):
     return val_loss / val_total, val_correct_1 / val_total, val_correct_3 / val_total
 
 
-def train_lao_character_classifier(epochs=12, batch_size=128, lr=4e-4):
+def export_to_onnx(model: nn.Module, onnx_path: Path, n_classes: int, opset: int = 18):
+    """Exports the trained classifier to a standalone ONNX model with embedded weights."""
+    print(f"\n📦 Exporting Lao Character Classifier to ONNX (Opset {opset})...")
+    model.eval()
+    dummy_input = torch.randn(1, 3, 64, 64, device="cpu", dtype=torch.float32)
+    cpu_model = model.cpu()
+
+    # Wrap with Softmax for probability outputs
+    class SoftmaxWrapper(nn.Module):
+        def __init__(self, core):
+            super().__init__()
+            self.core = core
+        def forward(self, x):
+            return F.softmax(self.core(x), dim=1)
+
+    export_model = SoftmaxWrapper(cpu_model)
+
+    torch.onnx.export(
+        export_model,
+        dummy_input,
+        str(onnx_path),
+        export_params=True,
+        opset_version=opset,
+        do_constant_folding=True,
+        input_names=["input"],
+        output_names=["probabilities"],
+        dynamic_axes={"input": {0: "batch"}, "probabilities": {0: "batch"}},
+    )
+
+    if onnx is not None:
+        from onnx.external_data_helper import load_external_data_for_model
+        model_proto = onnx.load(str(onnx_path))
+        load_external_data_for_model(model_proto, str(onnx_path.parent))
+        onnx.save(model_proto, str(onnx_path), save_as_external_data=False)
+        onnx.checker.check_model(model_proto)
+
+        data_file = onnx_path.with_name(f"{onnx_path.name}.data")
+        if data_file.exists():
+            data_file.unlink()
+
+        size_mb = onnx_path.stat().st_size / (1024 * 1024)
+        print(f"  --> ONNX Model validated successfully! Standalone size: {size_mb:.2f} MB")
+        print(f"  --> Saved to: {onnx_path}")
+
+
+def train_lao_character_classifier(epochs=15, batch_size=64, lr=4e-4):
     print(f"\n=======================================================")
     print(f"--- Training Lao Character Classifier (MobileNetV2) ---")
-    print(f"Device: {DEVICE}")
-    print(f"Epochs: {epochs}, Batch Size: {batch_size}, LR: {lr}")
+    print(f"Device     : {DEVICE}")
+    print(f"Epochs     : {epochs}, Batch Size: {batch_size}, LR: {lr}")
+    print(f"Target Save: {MODEL_SAVE_PATH}")
     print(f"=======================================================\n")
 
-    # 1. Load class mapping
     if not MAP_PATH.exists():
         raise FileNotFoundError(f"Class map not found: {MAP_PATH}")
 
@@ -155,13 +167,11 @@ def train_lao_character_classifier(epochs=12, batch_size=128, lr=4e-4):
     class_to_idx = {v: int(k) for k, v in idx_to_char.items()}
     print(f"Total Lao Character Classes: {n_classes}")
 
-    ensure_valid_has_samples(TRAIN_DIR, VALID_DIR, class_to_idx)
-
-    # 2. Transforms (Input 64x64)
+    # 1. Transforms (Input 64x64)
     train_tf = transforms.Compose([
         transforms.Resize((64, 64)),
-        transforms.RandomAffine(degrees=6, translate=(0.05, 0.05), scale=(0.95, 1.05)),
-        transforms.ColorJitter(brightness=0.25, contrast=0.25),
+        transforms.RandomAffine(degrees=6, translate=(0.04, 0.04), scale=(0.96, 1.04)),
+        transforms.ColorJitter(brightness=0.20, contrast=0.20),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
@@ -172,16 +182,16 @@ def train_lao_character_classifier(epochs=12, batch_size=128, lr=4e-4):
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
 
-    # 3. Datasets with minority class oversampling to at least 200 samples in train
-    train_ds = LaoCharacterDataset(TRAIN_DIR, class_to_idx, transform=train_tf, min_samples_per_class=200)
-    val_ds = LaoCharacterDataset(VALID_DIR, class_to_idx, transform=val_tf, min_samples_per_class=0)
+    # 2. Datasets & Loaders
+    train_ds = LaoCharacterDataset(TRAIN_DIR, class_to_idx, transform=train_tf)
+    val_ds = LaoCharacterDataset(VALID_DIR, class_to_idx, transform=val_tf)
 
-    print(f"Loaded: Train = {len(train_ds)} samples (with oversampling), Valid = {len(val_ds)} samples")
+    print(f"Loaded: Train = {len(train_ds)} samples, Valid = {len(val_ds)} samples")
 
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, drop_last=True, num_workers=0)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=0)
 
-    # 4. Model Architecture: MobileNetV2 with 34 outputs
+    # 3. Model Architecture: MobileNetV2 with n_classes outputs
     model = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.DEFAULT)
     model.classifier = nn.Sequential(
         nn.Dropout(0.2),
@@ -189,7 +199,7 @@ def train_lao_character_classifier(epochs=12, batch_size=128, lr=4e-4):
     )
     model = model.to(DEVICE)
 
-    # 5. Class weights & Optimizer
+    # 4. Class weights & Optimizer
     class_weights = compute_class_weights(train_ds.samples, n_classes).to(DEVICE)
     criterion = nn.CrossEntropyLoss(weight=class_weights)
 
@@ -248,23 +258,33 @@ def train_lao_character_classifier(epochs=12, batch_size=128, lr=4e-4):
                 "best_acc_top1": best_val_top1,
                 "best_acc_top3": best_val_top3,
                 "epoch": best_epoch,
+                "n_classes": n_classes,
+                "license": "BSD-3 / Apache-2.0 Compatible",
             }, str(MODEL_SAVE_PATH))
-            print(f"   --> New Best Checkpoint saved! (Val Top-1: {val_top1*100:.2f}%, Top-3: {val_top3*100:.2f}%)")
+            print(f"   --> ⭐ New Best Checkpoint saved! (Val Top-1: {val_top1*100:.2f}%, Top-3: {val_top3*100:.2f}%)")
 
     print(f"\n=======================================================")
-    print(f"Training Complete!")
-    print(f"Best Epoch: {best_epoch}")
+    print(f"🎉 Training Complete! Best Checkpoint at Epoch {best_epoch}")
     print(f"Best Validation Top-1 Accuracy: {best_val_top1*100:.2f}%")
     print(f"Best Validation Top-3 Accuracy: {best_val_top3*100:.2f}%")
-    print(f"Saved weights to: {MODEL_SAVE_PATH}")
-    print(f"=======================================================\n")
+    print(f"Saved checkpoint to: {MODEL_SAVE_PATH}")
+    print(f"=======================================================")
+
+    # Export best model to Standalone ONNX
+    best_ckpt = torch.load(MODEL_SAVE_PATH, map_location="cpu")
+    best_model = models.mobilenet_v2(weights=None)
+    best_model.classifier = nn.Sequential(
+        nn.Dropout(0.2),
+        nn.Linear(best_model.last_channel, n_classes)
+    )
+    best_model.load_state_dict(best_ckpt["model_state"])
+    export_to_onnx(best_model, ONNX_SAVE_PATH, n_classes=n_classes, opset=18)
 
 
 if __name__ == "__main__":
-    import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--epochs", type=int, default=12)
-    parser.add_argument("--batch-size", type=int, default=128)
+    parser.add_argument("--epochs", type=int, default=15)
+    parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=4e-4)
     args = parser.parse_args()
 
