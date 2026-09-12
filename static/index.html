@@ -40,6 +40,14 @@
         </div>
       </div>
 
+      <!-- Lao Crops Validation Button -->
+      <a href="/output/lao_character_verification/report.html" target="_blank" class="verification-btn" title="Inspect Lao Character Crops Dataset (34 Classes)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-8 14H7v-2h4v2zm0-4H7v-2h4v2zm0-4H7V7h4v2zm6 8h-4v-2h4v2zm0-4h-4v-2h4v2zm0-4h-4V7h4v2z"/>
+        </svg>
+        <span>🇱🇦 Lao Crops Report</span>
+      </a>
+
       <!-- Debug Toggle Switch -->
       <div class="debug-toggle-wrapper">
         <span class="debug-label">
@@ -212,7 +220,10 @@
             <!-- STAGE 1: Model 1 Rectified Car Plate -->
             <div class="stage-card">
               <div class="stage-header">
-                <span class="stage-badge badge-m1">Model 1: Plate & Country</span>
+                <div class="stage-title-wrap">
+                  <span class="stage-badge badge-m1">Model 1: Plate</span>
+                  <span class="stage-model-tag cyan" id="tagModel1">YOLO11-seg</span>
+                </div>
                 <span class="stage-time" id="timeM1">-- ms</span>
               </div>
               <div class="stage-preview">
@@ -234,7 +245,10 @@
             <!-- STAGE 2: Model 2 Component Crops -->
             <div class="stage-card">
               <div class="stage-header">
-                <span class="stage-badge badge-m2">Model 2: Components</span>
+                <div class="stage-title-wrap">
+                  <span class="stage-badge badge-m2">Model 2: Components</span>
+                  <span class="stage-model-tag amber" id="tagModel2">YOLO11-Comp</span>
+                </div>
                 <span class="stage-time" id="timeM2">-- ms</span>
               </div>
               <div class="stage-dual-preview">
@@ -262,7 +276,10 @@
             <!-- STAGE 3: Model 3 Recognition Result (Text + Province) -->
             <div class="stage-card">
               <div class="stage-header">
-                <span class="stage-badge badge-m3">Model 3: Recognition</span>
+                <div class="stage-title-wrap">
+                  <span class="stage-badge badge-m3">Model 3: Recognition</span>
+                  <span class="stage-model-tag purple" id="tagModel3">MobileNetV2</span>
+                </div>
                 <span class="stage-time" id="timeM3">-- ms</span>
               </div>
               
@@ -319,7 +336,7 @@
               <div class="debug-card">
                 <div class="debug-card-title">
                   <span>Model 1: Polygon & Quad Corners</span>
-                  <span style="color: var(--accent-cyan);">Contour</span>
+                  <span class="debug-model-tag" id="dbgTagM1">YOLO11-seg</span>
                 </div>
                 <img id="dbgPoly" class="debug-card-img" src="" alt="Polygon Overlay">
               </div>
@@ -328,7 +345,7 @@
               <div class="debug-card">
                 <div class="debug-card-title">
                   <span>Model 1: Fine Deskew Result</span>
-                  <span style="color: var(--accent-cyan);">Aligned</span>
+                  <span class="debug-model-tag" id="dbgTagDeskew">Homography Deskew</span>
                 </div>
                 <img id="dbgDeskew" class="debug-card-img" src="" alt="Fine Deskewed Plate">
               </div>
@@ -337,7 +354,7 @@
               <div class="debug-card">
                 <div class="debug-card-title">
                   <span>Model 2: Component Bounding Boxes</span>
-                  <span style="color: var(--accent-amber);">plate_char / prov</span>
+                  <span class="debug-model-tag" id="dbgTagM2">YOLO11-Comp</span>
                 </div>
                 <img id="dbgComp" class="debug-card-img" src="" alt="Component Boxes Overlay">
               </div>
@@ -346,7 +363,7 @@
               <div class="debug-card">
                 <div class="debug-card-title">
                   <span>Model 3A: OCR Grayscale Enhanced</span>
-                  <span style="color: var(--accent-purple);">Autocontrast</span>
+                  <span class="debug-model-tag" id="dbgTagOcr">EasyOCR</span>
                 </div>
                 <img id="dbgOcr" class="debug-card-img" src="" alt="OCR Grayscale Input">
               </div>
@@ -355,7 +372,7 @@
               <div class="debug-card">
                 <div class="debug-card-title">
                   <span>Model 3B: Top Provinces Probabilities</span>
-                  <span style="color: var(--accent-green);">Softmax</span>
+                  <span class="debug-model-tag" id="dbgTagProv">ResNet18 (Thai 77 Prov)</span>
                 </div>
                 <div class="prob-bars" id="dbgProvBars">
                   <div class="empty-state">No probabilities</div>
@@ -365,8 +382,8 @@
               <!-- Debug 6: Model 3A Character Box Detection & Per-Box Classification -->
               <div class="debug-card" id="cardDbgCharBoxes">
                 <div class="debug-card-title">
-                  <span>Model 3A: Character Box Classifier</span>
-                  <span style="color: var(--accent-cyan);" id="dbgCharBoxesTitle">Individual BBoxes</span>
+                  <span id="dbgCharBoxesTitle">Model 3A: Character Box Classifier</span>
+                  <span class="debug-model-tag" id="dbgTagCharBox">RT-DETR-L + MobileNetV2</span>
                 </div>
                 <img id="dbgCharBoxes" class="debug-card-img" src="" alt="Character Boxes Overlay">
               </div>
@@ -383,6 +400,6 @@
   </main>
 
   <!-- Client-side Application Script -->
-  <script src="/static/js/app.js?v=4"></script>
+  <script src="/static/js/app.js?v=5"></script>
 </body>
 </html>

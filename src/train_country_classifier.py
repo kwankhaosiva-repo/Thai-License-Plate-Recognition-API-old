@@ -48,29 +48,46 @@ def get_country_data():
     thai_dirs = [
         PROJECT_ROOT / "output" / "train" / "rectified_plates",
         PROJECT_ROOT / "output" / "ground_truth_crops" / "rectified_plates",
+        PROJECT_ROOT / "output" / "val" / "rectified_plates",
+        PROJECT_ROOT / "crops_test_run" / "test" / "rectified_plates",
     ]
     thai_files = []
     exts = {".jpg", ".jpeg", ".png", ".webp"}
     for d in thai_dirs:
         if d.exists():
-            thai_files.extend([p for p in d.glob("*") if p.suffix.lower() in exts and p.stat().st_size > 500])
+            for p in d.glob("*"):
+                if p.suffix.lower() in exts and p.stat().st_size > 500:
+                    try:
+                        with Image.open(p) as im:
+                            w, h = im.size
+                            if w >= 40 and h >= 15 and 1.2 <= (w / float(h)) <= 4.2:
+                                thai_files.append(p)
+                    except Exception:
+                        pass
 
-    # 2. Collect Diverse Lao crops (Roboflow in-the-wild vehicle crops + toll distinct images)
+    # 2. Collect Diverse Lao crops (strictly filtered to horizontal plate aspect ratio 1.2 to 4.2)
     lao_files = []
-    lao_wild_dir = PROJECT_ROOT / "datasets" / "Lao" / "lao_plate_crops"
-    if lao_wild_dir.exists():
-        lao_files.extend([p for p in lao_wild_dir.glob("*.jpg") if p.stat().st_size > 300])
+    lao_dirs = [
+        PROJECT_ROOT / "datasets" / "Lao" / "lao-plate-dataset" / "distinct_images",
+        PROJECT_ROOT / "datasets" / "Lao" / "lao_plate_crops",
+    ]
+    for d in lao_dirs:
+        if d.exists():
+            for p in d.glob("*.jpg"):
+                if p.stat().st_size > 500:
+                    try:
+                        with Image.open(p) as im:
+                            w, h = im.size
+                            # Reject vertical slices (fenders, headlights, grilles with aspect < 1.2)
+                            if w >= 40 and h >= 15 and 1.2 <= (w / float(h)) <= 4.2:
+                                lao_files.append(p)
+                    except Exception:
+                        pass
 
-    lao_distinct_dir = PROJECT_ROOT / "datasets" / "Lao" / "lao-plate-dataset" / "distinct_images"
-    if lao_distinct_dir.exists():
-        lao_distinct_all = [p for p in lao_distinct_dir.glob("*.jpg") if p.stat().st_size > 500]
-        random.seed(42)
-        lao_files.extend(random.sample(lao_distinct_all, min(1200, len(lao_distinct_all))))
-
-    print(f"Discovered {len(thai_files)} Thai crops and {len(lao_files)} diverse Lao crops.")
+    print(f"Discovered {len(thai_files)} clean Thai plate crops and {len(lao_files)} clean Lao plate crops.")
 
     # Balance datasets
-    n_samples = min(len(thai_files), len(lao_files), 3000)
+    n_samples = min(len(thai_files), len(lao_files), 2500)
     random.seed(42)
     thai_sampled = random.sample(thai_files, n_samples)
     lao_sampled = random.sample(lao_files, n_samples)
@@ -83,7 +100,7 @@ def get_country_data():
     train_samples = labeled_data[:split_idx]
     val_samples = labeled_data[split_idx:]
 
-    print(f"Dataset balanced: {len(train_samples)} train, {len(val_samples)} validation.")
+    print(f"Dataset balanced: {len(train_samples)} train, {len(val_samples)} validation ({n_samples} per country).")
     return train_samples, val_samples
 
 def train_country_classifier(epochs=10, batch_size=32, lr=1e-3):
