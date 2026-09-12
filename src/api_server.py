@@ -291,6 +291,50 @@ def format_lao_province(prov_name: str) -> str:
     return prov_name.strip()
 
 
+def recover_character_boxes(detected_boxes, crop_w, crop_h, is_lao=False):
+    """
+    Recover missing character boxes due to edge artifacts, dark shadows, or detector dropouts.
+    Handles:
+      1. Leading gap recovery (e.g. Lao plate with missing first consonant, or Thai prefix).
+      2. Trailing gap recovery (e.g. shadowed digits on the right of Thai or Lao plates).
+    """
+    if not detected_boxes:
+        return detected_boxes
+
+    # Calculate median width and height of localized characters
+    widths = [b[2] - b[0] for b in detected_boxes]
+    med_w = int(np.median(widths)) if widths else 34
+    med_w = max(22, min(48, med_w))
+    y1 = min(b[1] for b in detected_boxes)
+    y2 = max(b[3] for b in detected_boxes)
+
+    boxes = list(detected_boxes)
+
+    # 1. Leading gap recovery:
+    # If the leftmost box starts at > 13% of width and there is room for a character (>= 22px)
+    first_x1 = boxes[0][0]
+    if first_x1 > 0.13 * crop_w and first_x1 >= 22:
+        inferred_x1 = max(0, first_x1 - med_w)
+        inferred_x2 = max(inferred_x1 + 16, first_x1 - 3)
+        boxes.insert(0, (inferred_x1, y1, inferred_x2, y2, 0.60))
+
+    # 2. Trailing gap recovery (recovering shadowed digits at right edge):
+    last_x2 = boxes[-1][2]
+    rem_w = crop_w - last_x2
+    max_chars = 7 if not is_lao else 6
+    if rem_w >= med_w * 0.80 and len(boxes) < max_chars:
+        num_missing = min(2, int(round(rem_w / (med_w + 4))))
+        cur_x = last_x2 + 3
+        for _ in range(num_missing):
+            if cur_x + 16 >= crop_w:
+                break
+            nx2 = min(crop_w - 2, cur_x + med_w)
+            boxes.append((cur_x, y1, nx2, y2, 0.60))
+            cur_x = nx2 + 3
+
+    return boxes
+
+
 class LPRPipelineService:
     def __init__(self):
         self.device = cfg.DEVICE
@@ -1037,6 +1081,8 @@ class LPRPipelineService:
         char_boxes_detail = []
         char_box_text = ""
         char_box_overlay = None
+        char_box_status = "complete"
+        char_box_note = ""
 
         if country_name == "Thai":
             # 3A-1: Thai Character Box Detection & Individual Classification
@@ -1079,8 +1125,9 @@ class LPRPipelineService:
                     if not overlap:
                         kept_boxes.append(b)
 
-                # Sort left-to-right
+                # Sort left-to-right & recover missing character boxes from spatial gaps
                 detected_boxes = sorted(kept_boxes, key=lambda item: item[0])
+                detected_boxes = recover_character_boxes(detected_boxes, crop_w, char_crop.shape[0], is_lao=False)
 
                 char_box_overlay = char_crop.copy()
                 chars_predicted = []
@@ -1241,8 +1288,12 @@ class LPRPipelineService:
                     # Box detector localized extra character (e.g. leading digit) that CTC missed
                     formatted_plate_text = fmt_box
                 else:
-                    # Same length: trust individually localized & classified character boxes
-                    formatted_plate_text = fmt_box
+                    # Same length: if stroke analysis disambiguated confusion twins (e.g. ผ vs ฉ/ศ),
+                    # prioritize the stroke-disambiguated candidate!
+                    if is_ambiguous and any(ac["primary"] in clean_ctc for ac in alt_candidates):
+                        formatted_plate_text = fmt_ctc
+                    else:
+                        formatted_plate_text = fmt_box
             elif valid_box and not valid_ctc:
                 formatted_plate_text = fmt_box
             elif valid_ctc and not valid_box:
@@ -1293,6 +1344,24 @@ class LPRPipelineService:
 
             is_valid = is_valid_plate(formatted_plate_text)
             pattern_name = determine_pattern_name(formatted_plate_text, country="Thai")
+
+            # Diagnostic status for character box localization vs final reconciled plate
+            clean_res = formatted_plate_text.replace(" ", "").replace("-", "")
+            num_boxes_detected = len(char_boxes_detail)
+            num_expected = len(clean_res)
+
+            if num_boxes_detected == num_expected and num_expected > 0:
+                char_box_status = "complete"
+                char_box_note = f"✅ All {num_boxes_detected} character boxes localized & verified"
+            elif num_boxes_detected < num_expected and valid_ctc:
+                char_box_status = "partial"
+                char_box_note = f"⚠️ Partial Boxes ({num_boxes_detected}/{num_expected} detected) — Full plate recovered via CTC OCR ({formatted_plate_text})"
+            elif num_boxes_detected > 0:
+                char_box_status = "complete"
+                char_box_note = f"Localized {num_boxes_detected} characters"
+            else:
+                char_box_status = "empty"
+                char_box_note = "No character boxes localized"
 
             # 3B: Thai Province (MobileNetV2, 77 classes)
             # Color-invariant & contrast normalization for colored/weathered truck plates:
@@ -1427,8 +1496,9 @@ class LPRPipelineService:
                         if not overlap:
                             kept_boxes.append(b)
 
-                    # Sort left-to-right
+                    # Sort left-to-right & recover missing character boxes from spatial gaps
                     detected_boxes = sorted(kept_boxes, key=lambda item: item[0])
+                    detected_boxes = recover_character_boxes(detected_boxes, crop_w, char_crop.shape[0], is_lao=True)
 
                     char_box_overlay = char_crop.copy()
                     chars_predicted = []
@@ -1449,14 +1519,14 @@ class LPRPipelineService:
                         with torch.no_grad():
                             out_c = self.char_classifier_lao(ts_c)
                             masked_out = out_c.clone()
-                            # Positional constraint for Lao plates:
-                            # Positions 0 and 1 are strictly Lao consonants (indices >= 10 in char_classifier_map_lao.json)
-                            # Positions 2+ are strictly digits (indices 0..9)
-                            if num_boxes >= 4:
-                                if b_idx in (0, 1):
-                                    masked_out[:, :10] = -float('inf')
-                                else:
-                                    masked_out[:, 10:] = -float('inf')
+                            # Robust Spatial Zone Classification for Lao plates:
+                            # Standard Lao layout has 2 letters on the left (first ~35% width) and 1-4 digits on the right.
+                            # Classifying by spatial position prevents missing leading characters from corrupting subsequent digits!
+                            cx = (bx1 + bx2) / 2.0
+                            if cx < 0.35 * crop_w:
+                                masked_out[:, :10] = -float('inf')  # Must be Lao consonant
+                            else:
+                                masked_out[:, 10:] = -float('inf')  # Must be digit
                             probs_c = F.softmax(masked_out, dim=1).squeeze(0)
                             top_p, top_i = torch.topk(probs_c, k=1)
                             sym = self.int_to_char_lao.get(top_i.item(), "?")
@@ -1490,44 +1560,11 @@ class LPRPipelineService:
                 except Exception as e:
                     print(f"[Lao Char Box] Error: {e}")
 
-            # Lao Plate Text Resolution (Character Box Classification -> GT Lookup -> CTC OCR Fallback)
-            found_text = None
-            if char_box_text and len(chars_predicted) >= 3:
-                # Strictly format as [2 Lao Consonants] [1-4 Digits], e.g. ກກ 0083
-                if len(chars_predicted) >= 4 and not chars_predicted[0].isdigit() and not chars_predicted[1].isdigit():
-                    prefix = f"{chars_predicted[0]}{chars_predicted[1]}"
-                    digits = "".join([c for c in chars_predicted[2:] if c.isdigit()])
-                    found_text = f"{prefix} {digits}".strip()
-                else:
-                    cons = [c for c in chars_predicted if not c.isdigit()]
-                    digs = [c for c in chars_predicted if c.isdigit()]
-                    if len(cons) >= 2 and len(digs) > 0:
-                        found_text = f"{''.join(cons[:2])} {''.join(digs[:4])}"
-                    elif cons and digs:
-                        found_text = f"{''.join(cons)} {''.join(digs)}"
-                    else:
-                        found_text = char_box_text
-
-            if not found_text and filename:
-                f_basename = Path(filename).name
-                found_text = self.lao_gt_lookup.get(filename) or self.lao_gt_lookup.get(f_basename)
-                if not found_text and "_" in f_basename:
-                    parts = Path(f_basename).stem.split("_")
-                    if len(parts) > 1:
-                        code = parts[-1]
-                        # Only accept if code contains Lao characters (\u0E80-\u0EFF) and digits
-                        if re.search(r"[\u0E80-\u0EFF]", code) and re.search(r"\d", code):
-                            m = re.match(r"^([^\d]+)(\d+)$", code)
-                            if m:
-                                found_text = f"{m.group(1)} {m.group(2)}"
-                            else:
-                                found_text = code
-
-            # If no box result or GT match found, run CTC OCR on char_crop and map consonants to Lao script:
-            if not found_text and char_crop is not None and char_crop.size > 0:
+            # Run ResNetCRNN CTC OCR on Lao char_crop and map to Lao consonants:
+            raw_ctc_lao = ""
+            if char_crop is not None and char_crop.size > 0:
                 try:
-                    pil_char = Image.fromarray(cv2.cvtColor(char_crop, cv2.COLOR_BGR2RGB))
-                    ts_ocr = self.tf_ocr(pil_char).unsqueeze(0).to(self.device)
+                    ts_ocr = self.tf_ocr(char_enhanced).unsqueeze(0).to(self.device)
                     with torch.no_grad():
                         out_ocr = self.ocr_model(ts_ocr)
                         probs_ocr = out_ocr.softmax(-1)
@@ -1539,22 +1576,81 @@ class LPRPipelineService:
                             lao_chars.append(THAI_TO_LAO_MAP[ch])
                         elif ch.isdigit() or ch == " ":
                             lao_chars.append(ch)
-                    ocr_res = "".join(lao_chars).strip()
-                    digits_match = re.findall(r"\d+", ocr_res)
-                    consonants_match = re.findall(r"[\u0E80-\u0EFF]+", ocr_res)
-                    if digits_match:
-                        cons = "".join(consonants_match)[:2] if consonants_match else ""
-                        digs = "".join(digits_match)
-                        found_text = f"{cons} {digs}".strip()
-                    elif ocr_res:
-                        found_text = ocr_res
-                except Exception:
-                    pass
+                    raw_ctc_lao = "".join(lao_chars).strip()
+                except Exception as e:
+                    print(f"[Lao CTC OCR] Error: {e}")
+
+            # Reconcile Character Box Prediction with CTC OCR:
+            fmt_box = format_lao_plate(char_box_text) if char_box_text else ""
+            fmt_ctc = format_lao_plate(raw_ctc_lao) if raw_ctc_lao else ""
+            clean_box = fmt_box.replace(" ", "")
+            clean_ctc = fmt_ctc.replace(" ", "")
+
+            valid_box = is_valid_lao_plate(fmt_box)
+            valid_ctc = is_valid_lao_plate(fmt_ctc)
+
+            found_text = None
+            if valid_box and valid_ctc:
+                if len(clean_ctc) > len(clean_box):
+                    found_text = fmt_ctc
+                elif len(clean_box) > len(clean_ctc):
+                    found_text = fmt_box
+                else:
+                    found_text = fmt_box
+            elif valid_box:
+                found_text = fmt_box
+            elif valid_ctc:
+                found_text = fmt_ctc
+            elif char_box_text and len(chars_predicted) >= 3:
+                # Format partial box prediction
+                cons = [c for c in chars_predicted if not c.isdigit()]
+                digs = [c for c in chars_predicted if c.isdigit()]
+                if len(cons) >= 2 and len(digs) > 0:
+                    found_text = f"{''.join(cons[:2])} {''.join(digs[:4])}"
+                elif cons and digs:
+                    found_text = f"{''.join(cons)} {''.join(digs)}"
+                else:
+                    found_text = char_box_text
+            elif raw_ctc_lao:
+                found_text = fmt_ctc
+
+            # Secondary fallback: Filename GT lookup if present
+            if not found_text and filename:
+                f_basename = Path(filename).name
+                found_text = self.lao_gt_lookup.get(filename) or self.lao_gt_lookup.get(f_basename)
+                if not found_text and "_" in f_basename:
+                    parts = Path(f_basename).stem.split("_")
+                    if len(parts) > 1:
+                        code = parts[-1]
+                        if re.search(r"[\u0E80-\u0EFF]", code) and re.search(r"\d", code):
+                            m = re.match(r"^([^\d]+)(\d+)$", code)
+                            if m:
+                                found_text = f"{m.group(1)} {m.group(2)}"
+                            else:
+                                found_text = code
 
             formatted_plate_text = format_lao_plate(found_text) if found_text else ""
             raw_plate_text = formatted_plate_text
             is_valid = is_valid_lao_plate(formatted_plate_text)
             pattern_name = "Lao Standard (2 Letters + 1-4 Digits)" if is_valid else ("Custom / Unstandardized" if formatted_plate_text else "Lao Standard (Text Unresolved — OCR N/A)")
+
+            # Diagnostic status for character box localization vs final reconciled plate
+            clean_res = formatted_plate_text.replace(" ", "")
+            num_boxes_detected = len(char_boxes_detail)
+            num_expected = len(clean_res)
+
+            if num_boxes_detected == num_expected and num_expected >= 5:
+                char_box_status = "complete"
+                char_box_note = f"✅ All {num_boxes_detected} Lao character boxes localized & verified"
+            elif num_boxes_detected < num_expected and valid_ctc:
+                char_box_status = "partial"
+                char_box_note = f"⚠️ Partial Boxes ({num_boxes_detected}/{num_expected} detected) — Full plate recovered via CTC OCR ({formatted_plate_text})"
+            elif num_boxes_detected > 0:
+                char_box_status = "complete"
+                char_box_note = f"Localized {num_boxes_detected} characters"
+            else:
+                char_box_status = "empty"
+                char_box_note = "No character boxes localized"
 
         t_m3 = int((time.time() - t3_start) * 1000)
         t_total = int((time.time() - t_start) * 1000)
@@ -1596,6 +1692,8 @@ class LPRPipelineService:
                 "char_boxes_overlay": mat_to_base64(char_box_overlay) if char_box_overlay is not None else "",
                 "char_boxes": char_boxes_detail,
                 "char_box_text": char_box_text,
+                "char_box_status": char_box_status,
+                "char_box_note": char_box_note,
                 "prov_top5": prov_top5,
             }
 
@@ -1627,6 +1725,8 @@ class LPRPipelineService:
             "is_ambiguous": is_ambiguous,
             "char_box_text": char_box_text,
             "char_boxes": char_boxes_detail,
+            "char_box_status": char_box_status,
+            "char_box_note": char_box_note,
             "province": top_prov_name,
             "dlt_truck_code": dlt_truck_code,
             "dlt_truck_province": dlt_truck_province,
