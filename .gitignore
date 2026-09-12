@@ -44,3 +44,6 @@ scratch/
 static/samples/
 test_slice.jpg
 top_banner_0072.jpg
+
+# ONNX export
+*.ONNX

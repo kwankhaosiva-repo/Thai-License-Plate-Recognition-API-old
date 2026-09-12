@@ -8,6 +8,9 @@ python-dotenv
 ultralytics
 torch
 torchvision
+onnx==1.17.0
+onnxruntime==1.23.2
+onnxslim==0.1.96
 
 # --- Logic & Data Processing ---
 opencv-python-headless
