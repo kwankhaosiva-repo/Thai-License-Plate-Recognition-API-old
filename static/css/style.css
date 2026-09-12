@@ -962,3 +962,31 @@ input:checked + .slider:before {
   box-shadow: 0 0 10px rgba(239, 68, 68, 0.2);
 }
 
+.debug-status-note {
+  margin-top: 8px;
+  padding: 6px 10px;
+  font-size: 0.74rem;
+  line-height: 1.35;
+  border-radius: 6px;
+  font-weight: 500;
+  display: none;
+}
+
+.debug-status-note.status-complete {
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  color: #34d399;
+}
+
+.debug-status-note.status-partial {
+  background: rgba(245, 158, 11, 0.14);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: #fbbf24;
+}
+
+.debug-status-note.status-empty {
+  background: rgba(148, 163, 184, 0.1);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  color: #94a3b8;
+}
+

@@ -96,6 +96,7 @@
   const dbgProvBars = document.getElementById('dbgProvBars');
   const dbgCharBoxes = document.getElementById('dbgCharBoxes');
   const dbgCharBoxesTitle = document.getElementById('dbgCharBoxesTitle');
+  const dbgCharBoxesNote = document.getElementById('dbgCharBoxesNote');
   const cardDbgCharBoxes = document.getElementById('cardDbgCharBoxes');
 
   // Debug Model Tags
@@ -556,6 +557,15 @@
       if (cardDbgCharBoxes) cardDbgCharBoxes.style.display = 'block';
       if (dbgCharBoxesTitle && d.char_box_text) {
         dbgCharBoxesTitle.textContent = `Boxes: ${d.char_box_text}`;
+      }
+      if (dbgCharBoxesNote) {
+        if (d.char_box_note) {
+          dbgCharBoxesNote.textContent = d.char_box_note;
+          dbgCharBoxesNote.className = `debug-status-note status-${d.char_box_status || 'complete'}`;
+          dbgCharBoxesNote.style.display = 'block';
+        } else {
+          dbgCharBoxesNote.style.display = 'none';
+        }
       }
     } else if (cardDbgCharBoxes) {
       cardDbgCharBoxes.style.display = 'none';
