@@ -7,7 +7,9 @@ from typing import Optional
 # User's "N" = Number (Digit), "C" = Character (Thai Consonant).
 
 THAI_CONSONANTS = r"[\u0E01-\u0E2E]"
-LAO_CONSONANTS = r"[\u0E81-\u0EAE]"
+# Strict Lao License Plate Consonants (Active 20 series consonants; excludes unused ຊ, ງ, ຖ, ປ)
+LAO_PLATE_CONSONANTS = r"[ກຂຄຈຍດຕທນບຜພມຣລວສຫອຮ]"
+LAO_CONSONANTS = LAO_PLATE_CONSONANTS
 DIGIT = r"\d"
 
 # Regex Patterns
@@ -18,8 +20,8 @@ PATTERN_NC_NNNN  = re.compile(rf"^{DIGIT}{THAI_CONSONANTS}\s*[-]?\s*{DIGIT}{{1,4
 PATTERN_NN_NNNN  = re.compile(rf"^{DIGIT}{{2}}-{DIGIT}{{4}}$")                      # e.g., 82-6990 (truck / trailer)
 PATTERN_NNNNN    = re.compile(rf"^{DIGIT}{{4,6}}$")                                 # e.g., 12345 (police / official)
 
-# Lao Standard Regex: Strictly 2 Lao consonants in front followed by 1 to 4 digits (e.g., ກກ 0083, ກວ 8607)
-PATTERN_LAO_STANDARD = re.compile(rf"^({LAO_CONSONANTS}{{2}})\s*({DIGIT}{{1,4}})$")
+# Lao Standard Regex: Strictly 2 valid Lao consonants in front followed by 1 to 4 digits (e.g., ກກ 0083, ກວ 8607)
+PATTERN_LAO_STANDARD = re.compile(rf"^({LAO_PLATE_CONSONANTS}{{2}})\s*({DIGIT}{{1,4}})$")
 
 class PlateLabelValidator(BaseModel):
     text: str

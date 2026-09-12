@@ -65,10 +65,11 @@ def get_thai_font(size: int = 16):
     return font
 
 # Phonetic & visual transliteration from Thai consonants to Lao consonants
+# Remapped to the 20 active Lao license plate consonants (excludes unused ຊ, ງ, ຖ, ປ)
 THAI_TO_LAO_MAP: Dict[str, str] = {
-    "ก": "ກ", "ข": "ຂ", "ค": "ຄ", "ง": "ງ", "จ": "ຈ", "ฉ": "ສ", "ช": "ຊ",
-    "ซ": "ຊ", "ญ": "ຍ", "ด": "ດ", "ต": "ຕ", "ถ": "ຖ", "ท": "ທ", "ธ": "ທ",
-    "น": "ນ", "บ": "ບ", "ป": "ປ", "ผ": "ຜ", "ฝ": "ຝ", "พ": "ພ", "ฟ": "ຟ",
+    "ก": "ກ", "ข": "ຂ", "ค": "ຄ", "ง": "ວ", "จ": "ຈ", "ฉ": "ສ", "ช": "ສ",
+    "ซ": "ສ", "ญ": "ຍ", "ด": "ດ", "ต": "ຕ", "ถ": "ດ", "ท": "ທ", "ธ": "ທ",
+    "น": "ນ", "บ": "ບ", "ป": "ບ", "ผ": "ຜ", "ฝ": "ຜ", "พ": "ພ", "ฟ": "ພ",
     "ภ": "ພ", "ม": "ມ", "ย": "ຍ", "ร": "ຣ", "ล": "ລ", "ว": "ວ", "ศ": "ສ",
     "ษ": "ສ", "ส": "ສ", "ห": "ຫ", "ฬ": "ລ", "อ": "ອ", "ฮ": "ຮ",
 }
@@ -201,7 +202,7 @@ def determine_pattern_name(text: str, country: str = "Thai") -> str:
         return "C NNNN (Antique/Motorcycle)"
     if PATTERN_NC_NNNN.match(text.strip()) or PATTERN_NC_NNNN.match(clean):
         return "NC NNNN (Trailer/Special)"
-    if PATTERN_NN_NNNN.match(clean):
+    if PATTERN_NN_NNNN.match(clean) or re.match(r"^\d{2}-\d{4}$", clean) or re.match(r"^\d{6}$", clean):
         return "NN-NNNN (Truck/Transport)"
     if PATTERN_NNNNN.match(clean):
         return "NNNNN (Official/Govt)"
@@ -333,6 +334,96 @@ def recover_character_boxes(detected_boxes, crop_w, crop_h, is_lao=False):
             cur_x = nx2 + 3
 
     return boxes
+
+
+def select_best_truck_6_digits(char_boxes_detail: list, crop_w: int, crop_h: int) -> Optional[str]:
+    """
+    Evaluates candidate character bounding boxes for Thai commercial truck/transport plates (NN-NNNN).
+    Filters top banner noise (THAILAND 01), slender edge slats, and scores 6-digit subsets
+    based on classifier confidence, valid DLT prefix series, baseline alignment, and hyphen spacing gap.
+    """
+    if not char_boxes_detail:
+        return None
+
+    numeric_items = [it for it in char_boxes_detail if it.get("char", "").isdigit()]
+    if len(numeric_items) < 5:
+        return None
+
+    y2_vals = [it["box"][3] for it in numeric_items]
+    h_vals = [it["box"][3] - it["box"][1] for it in numeric_items]
+    med_y2 = float(np.median(y2_vals))
+    med_h = float(np.median(h_vals))
+
+    clean_candidates = []
+    for it in numeric_items:
+        bx1, by1, bx2, by2 = it["box"]
+        bh = by2 - by1
+        bw = bx2 - bx1
+
+        # Reject top banner text (THAILAND 01) if it sits far above the main baseline
+        if by2 <= 0.42 * crop_h and (med_y2 - by2) > 0.25 * crop_h:
+            continue
+
+        # Reject bottom margin noise sitting far below main baseline
+        if by1 >= 0.85 * crop_h and (by1 - (med_y2 - med_h)) > 0.40 * crop_h:
+            continue
+
+        # Reject slender edge slats / cargo cage bars (extreme left/right and narrow aspect ratio)
+        if (bx1 < 0.06 * crop_w or bx2 > 0.94 * crop_w) and (bw / float(max(bh, 1)) < 0.22 or bw < 15):
+            continue
+
+        clean_candidates.append(it)
+
+    clean_candidates.sort(key=lambda it: it["box"][0])
+
+    if len(clean_candidates) == 6:
+        raw_s = "".join([c["char"] for c in clean_candidates])
+        return f"{raw_s[:2]}-{raw_s[2:]}"
+
+    if len(clean_candidates) < 6:
+        return None
+
+    # If > 6 candidates, evaluate all 6-digit combinations
+    import itertools
+    best_score = -float("inf")
+    best_text = None
+
+    for combo in itertools.combinations(clean_candidates, 6):
+        chars = [c["char"] for c in combo]
+        probs = [float(c["prob"]) for c in combo]
+        boxes = [c["box"] for c in combo]
+
+        conf_score = sum(probs) / 6.0
+
+        # Prefix bonus: In Thailand, commercial trucks/buses strictly use 70-99 or 10-19
+        prefix_val = int(chars[0] + chars[1])
+        is_valid_truck_prefix = (70 <= prefix_val <= 99 or 10 <= prefix_val <= 19)
+        prefix_bonus = 30.0 if is_valid_truck_prefix else -30.0
+
+        # Baseline alignment penalty
+        y2_arr = [b[3] for b in boxes]
+        h_arr = [b[3] - b[1] for b in boxes]
+        y2_std = float(np.std(y2_arr))
+        h_std = float(np.std(h_arr))
+
+        # Hyphen spacing gap check
+        gap_23 = boxes[2][0] - boxes[1][2]
+        gap_intra = [
+            boxes[1][0] - boxes[0][2],
+            boxes[3][0] - boxes[2][2],
+            boxes[4][0] - boxes[3][2],
+            boxes[5][0] - boxes[4][2],
+        ]
+        med_intra = float(np.median(gap_intra)) if gap_intra else 10.0
+        spacing_bonus = 15.0 if gap_23 > med_intra * 1.15 else 0.0
+
+        score = conf_score + prefix_bonus + spacing_bonus - (y2_std * 1.5) - (h_std * 0.8)
+        if score > best_score:
+            best_score = score
+            raw_s = "".join(chars)
+            best_text = f"{raw_s[:2]}-{raw_s[2:]}"
+
+    return best_text
 
 
 class LPRPipelineService:
@@ -1327,6 +1418,18 @@ class LPRPipelineService:
                     formatted_plate_text = fmt_box
                 else:
                     formatted_plate_text = fmt_box if fmt_box else fmt_ctc
+
+            # 4. Gated Truck 6-Digit Refiner (NN-NNNN):
+            # Activates ONLY when candidate characters are predominantly digits with 0 Thai consonants
+            # This ensures private cars (1กข 1234), motorcycles, and Lao plates are 100% untouched!
+            digit_count = sum(1 for item in char_boxes_detail if item.get("char", "").isdigit())
+            consonant_count = sum(1 for item in char_boxes_detail if re.match(r"[\u0E01-\u0E2E]", item.get("char", "")))
+            is_truck_candidate = (digit_count >= 5 and consonant_count == 0)
+
+            if is_truck_candidate and (not is_valid_plate(formatted_plate_text) or len(formatted_plate_text.replace("-", "").replace(" ", "")) > 6):
+                best_truck_text = select_best_truck_6_digits(char_boxes_detail, crop_w, char_crop.shape[0])
+                if best_truck_text and is_valid_plate(best_truck_text):
+                    formatted_plate_text = best_truck_text
 
             # Build alternative formatted plate text if ambiguity exists
             if len(alt_candidates) > 0:
