@@ -1,10 +1,12 @@
+import os
 import torch 
 from pathlib import Path
 
 class Config:
     # --- System & Paths ---
     PROJECT_ROOT = Path(__file__).parent.parent.absolute()
-    DEVICE = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
+    FORCE_CPU = os.environ.get("FORCE_CPU", "0") == "1" or os.environ.get("DEVICE", "").lower() == "cpu"
+    DEVICE = torch.device("cpu") if FORCE_CPU else torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
     NUM_WORKERS = 0 
     
     # Data Paths
