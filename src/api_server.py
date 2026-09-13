@@ -21,6 +21,14 @@ Features:
 from __future__ import annotations
 
 import os
+import sys
+from pathlib import Path
+
+# Ensure project root is in sys.path when running script directly from src/
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 import io
@@ -124,7 +132,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.config import cfg
 from src.models import ResNetCRNN, ProvinceClassifier, ResNetProvinceClassifier, best_path_decode
-from src.preprocess import get_ocr_transforms, get_prov_transforms
+from src.preprocess import get_ocr_transforms, get_prov_transforms, get_grayscale_prov_transforms
 from src.validators import (
     format_thai_plate,
     format_lao_plate,
@@ -438,7 +446,7 @@ class LPRPipelineService:
 
         # Thai Models
         ocr_path = cfg.WEIGHTS_DIR / "ocr_model.pth"
-        prov_path = cfg.WEIGHTS_DIR / "province_model.pth"
+        prov_path = cfg.ACTIVE_PROV_MODEL_THAI_PATH
         char_map_path = cfg.WEIGHTS_DIR / "int_to_char.json"
         prov_map_path = cfg.WEIGHTS_DIR / "province_map.json"
         char_box_path = cfg.WEIGHTS_DIR / "character_box_detector.pt"
@@ -447,7 +455,7 @@ class LPRPipelineService:
         digit_class_path = cfg.WEIGHTS_DIR / "digit_classifier.pth"
 
         # Lao Models
-        prov_lao_path = cfg.WEIGHTS_DIR / "province_model_lao.pth"
+        prov_lao_path = cfg.ACTIVE_PROV_MODEL_LAO_PATH
         prov_lao_map_path = cfg.WEIGHTS_DIR / "province_map_lao.json"
         char_lao_class_path = cfg.WEIGHTS_DIR / "character_classifier_lao.pth"
         char_lao_map_path = cfg.WEIGHTS_DIR / "char_classifier_map_lao.json"
@@ -499,15 +507,20 @@ class LPRPipelineService:
         self.digit_classifier = self._load_digit_classifier(digit_class_path)
 
         # 5. Load Model 3B (Thai Province Model)
-        print(f"[Model 3B] Loading MobileNetV2 Thai Province model from: {prov_path}")
+        print(f"[Model 3B] Loading Thai Province model ({cfg.PROV_MODEL_THAI_TAG}) from: {prov_path}")
         self.prov_model_thai, self.int_to_prov_thai = self._load_prov_model(prov_path, prov_map_path)
 
         # 6. Load Model 3B_Lao (Lao Province Model)
+        print(f"[Model 3B_Lao] Loading Lao Province model ({cfg.PROV_MODEL_LAO_TAG}) from: {prov_lao_path}")
         self.prov_model_lao, self.int_to_prov_lao = self._load_lao_prov_model(prov_lao_path, prov_lao_map_path)
 
         # 7. Transforms
         self.tf_ocr = get_ocr_transforms(is_train=False)
-        self.tf_prov = get_prov_transforms(is_train=False)
+        if "grayscale" in prov_path.name or "grayscale" in prov_lao_path.name:
+            print("[Model 3B] Using GrayscaleSmartResize dynamic background tone padding transform")
+            self.tf_prov = get_grayscale_prov_transforms(is_train=False)
+        else:
+            self.tf_prov = get_prov_transforms(is_train=False)
         self.tf_char = transforms.Compose([
             transforms.Resize((64, 64)),
             transforms.ToTensor(),
@@ -575,10 +588,11 @@ class LPRPipelineService:
 
         ckpt = torch.load(model_path, map_location=self.device)
         state_dict = ckpt.get("model_state", ckpt.get("model_state_dict", ckpt))
-        backbone = ckpt.get("backbone", "mobilenet_v2")
+        backbone = ckpt.get("backbone", "")
+        is_resnet = "resnet" in backbone or any(k.startswith("model.conv1") or k.startswith("model.layer") for k in state_dict.keys())
 
-        if "resnet" in backbone:
-            model = ResNetProvinceClassifier(n_classes=len(int_to_prov), backbone=backbone, pretrained=False).to(self.device)
+        if is_resnet:
+            model = ResNetProvinceClassifier(n_classes=len(int_to_prov), backbone="resnet18", pretrained=False).to(self.device)
         else:
             model = ProvinceClassifier(n_classes=len(int_to_prov), pretrained=False).to(self.device)
 
@@ -598,10 +612,11 @@ class LPRPipelineService:
 
         ckpt = torch.load(model_path, map_location=self.device)
         state_dict = ckpt.get("model_state", ckpt.get("model_state_dict", ckpt))
-        backbone = ckpt.get("backbone", "mobilenet_v2")
+        backbone = ckpt.get("backbone", "")
+        is_resnet = "resnet" in backbone or any(k.startswith("model.conv1") or k.startswith("model.layer") for k in state_dict.keys())
 
-        if "resnet" in backbone:
-            model = ResNetProvinceClassifier(n_classes=len(int_to_prov), backbone=backbone, pretrained=False).to(self.device)
+        if is_resnet:
+            model = ResNetProvinceClassifier(n_classes=len(int_to_prov), backbone="resnet18", pretrained=False).to(self.device)
         else:
             model = models.mobilenet_v2(weights=None)
             model.classifier = nn.Sequential(
@@ -1898,8 +1913,8 @@ def api_health():
             "model_3a_thai_char_box": f"{cfg.ACTIVE_CHAR_BOX_MODEL_PATH.name} (Individual Char BBox)",
             "model_3a_thai_char_classifier": "character_classifier.pth (50 Thai Classes)",
             "model_3a_lao_char_classifier": "character_classifier_lao.pth (34 Lao Classes)",
-            "model_3b_thai": "province_model.pth (77 Thai Provinces)",
-            "model_3b_lao": "province_model_lao.pth (18 Lao Provinces)",
+            "model_3b_thai": f"{cfg.ACTIVE_PROV_MODEL_THAI_PATH.name} ({cfg.PROV_MODEL_THAI_TAG})",
+            "model_3b_lao": f"{cfg.ACTIVE_PROV_MODEL_LAO_PATH.name} ({cfg.PROV_MODEL_LAO_TAG})",
         },
         "model_tags": cfg.model_tags,
     }

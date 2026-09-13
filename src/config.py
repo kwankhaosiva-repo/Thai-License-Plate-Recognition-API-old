@@ -82,11 +82,35 @@ class Config:
     
     # Model 3B: Province Classification
     PROV_MODEL_THAI_PATH = WEIGHTS_DIR / "province_model.pth"
-    PROV_MODEL_THAI_TAG = "MobileNetV2 (77 Thai Provinces)"
-    
+    PROV_MODEL_THAI_GRAYSCALE_PATH = WEIGHTS_DIR / "province_model_grayscale_thai.pth"
+
     PROV_MODEL_LAO_PATH = WEIGHTS_DIR / "province_model_lao.pth"
-    PROV_MODEL_LAO_TAG = "MobileNetV2 (18 Lao Provinces)"
-    
+    PROV_MODEL_LAO_GRAYSCALE_PATH = WEIGHTS_DIR / "province_model_grayscale_lao.pth"
+
+    @property
+    def ACTIVE_PROV_MODEL_THAI_PATH(self):
+        if self.PROV_MODEL_THAI_GRAYSCALE_PATH.exists():
+            return self.PROV_MODEL_THAI_GRAYSCALE_PATH
+        return self.PROV_MODEL_THAI_PATH
+
+    @property
+    def PROV_MODEL_THAI_TAG(self):
+        if self.PROV_MODEL_THAI_GRAYSCALE_PATH.exists():
+            return "ResNet18-Grayscale (77 Thai Provinces)"
+        return "MobileNetV2 (77 Thai Provinces)"
+
+    @property
+    def ACTIVE_PROV_MODEL_LAO_PATH(self):
+        if self.PROV_MODEL_LAO_GRAYSCALE_PATH.exists():
+            return self.PROV_MODEL_LAO_GRAYSCALE_PATH
+        return self.PROV_MODEL_LAO_PATH
+
+    @property
+    def PROV_MODEL_LAO_TAG(self):
+        if self.PROV_MODEL_LAO_GRAYSCALE_PATH.exists():
+            return "ResNet18-Grayscale (18 Lao Provinces)"
+        return "MobileNetV2 (18 Lao Provinces)"
+
     # Aliases for backwards compatibility
     MODEL_DETECTION_PATH = MODEL_1_PATH
     MODEL_OCR_PREP_PATH  = MODEL_2_PATH

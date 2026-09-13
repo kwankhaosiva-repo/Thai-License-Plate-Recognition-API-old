@@ -76,3 +76,52 @@ def get_prov_transforms(is_train=False):
             transforms.Normalize(mean=[0.485, 0.456, 0.406], 
                                  std=[0.229, 0.224, 0.225]),
         ])
+
+
+class GrayscaleSmartResize:
+    """
+    Color-invariant resize that dynamically pads with natural edge/corner tones
+    instead of harsh pitch-black zero padding.
+    """
+    def __init__(self, size=(256, 64)):
+        self.target_w, self.target_h = size
+
+    def __call__(self, img_pil):
+        if not hasattr(img_pil, "size"):
+            img_pil = Image.fromarray(img_pil)
+        gray_im = img_pil.convert("L")
+        w, h = gray_im.size
+
+        im_arr = np.array(gray_im)
+        corners = [im_arr[0, 0], im_arr[0, -1], im_arr[-1, 0], im_arr[-1, -1]]
+        bg_val = int(np.median(corners))
+
+        ratio = min(self.target_w / w, self.target_h / h)
+        new_w, new_h = max(4, int(w * ratio)), max(4, int(h * ratio))
+        resized = gray_im.resize((new_w, new_h), Image.BICUBIC)
+
+        new_im = Image.new("L", (self.target_w, self.target_h), color=bg_val)
+        paste_x = (self.target_w - new_w) // 2
+        paste_y = (self.target_h - new_h) // 2
+        new_im.paste(resized, (paste_x, paste_y))
+
+        return new_im.convert("RGB")
+
+
+def get_grayscale_prov_transforms(is_train=False):
+    if is_train:
+        return transforms.Compose([
+            GrayscaleSmartResize((256, 64)),
+            transforms.RandomAffine(degrees=4, translate=(0.02, 0.04)),
+            transforms.ColorJitter(brightness=0.3, contrast=0.3),
+            transforms.RandomAutocontrast(p=0.4),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.25, 0.25, 0.25]),
+        ])
+    else:
+        return transforms.Compose([
+            GrayscaleSmartResize((256, 64)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.25, 0.25, 0.25]),
+        ])
+
