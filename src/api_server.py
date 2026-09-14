@@ -537,9 +537,32 @@ class RFDETRWrapper:
 
 
 class LPRPipelineService:
+    @staticmethod
+    def _print_banner(device: str, models: list[tuple[str, str]], debug: bool) -> None:
+        """Print a clean startup banner to terminal."""
+        W = 70
+        device_icon = "🔵 CPU" if "cpu" in str(device) else ("🟢 CUDA" if "cuda" in str(device) else "🟠 MPS")
+        debug_icon  = "🔴 ON " if debug else "⚫ OFF"
+        sep  = "─" * W
+        sep2 = "═" * W
+        print()
+        print(f"╔{'═' * W}╗")
+        print(f"║{'  Thai & Lao LPR — Model Startup':^{W}}║")
+        print(f"╠{'═' * W}╣")
+        print(f"║  Compute Device : {device_icon:<{W-21}}║")
+        print(f"║  Debug Mode     : {debug_icon:<{W-21}}║")
+        print(f"╠{'═' * W}╣")
+        print(f"║  {'Model':<12}  {'File':<32}  {'Tag':<{W-50}}║")
+        print(f"║  {sep}║")
+        for label, fname, tag in models:
+            fname_short = fname[:30] + ".." if len(fname) > 32 else fname
+            tag_short   = tag[:W-50]
+            print(f"║  {label:<12}  {fname_short:<32}  {tag_short:<{W-50}}║")
+        print(f"╚{'═' * W}╝")
+        print()
+
     def __init__(self):
         self.device = cfg.DEVICE
-        print(f"[LPRPipelineService] Initializing on device: {self.device}")
 
         # Model Paths
         m1_path = cfg.WEIGHTS_DIR / "plate_polygon_detector.pt"
@@ -565,20 +588,16 @@ class LPRPipelineService:
         # 1. Load Model 1 (Plate Detector)
         active_m1_path = cfg.ACTIVE_MODEL_1_PATH
         if "rfdetr" in active_m1_path.name and active_m1_path.exists():
-            print(f"[Model 1] Loading RF-DETR enterprise plate detector from: {active_m1_path}")
             self.model_plate = self._load_rfdetr_model(active_m1_path, class_names=["plate"])
         elif active_m1_path.name.endswith("_rtdetr.pt"):
-            print(f"[Model 1] Loading RT-DETR enterprise plate detector from: {active_m1_path}")
             self.model_plate = RTDETR(str(active_m1_path))
         else:
-            print(f"[Model 1] Loading plate polygon detector from: {active_m1_path}")
             self.model_plate = YOLO(str(active_m1_path))
 
-        # 1.1 Load Plate 4-Corner Homography Regressor (Permissive BSD-3 MobileNetV3)
+        # 1.1 Load Plate 4-Corner Homography Regressor
         corner_model_path = cfg.PLATE_CORNER_MODEL_PATH
         self.plate_corner_model = None
         if corner_model_path.exists():
-            print(f"[Model 1] Loading Plate 4-Corner Homography Regressor from: {corner_model_path}")
             self.plate_corner_model = self._load_plate_corner_model(corner_model_path)
 
         # 2. Load Model 1.5 (Country Classifier: Thai vs Laos)
@@ -587,29 +606,22 @@ class LPRPipelineService:
         # 3. Load Model 2 (Component Detector: plate_char & province)
         active_m2_path = cfg.ACTIVE_MODEL_2_PATH
         if "rfdetr" in active_m2_path.name and active_m2_path.exists():
-            print(f"[Model 2] Loading RF-DETR enterprise component detector from: {active_m2_path}")
             self.model_comp = self._load_rfdetr_model(active_m2_path, class_names=["plate_char", "province"])
         elif active_m2_path.name.endswith("_rtdetr.pt"):
-            print(f"[Model 2] Loading RT-DETR enterprise component detector from: {active_m2_path}")
             self.model_comp = RTDETR(str(active_m2_path))
         else:
-            print(f"[Model 2] Loading YOLO component detector from: {active_m2_path}")
             self.model_comp = YOLO(str(active_m2_path))
 
         # 4. Load Model 3A (Thai OCR Model - ResNetCRNN CTC)
-        print(f"[Model 3A] Loading ResNetCRNN OCR model from: {ocr_path}")
         self.ocr_model, self.int_to_char = self._load_ocr_model(ocr_path, char_map_path)
 
-        # 4.5. Load Character Box Detector & Character Classifier (Individual Boxes)
+        # 4.5. Load Character Box Detector & Character Classifier
         active_char_box_path = cfg.ACTIVE_CHAR_BOX_MODEL_PATH
         if "rfdetr" in active_char_box_path.name and active_char_box_path.exists():
-            print(f"[Model 3A] Loading RF-DETR character box detector from: {active_char_box_path}")
             self.char_box_model = self._load_rfdetr_model(active_char_box_path, class_names=["char"])
         elif active_char_box_path.name.endswith("_rtdetr.pt"):
-            print(f"[Model 3A] Loading RT-DETR character box detector from: {active_char_box_path}")
             self.char_box_model = RTDETR(str(active_char_box_path))
         elif active_char_box_path.exists():
-            print(f"[Model 3A] Loading YOLO character box detector from: {active_char_box_path}")
             self.char_box_model = YOLO(str(active_char_box_path))
         else:
             self.char_box_model = None
@@ -618,17 +630,14 @@ class LPRPipelineService:
         self.digit_classifier = self._load_digit_classifier(digit_class_path)
 
         # 5. Load Model 3B (Thai Province Model)
-        print(f"[Model 3B] Loading Thai Province model ({cfg.PROV_MODEL_THAI_TAG}) from: {prov_path}")
         self.prov_model_thai, self.int_to_prov_thai = self._load_prov_model(prov_path, prov_map_path)
 
         # 6. Load Model 3B_Lao (Lao Province Model)
-        print(f"[Model 3B_Lao] Loading Lao Province model ({cfg.PROV_MODEL_LAO_TAG}) from: {prov_lao_path}")
         self.prov_model_lao, self.int_to_prov_lao = self._load_lao_prov_model(prov_lao_path, prov_lao_map_path)
 
         # 7. Transforms
         self.tf_ocr = get_ocr_transforms(is_train=False)
         if "grayscale" in prov_path.name or "grayscale" in prov_lao_path.name:
-            print("[Model 3B] Using GrayscaleSmartResize dynamic background tone padding transform")
             self.tf_prov = get_grayscale_prov_transforms(is_train=False)
         else:
             self.tf_prov = get_prov_transforms(is_train=False)
@@ -662,24 +671,44 @@ class LPRPipelineService:
         # Global latest detection for RTSP stream viewer
         self.latest_stream_detection: Optional[Dict[str, Any]] = None
 
-        print("[LPRPipelineService] Multi-Country Models Successfully Loaded & Ready!")
+        # ── Pretty startup banner ────────────────────────────────────────
+        active_m1   = cfg.ACTIVE_MODEL_1_PATH
+        active_m2   = cfg.ACTIVE_MODEL_2_PATH
+        active_m3a  = cfg.ACTIVE_CHAR_BOX_MODEL_PATH
+        active_m3b  = cfg.ACTIVE_PROV_MODEL_THAI_PATH
+        active_lao  = cfg.ACTIVE_PROV_MODEL_LAO_PATH
+
+        self._print_banner(
+            device=str(self.device),
+            models=[
+                ("Model 1",     active_m1.name,  cfg.MODEL_1_TAG),
+                ("Model 1.5",   "country_classifier.pth", cfg.MODEL_1_5_TAG),
+                ("Model 2",     active_m2.name,  cfg.MODEL_2_TAG),
+                ("Model 3A-Box",active_m3a.name, cfg.CHAR_BOX_TAG),
+                ("Model 3A-OCR","ocr_model.pth", cfg.OCR_MODEL_TAG),
+                ("Model 3B-TH", active_m3b.name, cfg.PROV_MODEL_THAI_TAG),
+                ("Model 3B-Lao",active_lao.name, cfg.PROV_MODEL_LAO_TAG),
+            ],
+            debug=cfg.DEBUG_MODE,
+        )
 
     def _load_rfdetr_model(self, model_path: Path, class_names: list[str] | dict[int, str] | None = None):
         """Loads an RF-DETR (Base or Small) model from a checkpoint (.pt or .pth) and wraps it."""
         from rfdetr import RFDETRBase, RFDETRSmall
         if "small" in str(model_path).lower():
-            print(f"Loading RF-DETR-Small (Apache-2.0) checkpoint from: {model_path}")
             model = RFDETRSmall.from_checkpoint(str(model_path), trust_checkpoint=True)
         else:
-            print(f"Loading RF-DETR-Base (Apache-2.0) checkpoint from: {model_path}")
             try:
                 model = RFDETRBase.from_checkpoint(str(model_path), trust_checkpoint=True)
             except Exception:
                 model = RFDETRSmall.from_checkpoint(str(model_path), trust_checkpoint=True)
+
+        # Force RF-DETR to respect self.device (otherwise RF-DETR auto-detects MPS and ignores FORCE_CPU)
+        if hasattr(model, "model") and hasattr(model.model, "device"):
+            model.model.device = self.device
         return RFDETRWrapper(model, names=class_names, device=self.device)
 
     def _load_country_classifier(self, path: Path):
-        print(f"[Model 1.5] Loading Country Classifier from: {path}")
         if not path.exists():
             print("   Country Classifier weights not found. Defaulting to Thai.")
             return None
@@ -1902,7 +1931,19 @@ class LPRPipelineService:
         t_m3 = int((time.time() - t3_start) * 1000)
         t_total = int((time.time() - t_start) * 1000)
 
-        # --- Debug Artifacts Generation ---
+        # ── Per-request latency log ──────────────────────────────────────
+        _bar = lambda ms: ("█" * min(int(ms / 10), 20)).ljust(20)
+        print(
+            f"\n  ┌─ Inference ({'DEBUG' if debug else 'PROD'}) ─────────────────────────────────────\n"
+            f"  │  M1 Plate     {t_m1:>4} ms  {_bar(t_m1)}\n"
+            f"  │  M1.5 Country {t_country:>4} ms  {_bar(t_country)}\n"
+            f"  │  M2 Component {t_m2:>4} ms  {_bar(t_m2)}\n"
+            f"  │  M3 OCR+Prov  {t_m3:>4} ms  {_bar(t_m3)}\n"
+            f"  │  {'─'*48}\n"
+            f"  └─ TOTAL        {t_total:>4} ms  {_bar(t_total)}"
+        )
+
+
         debug_payload = None
         if debug:
             poly_overlay_bgr = preview_bgr.copy()
@@ -2034,6 +2075,7 @@ def api_health():
         "status": "online",
         "service": "Multi-Country (Thai & Laos) LPR Recognition Engine",
         "device": str(cfg.DEVICE),
+        "debug_mode": cfg.DEBUG_MODE,
         "models": {
             "model_1": f"{cfg.ACTIVE_MODEL_1_PATH.name} (Plate Detection)",
             "model_1_5": "country_classifier.pth (Thai vs Laos Classifier)",
@@ -2049,13 +2091,22 @@ def api_health():
     }
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """Silence browser favicon 404 requests."""
+    from fastapi.responses import Response
+    return Response(status_code=204)
+
+
 @app.post("/api/detect/image")
 async def detect_image_endpoint(
     files: List[UploadFile] = File(...),
-    debug: bool = Form(False),
+    debug: Optional[bool] = Form(None),
     conf_m1: float = Form(0.35),
     conf_m2: float = Form(0.25),
 ):
+    # Use cfg.DEBUG_MODE as default; dashboard can still override per-request
+    use_debug = cfg.DEBUG_MODE if debug is None else debug
     if pipeline_service is None:
         raise HTTPException(status_code=503, detail="Pipeline service not initialized yet")
 
@@ -2076,7 +2127,7 @@ async def detect_image_endpoint(
         res = pipeline_service.process_image(
             img_bgr,
             filename=f.filename,
-            debug=debug,
+            debug=use_debug,
             conf_m1=conf_m1,
             conf_m2=conf_m2,
         )
@@ -2089,9 +2140,10 @@ async def detect_image_endpoint(
 @app.post("/api/detect/video")
 async def detect_video_endpoint(
     file: UploadFile = File(...),
-    debug: bool = Form(False),
+    debug: Optional[bool] = Form(None),
     sample_rate: int = Form(5),
 ):
+    use_debug = cfg.DEBUG_MODE if debug is None else debug
     if pipeline_service is None:
         raise HTTPException(status_code=503, detail="Pipeline service not initialized yet")
 
@@ -2118,7 +2170,7 @@ async def detect_video_endpoint(
 
             if frame_count % sample_rate == 0:
                 sec = round(frame_count / fps, 2)
-                res = pipeline_service.process_image(frame, debug=debug)
+                res = pipeline_service.process_image(frame, debug=use_debug)
                 if res.get("detected"):
                     res["timestamp_sec"] = sec
                     res["frame_idx"] = frame_count
