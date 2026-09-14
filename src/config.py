@@ -21,16 +21,26 @@ class Config:
     # Model 1: Plate Detection & Polygon Segmentation
     MODEL_1_PATH = WEIGHTS_DIR / "plate_polygon_detector.pt"
     MODEL_1_RTDETR_PATH = WEIGHTS_DIR / "plate_detector_rtdetr.pt"
+    MODEL_1_RFDETR_PATH = WEIGHTS_DIR / "plate_detector_rfdetr.pt"
+    MODEL_1_RFDETR_SMALL_PATH = WEIGHTS_DIR / "plate_detector_rfdetr_small.pt"
     PLATE_CORNER_MODEL_PATH = WEIGHTS_DIR / "plate_corner_regressor.pth"
 
     @property
     def ACTIVE_MODEL_1_PATH(self):
+        if self.MODEL_1_RFDETR_SMALL_PATH.exists():
+            return self.MODEL_1_RFDETR_SMALL_PATH  # Apache-2.0 RF-DETR-Small ⚡
+        if self.MODEL_1_RFDETR_PATH.exists():
+            return self.MODEL_1_RFDETR_PATH   # Apache-2.0 ✅
         if self.MODEL_1_RTDETR_PATH.exists():
-            return self.MODEL_1_RTDETR_PATH
-        return self.MODEL_1_PATH
+            return self.MODEL_1_RTDETR_PATH   # Apache-2.0 (architecture) via ultralytics
+        return self.MODEL_1_PATH              # YOLO11-seg fallback
 
     @property
     def MODEL_1_TAG(self):
+        if self.MODEL_1_RFDETR_SMALL_PATH.exists():
+            return "RF-DETR-Small (Apache-2.0)"
+        if self.MODEL_1_RFDETR_PATH.exists():
+            return "RF-DETR-Base (Apache-2.0)"
         if self.MODEL_1_RTDETR_PATH.exists():
             if self.PLATE_CORNER_MODEL_PATH.exists():
                 return "RT-DETR-L + Polygon Quad (Apache-2.0 / BSD-3)"
@@ -44,15 +54,25 @@ class Config:
     # Model 2: Component Detection
     MODEL_2_PATH = WEIGHTS_DIR / "component_detector.pt"
     MODEL_2_RTDETR_PATH = WEIGHTS_DIR / "component_detector_rtdetr.pt"
+    MODEL_2_RFDETR_PATH = WEIGHTS_DIR / "component_detector_rfdetr.pt"
+    MODEL_2_RFDETR_SMALL_PATH = WEIGHTS_DIR / "component_detector_rfdetr_small.pt"
 
     @property
     def ACTIVE_MODEL_2_PATH(self):
+        if self.MODEL_2_RFDETR_SMALL_PATH.exists():
+            return self.MODEL_2_RFDETR_SMALL_PATH  # Apache-2.0 RF-DETR-Small ⚡
+        if self.MODEL_2_RFDETR_PATH.exists():
+            return self.MODEL_2_RFDETR_PATH   # Apache-2.0 ✅
         if self.MODEL_2_RTDETR_PATH.exists():
             return self.MODEL_2_RTDETR_PATH
         return self.MODEL_2_PATH
 
     @property
     def MODEL_2_TAG(self):
+        if self.MODEL_2_RFDETR_SMALL_PATH.exists():
+            return "RF-DETR-Small (Apache-2.0)"
+        if self.MODEL_2_RFDETR_PATH.exists():
+            return "RF-DETR-Base (Apache-2.0)"
         if self.MODEL_2_RTDETR_PATH.exists():
             return "RT-DETR-L (Apache-2.0)"
         return "YOLO11-Comp (plate_char / prov)"
@@ -60,15 +80,25 @@ class Config:
     # Model 3A: Character Box Detection & Recognition
     CHAR_BOX_MODEL_PATH = WEIGHTS_DIR / "character_box_detector.pt"
     CHAR_BOX_MODEL_RTDETR_PATH = WEIGHTS_DIR / "character_box_detector_rtdetr.pt"
+    CHAR_BOX_MODEL_RFDETR_PATH = WEIGHTS_DIR / "character_box_detector_rfdetr.pt"
+    CHAR_BOX_MODEL_RFDETR_SMALL_PATH = WEIGHTS_DIR / "character_box_detector_rfdetr_small.pt"
 
     @property
     def ACTIVE_CHAR_BOX_MODEL_PATH(self):
+        if self.CHAR_BOX_MODEL_RFDETR_SMALL_PATH.exists():
+            return self.CHAR_BOX_MODEL_RFDETR_SMALL_PATH  # Apache-2.0 RF-DETR-Small ⚡
+        if self.CHAR_BOX_MODEL_RFDETR_PATH.exists():
+            return self.CHAR_BOX_MODEL_RFDETR_PATH   # Apache-2.0 ✅
         if self.CHAR_BOX_MODEL_RTDETR_PATH.exists():
             return self.CHAR_BOX_MODEL_RTDETR_PATH
         return self.CHAR_BOX_MODEL_PATH
 
     @property
     def CHAR_BOX_TAG(self):
+        if self.CHAR_BOX_MODEL_RFDETR_SMALL_PATH.exists():
+            return "RF-DETR-Small (Apache-2.0)"
+        if self.CHAR_BOX_MODEL_RFDETR_PATH.exists():
+            return "RF-DETR-Base (Apache-2.0)"
         if self.CHAR_BOX_MODEL_RTDETR_PATH.exists():
             return "RT-DETR-L (Apache-2.0)"
         return "YOLO11-Box"
@@ -99,6 +129,8 @@ class Config:
     def PROV_MODEL_THAI_TAG(self):
         if self.PROV_MODEL_THAI_GRAYSCALE_PATH.exists():
             return "ResNet18-Grayscale (77 Thai Provinces)"
+        if self.PROV_MODEL_THAI_PATH.exists():
+            return "ResNet34 (77 Thai Provinces)"
         return "MobileNetV2 (77 Thai Provinces)"
 
     @property
@@ -111,6 +143,8 @@ class Config:
     def PROV_MODEL_LAO_TAG(self):
         if self.PROV_MODEL_LAO_GRAYSCALE_PATH.exists():
             return "ResNet18-Grayscale (18 Lao Provinces)"
+        if self.PROV_MODEL_LAO_PATH.exists():
+            return "ResNet18 (18 Lao Provinces)"
         return "MobileNetV2 (18 Lao Provinces)"
 
     # Aliases for backwards compatibility

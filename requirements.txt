@@ -6,6 +6,7 @@ python-dotenv
 
 # --- AI & ML Core ---
 ultralytics
+rfdetr[train]==1.10.1   # Apache-2.0 — RF-DETR-Base object detection (free commercial use)
 torch
 torchvision
 onnx==1.17.0
