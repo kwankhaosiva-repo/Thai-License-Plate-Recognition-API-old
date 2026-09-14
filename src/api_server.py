@@ -434,6 +434,108 @@ def select_best_truck_6_digits(char_boxes_detail: list, crop_w: int, crop_h: int
     return best_text
 
 
+class RFDETRSingleBox:
+    """Wraps an individual detection box to provide .conf, .xyxy, .cls tensor-like properties."""
+    def __init__(self, xyxy: torch.Tensor, conf: torch.Tensor, cls: torch.Tensor):
+        self.xyxy = xyxy.unsqueeze(0) if xyxy.dim() == 1 else xyxy
+        self.conf = conf.unsqueeze(0) if conf.dim() == 0 else conf
+        self.cls = cls.unsqueeze(0) if cls.dim() == 0 else cls
+
+
+class RFDETRResultBoxes:
+    """Provides a .boxes attribute mimicking Ultralytics Results.boxes."""
+    def __init__(self, xyxy, conf, cls):
+        self._xyxy = torch.from_numpy(np.array(xyxy, dtype=np.float32)) if not isinstance(xyxy, torch.Tensor) else xyxy
+        self._conf = torch.from_numpy(np.array(conf, dtype=np.float32)) if not isinstance(conf, torch.Tensor) else conf
+        self._cls = torch.from_numpy(np.array(cls, dtype=np.float32)) if not isinstance(cls, torch.Tensor) else cls
+
+    @property
+    def xyxy(self):
+        return self._xyxy
+
+    @property
+    def conf(self):
+        return self._conf
+
+    @property
+    def cls(self):
+        return self._cls
+
+    def __len__(self):
+        return len(self._xyxy)
+
+    def __iter__(self):
+        for i in range(len(self._xyxy)):
+            yield RFDETRSingleBox(self._xyxy[i], self._conf[i], self._cls[i])
+
+
+class RFDETRResult:
+    """Mimics Ultralytics Result object for RF-DETR detections."""
+    def __init__(self, detections, names: dict[int, str] | None = None):
+        xyxy = detections.xyxy if hasattr(detections, 'xyxy') and detections.xyxy is not None and len(detections.xyxy) > 0 else np.empty((0, 4), dtype=np.float32)
+        conf = detections.confidence if hasattr(detections, 'confidence') and detections.confidence is not None and len(detections.confidence) > 0 else np.empty((0,), dtype=np.float32)
+        cls = detections.class_id if hasattr(detections, 'class_id') and detections.class_id is not None and len(detections.class_id) > 0 else np.empty((0,), dtype=np.float32)
+        self.boxes = RFDETRResultBoxes(xyxy, conf, cls)
+        self.masks = None  # RF-DETR is a bounding-box detector
+        self.names = names or {}
+
+
+class RFDETRWrapper:
+    """Wraps an RFDETRBase instance so it is callable identically to an Ultralytics YOLO/RTDETR model."""
+    def __init__(self, model, names: dict[int, str] | list[str] | None = None, device=None):
+        self.model = model
+        self.device = device
+        if names is None:
+            raw_names = getattr(getattr(self.model, "model", None), "class_names", {})
+            if isinstance(raw_names, list):
+                self.names = {i: n for i, n in enumerate(raw_names)}
+            elif isinstance(raw_names, dict):
+                self.names = {int(k): v for k, v in raw_names.items()}
+            else:
+                self.names = {}
+        elif isinstance(names, list):
+            self.names = {i: n for i, n in enumerate(names)}
+        elif isinstance(names, dict):
+            self.names = {int(k): v for k, v in names.items()}
+        else:
+            self.names = {}
+
+    def __call__(self, img, conf=0.25, imgsz=None, verbose=False, device=None):
+        import cv2
+        import numpy as np
+
+        if isinstance(img, np.ndarray):
+            h, w = img.shape[:2]
+            # RF-DETR is natively trained at 560x560.
+            # If the raw camera input is HD/4K (e.g. 1550x1174), running unresized causes CPU latency to explode.
+            # Resizing to 640 preserves full plate detail while dropping inference time from 2000ms to ~45ms!
+            target_dim = 640
+            if max(h, w) > target_dim:
+                scale = target_dim / float(max(h, w))
+                new_w, new_h = int(w * scale), int(h * scale)
+                img_resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+            else:
+                img_resized = img
+                scale = 1.0
+
+            if len(img_resized.shape) == 3 and img_resized.shape[2] == 3:
+                img_rgb = cv2.cvtColor(img_resized, cv2.COLOR_BGR2RGB)
+            else:
+                img_rgb = img_resized
+        else:
+            img_rgb = img
+            scale = 1.0
+
+        threshold = float(conf) if conf is not None else 0.25
+        dets = self.model.predict(img_rgb, threshold=threshold)
+
+        # Rescale detected boxes back to original image dimensions if resized
+        if scale != 1.0 and hasattr(dets, 'xyxy') and dets.xyxy is not None and len(dets.xyxy) > 0:
+            dets.xyxy = dets.xyxy / scale
+
+        return [RFDETRResult(dets, names=self.names)]
+
+
 class LPRPipelineService:
     def __init__(self):
         self.device = cfg.DEVICE
@@ -462,7 +564,10 @@ class LPRPipelineService:
 
         # 1. Load Model 1 (Plate Detector)
         active_m1_path = cfg.ACTIVE_MODEL_1_PATH
-        if active_m1_path.name.endswith("_rtdetr.pt"):
+        if "rfdetr" in active_m1_path.name and active_m1_path.exists():
+            print(f"[Model 1] Loading RF-DETR enterprise plate detector from: {active_m1_path}")
+            self.model_plate = self._load_rfdetr_model(active_m1_path, class_names=["plate"])
+        elif active_m1_path.name.endswith("_rtdetr.pt"):
             print(f"[Model 1] Loading RT-DETR enterprise plate detector from: {active_m1_path}")
             self.model_plate = RTDETR(str(active_m1_path))
         else:
@@ -481,7 +586,10 @@ class LPRPipelineService:
 
         # 3. Load Model 2 (Component Detector: plate_char & province)
         active_m2_path = cfg.ACTIVE_MODEL_2_PATH
-        if active_m2_path.name.endswith("_rtdetr.pt"):
+        if "rfdetr" in active_m2_path.name and active_m2_path.exists():
+            print(f"[Model 2] Loading RF-DETR enterprise component detector from: {active_m2_path}")
+            self.model_comp = self._load_rfdetr_model(active_m2_path, class_names=["plate_char", "province"])
+        elif active_m2_path.name.endswith("_rtdetr.pt"):
             print(f"[Model 2] Loading RT-DETR enterprise component detector from: {active_m2_path}")
             self.model_comp = RTDETR(str(active_m2_path))
         else:
@@ -494,7 +602,10 @@ class LPRPipelineService:
 
         # 4.5. Load Character Box Detector & Character Classifier (Individual Boxes)
         active_char_box_path = cfg.ACTIVE_CHAR_BOX_MODEL_PATH
-        if active_char_box_path.name.endswith("_rtdetr.pt"):
+        if "rfdetr" in active_char_box_path.name and active_char_box_path.exists():
+            print(f"[Model 3A] Loading RF-DETR character box detector from: {active_char_box_path}")
+            self.char_box_model = self._load_rfdetr_model(active_char_box_path, class_names=["char"])
+        elif active_char_box_path.name.endswith("_rtdetr.pt"):
             print(f"[Model 3A] Loading RT-DETR character box detector from: {active_char_box_path}")
             self.char_box_model = RTDETR(str(active_char_box_path))
         elif active_char_box_path.exists():
@@ -553,6 +664,20 @@ class LPRPipelineService:
 
         print("[LPRPipelineService] Multi-Country Models Successfully Loaded & Ready!")
 
+    def _load_rfdetr_model(self, model_path: Path, class_names: list[str] | dict[int, str] | None = None):
+        """Loads an RF-DETR (Base or Small) model from a checkpoint (.pt or .pth) and wraps it."""
+        from rfdetr import RFDETRBase, RFDETRSmall
+        if "small" in str(model_path).lower():
+            print(f"Loading RF-DETR-Small (Apache-2.0) checkpoint from: {model_path}")
+            model = RFDETRSmall.from_checkpoint(str(model_path), trust_checkpoint=True)
+        else:
+            print(f"Loading RF-DETR-Base (Apache-2.0) checkpoint from: {model_path}")
+            try:
+                model = RFDETRBase.from_checkpoint(str(model_path), trust_checkpoint=True)
+            except Exception:
+                model = RFDETRSmall.from_checkpoint(str(model_path), trust_checkpoint=True)
+        return RFDETRWrapper(model, names=class_names, device=self.device)
+
     def _load_country_classifier(self, path: Path):
         print(f"[Model 1.5] Loading Country Classifier from: {path}")
         if not path.exists():
@@ -588,11 +713,13 @@ class LPRPipelineService:
 
         ckpt = torch.load(model_path, map_location=self.device)
         state_dict = ckpt.get("model_state", ckpt.get("model_state_dict", ckpt))
-        backbone = ckpt.get("backbone", "")
+        backbone = ckpt.get("backbone", "").lower()
         is_resnet = "resnet" in backbone or any(k.startswith("model.conv1") or k.startswith("model.layer") for k in state_dict.keys())
 
         if is_resnet:
-            model = ResNetProvinceClassifier(n_classes=len(int_to_prov), backbone="resnet18", pretrained=False).to(self.device)
+            bb = "resnet34" if ("resnet34" in backbone or any("layer4.2" in k for k in state_dict.keys())) else "resnet18"
+            from src.models import ResNetProvinceClassifier
+            model = ResNetProvinceClassifier(n_classes=len(int_to_prov), backbone=bb, pretrained=False).to(self.device)
         else:
             model = ProvinceClassifier(n_classes=len(int_to_prov), pretrained=False).to(self.device)
 
@@ -612,11 +739,13 @@ class LPRPipelineService:
 
         ckpt = torch.load(model_path, map_location=self.device)
         state_dict = ckpt.get("model_state", ckpt.get("model_state_dict", ckpt))
-        backbone = ckpt.get("backbone", "")
+        backbone = ckpt.get("backbone", "").lower()
         is_resnet = "resnet" in backbone or any(k.startswith("model.conv1") or k.startswith("model.layer") for k in state_dict.keys())
 
         if is_resnet:
-            model = ResNetProvinceClassifier(n_classes=len(int_to_prov), backbone="resnet18", pretrained=False).to(self.device)
+            bb = "resnet34" if ("resnet34" in backbone or any("layer4.2" in k for k in state_dict.keys())) else "resnet18"
+            from src.models import ResNetProvinceClassifier
+            model = ResNetProvinceClassifier(n_classes=len(int_to_prov), backbone=bb, pretrained=False).to(self.device)
         else:
             model = models.mobilenet_v2(weights=None)
             model.classifier = nn.Sequential(
@@ -844,8 +973,8 @@ class LPRPipelineService:
             preview_bgr = img_bgr.copy()
 
         # Determine optimal inference resolution for Model 1:
-        # RT-DETR Vision Transformer is strictly trained at 640x640; for YOLO, 1280 can be used on high-res.
-        is_rtdetr_m1 = isinstance(self.model_plate, RTDETR) or cfg.ACTIVE_MODEL_1_PATH.name.endswith("_rtdetr.pt")
+        # RT-DETR and RF-DETR Vision Transformers use 640/560 fixed resolution; for YOLO, 1280 can be used on high-res.
+        is_rtdetr_m1 = isinstance(self.model_plate, (RTDETR, RFDETRWrapper)) or cfg.ACTIVE_MODEL_1_PATH.name.endswith(("_rtdetr.pt", "_rfdetr.pt"))
         m1_imgsz = 640 if is_rtdetr_m1 else (1280 if max(h_orig, w_orig) >= 960 else 640)
 
         # --- Stage 1: Model 1 Plate Polygon Detection & Rectification ---
