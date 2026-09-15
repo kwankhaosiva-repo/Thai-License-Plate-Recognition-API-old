@@ -51,12 +51,16 @@ def benchmark_onnx_model(onnx_path: Path, test_images, runs_per_img=5):
 
     # CPU Session
     cpu_sess = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
-    input_name = cpu_sess.get_inputs()[0].name
+    input_meta = cpu_sess.get_inputs()[0]
+    input_name = input_meta.name
+    shape = input_meta.shape
+    h = shape[2] if len(shape) >= 4 and isinstance(shape[2], int) else 640
+    w = shape[3] if len(shape) >= 4 and isinstance(shape[3], int) else 640
 
     # Prepare batch
     tensors = []
     for img in test_images:
-        resized = cv2.resize(img, (640, 640))
+        resized = cv2.resize(img, (w, h))
         rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
         tensor = (rgb.astype(np.float32) / 255.0).transpose(2, 0, 1)[np.newaxis, ...]
         tensors.append(tensor)
@@ -172,10 +176,22 @@ def run_all_benchmarks():
         results.append(res_rtdetr)
 
     # 6. LibreRFDETR-Small OBB (ONNX)
-    print("[6/6] Benchmarking Candidate: LibreRFDETRs-obb.onnx (RF-DETR OBB)...")
+    print("[6/8] Benchmarking Candidate: LibreRFDETRs-obb.onnx (RF-DETR OBB)...")
     res_obb = benchmark_onnx_model(WEIGHTS_DIR / "LibreRFDETRs-obb.onnx", test_images=test_imgs)
     if res_obb:
         results.append(res_obb)
+
+    # 7. LibrePICODET-S (ONNX)
+    print("[7/8] Benchmarking Candidate: LibrePICODETs.onnx (PaddleDetection PicoDet)...")
+    res_pico = benchmark_onnx_model(WEIGHTS_DIR / "LibrePICODETs.onnx", test_images=test_imgs)
+    if res_pico:
+        results.append(res_pico)
+
+    # 8. LibreRTDETRv2-OBB Small (ONNX)
+    print("[8/8] Benchmarking Candidate: LibreRTDETRv2s-obb.onnx (RT-DETRv2 OBB)...")
+    res_rtdetr_obb = benchmark_onnx_model(WEIGHTS_DIR / "LibreRTDETRv2s-obb.onnx", test_images=test_imgs)
+    if res_rtdetr_obb:
+        results.append(res_rtdetr_obb)
 
     # Print summary table
     print("\n" + "=" * 95)
