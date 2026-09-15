@@ -47,3 +47,4 @@ top_banner_0072.jpg
 
 # ONNX export
 *.ONNX
+*.lock

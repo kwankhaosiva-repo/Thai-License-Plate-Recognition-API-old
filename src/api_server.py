@@ -480,6 +480,39 @@ class RFDETRResult:
         self.names = names or {}
 
 
+class LibreYOLOWrapper:
+    """Wraps a LibreYOLO (D-FINE / RT-DETRv2) model so it is callable identically to Ultralytics YOLO/RTDETR."""
+
+    def __init__(self, model, names: dict | list | None = None, device: str = "cpu"):
+        self.model = model
+        self.device = str(device) if device else "cpu"
+        if names is None:
+            self.names = {0: "plate"}
+        elif isinstance(names, list):
+            self.names = {i: n for i, n in enumerate(names)}
+        else:
+            self.names = {int(k): v for k, v in names.items()}
+
+    def __call__(self, img, conf: float = 0.25, imgsz: int | None = None, verbose: bool = False, device=None):
+        target_device = str(device) if device is not None else self.device
+        kwargs: dict = {
+            "conf": float(conf) if conf is not None else 0.25,
+            "device": target_device,
+        }
+        if imgsz is not None:
+            kwargs["imgsz"] = int(imgsz)
+        results = self.model.predict(img, **kwargs)
+        # LibreYOLO may return a Results object directly; normalise to list-of-one
+        r = results[0] if isinstance(results, list) else results
+        # Ensure masks attribute exists (D-FINE is bbox-only)
+        if not hasattr(r, "masks") or r.masks is None:
+            r.masks = None
+        # Inject class names if not present
+        if not getattr(r, "names", None):
+            r.names = self.names
+        return [r]
+
+
 class RFDETRWrapper:
     """Wraps an RFDETRBase instance so it is callable identically to an Ultralytics YOLO/RTDETR model."""
     def __init__(self, model, names: dict[int, str] | list[str] | None = None, device=None):
@@ -591,6 +624,8 @@ class LPRPipelineService:
             self.model_plate = self._load_rfdetr_model(active_m1_path, class_names=["plate"])
         elif active_m1_path.name.endswith("_rtdetr.pt"):
             self.model_plate = RTDETR(str(active_m1_path))
+        elif "dfine" in active_m1_path.name.lower() or "libre" in active_m1_path.name.lower():
+            self.model_plate = self._load_libreyolo_model(active_m1_path, class_names=["plate"])
         else:
             self.model_plate = YOLO(str(active_m1_path))
 
@@ -707,6 +742,12 @@ class LPRPipelineService:
         if hasattr(model, "model") and hasattr(model.model, "device"):
             model.model.device = self.device
         return RFDETRWrapper(model, names=class_names, device=self.device)
+
+    def _load_libreyolo_model(self, model_path: Path, class_names: list[str] | dict[int, str] | None = None):
+        """Loads a LibreYOLO checkpoint (D-FINE Nano/Small or RT-DETRv2) and wraps it."""
+        from libreyolo import LibreYOLO
+        model = LibreYOLO(str(model_path))
+        return LibreYOLOWrapper(model, names=class_names, device=self.device)
 
     def _load_country_classifier(self, path: Path):
         if not path.exists():
@@ -1003,7 +1044,7 @@ class LPRPipelineService:
 
         # Determine optimal inference resolution for Model 1:
         # RT-DETR and RF-DETR Vision Transformers use 640/560 fixed resolution; for YOLO, 1280 can be used on high-res.
-        is_rtdetr_m1 = isinstance(self.model_plate, (RTDETR, RFDETRWrapper)) or cfg.ACTIVE_MODEL_1_PATH.name.endswith(("_rtdetr.pt", "_rfdetr.pt"))
+        is_rtdetr_m1 = isinstance(self.model_plate, (RTDETR, RFDETRWrapper, LibreYOLOWrapper)) or cfg.ACTIVE_MODEL_1_PATH.name.endswith(("_rtdetr.pt", "_rfdetr.pt"))
         m1_imgsz = 640 if is_rtdetr_m1 else (1280 if max(h_orig, w_orig) >= 960 else 640)
 
         # --- Stage 1: Model 1 Plate Polygon Detection & Rectification ---
