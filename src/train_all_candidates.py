@@ -71,10 +71,11 @@ def train_dfine(size="n", epochs=20, batch=8, imgsz=640):
         # Export to ONNX
         trained_model = LibreYOLO(str(target_pt))
         trained_model.export(format="onnx", imgsz=imgsz, dynamic=False)
-        exp_onnx = trained_model.model_path.with_suffix(".onnx") if hasattr(trained_model, "model_path") else None
-        if exp_onnx and exp_onnx.exists():
-            shutil.copy2(exp_onnx, target_onnx)
-            print(f"✅ Exported ONNX → {target_onnx}")
+        if hasattr(trained_model, "model_path"):
+            exp_onnx = Path(trained_model.model_path).with_suffix(".onnx")
+            if exp_onnx.exists() and exp_onnx.resolve() != target_onnx.resolve():
+                shutil.copy2(exp_onnx, target_onnx)
+                print(f"✅ Exported ONNX → {target_onnx}")
     else:
         # Fallback export
         model.export(format="onnx", imgsz=imgsz, dynamic=False)
@@ -119,10 +120,11 @@ def train_rtdetrv2(epochs=20, batch=8, imgsz=640):
         print(f"✅ Saved fine-tuned weights → {target_pt}")
         trained_model = LibreYOLO(str(target_pt))
         trained_model.export(format="onnx", imgsz=imgsz, dynamic=False)
-        exp_onnx = trained_model.model_path.with_suffix(".onnx") if hasattr(trained_model, "model_path") else None
-        if exp_onnx and exp_onnx.exists():
-            shutil.copy2(exp_onnx, target_onnx)
-            print(f"✅ Exported ONNX → {target_onnx}")
+        if hasattr(trained_model, "model_path"):
+            exp_onnx = Path(trained_model.model_path).with_suffix(".onnx")
+            if exp_onnx.exists() and exp_onnx.resolve() != target_onnx.resolve():
+                shutil.copy2(exp_onnx, target_onnx)
+                print(f"✅ Exported ONNX → {target_onnx}")
 
 
 def train_rfdetr_obb(epochs=20, batch_size=4):
@@ -144,30 +146,128 @@ def train_rfdetr_obb(epochs=20, batch_size=4):
     model.train(
         data=str(OBB_DATA_YAML),
         epochs=epochs,
-        batch_size=batch_size,
-        lr=1e-4,
-        output_dir=str(save_run_dir),
-        accelerator="mps",
+        batch=batch_size,
+        lr0=1e-4,
+        device="mps",
+        project=str(save_run_dir.parent),
+        name=save_run_dir.name,
+        exist_ok=True,
     )
 
-    candidates = list(save_run_dir.glob("**/*.pth")) + list(save_run_dir.glob("**/*.pt"))
-    best_pt = candidates[0] if candidates else None
+    best_pt = save_run_dir / "weights" / "best.pt"
+    if not best_pt.exists():
+        candidates = list(save_run_dir.glob("**/*.pt")) + list(save_run_dir.glob("**/*.pth"))
+        if candidates:
+            best_pt = candidates[0]
 
     if best_pt and best_pt.exists():
         shutil.copy2(best_pt, target_pt)
         print(f"✅ Saved fine-tuned weights → {target_pt}")
-        trained_model = LibreYOLO(str(target_pt))
-        trained_model.export(format="onnx", imgsz=640, dynamic=False)
-        exp_onnx = trained_model.model_path.with_suffix(".onnx") if hasattr(trained_model, "model_path") else None
-        if exp_onnx and exp_onnx.exists():
-            shutil.copy2(exp_onnx, target_onnx)
-            print(f"✅ Exported ONNX → {target_onnx}")
+        trained_model = LibreYOLO(str(target_pt), device="cpu")
+        trained_model.export(format="onnx", imgsz=640, device="cpu", dynamic=False)
+        if hasattr(trained_model, "model_path"):
+            exp_onnx = Path(trained_model.model_path).with_suffix(".onnx")
+            if exp_onnx.exists() and exp_onnx.resolve() != target_onnx.resolve():
+                shutil.copy2(exp_onnx, target_onnx)
+                print(f"✅ Exported ONNX → {target_onnx}")
+
+
+def train_picodet(size="s", epochs=30, batch=16, imgsz=416):
+    model_name = f"picodet_{size}"
+    pt_source = f"weights/LibrePICODET{size}.pt"
+    target_pt = OUTPUT_WEIGHTS_DIR / f"plate_detector_{model_name}.pt"
+    target_onnx = OUTPUT_WEIGHTS_DIR / f"plate_detector_{model_name}.onnx"
+    save_run_dir = RUNS_DIR / f"train_{model_name}"
+
+    print("\n" + "=" * 70)
+    print(f"🚀 Training {model_name.upper()} (PaddleDetection PicoDet / Apache-2.0)")
+    print(f"   Task:       AABB (Ultra-fast Straight Rect ~15-25ms CPU)")
+    print(f"   Pretrained: {pt_source}")
+    print(f"   Dataset:    {BBOX_DATA_YAML}")
+    print(f"   Epochs:     {epochs} | Batch: {batch} | Imgsz: {imgsz}")
+    print("=" * 70)
+
+    model = LibreYOLO(pt_source)
+    model.train(
+        data=str(BBOX_DATA_YAML),
+        epochs=epochs,
+        batch=batch,
+        imgsz=imgsz,
+        lr0=1e-3,
+        device="mps",
+        project=str(save_run_dir.parent),
+        name=save_run_dir.name,
+        exist_ok=True,
+    )
+
+    best_pt = save_run_dir / "weights" / "best.pt"
+    if not best_pt.exists():
+        candidates = list(save_run_dir.glob("**/*.pt")) + list(save_run_dir.glob("**/*.pth"))
+        if candidates:
+            best_pt = candidates[0]
+
+    if best_pt and best_pt.exists():
+        shutil.copy2(best_pt, target_pt)
+        print(f"✅ Saved fine-tuned weights → {target_pt}")
+        trained_model = LibreYOLO(str(target_pt), device="cpu")
+        trained_model.export(format="onnx", imgsz=imgsz, device="cpu", dynamic=False)
+        if hasattr(trained_model, "model_path"):
+            exp_onnx = Path(trained_model.model_path).with_suffix(".onnx")
+            if exp_onnx.exists() and exp_onnx.resolve() != target_onnx.resolve():
+                shutil.copy2(exp_onnx, target_onnx)
+                print(f"✅ Exported ONNX → {target_onnx}")
+
+
+def train_rtdetrv2_obb(epochs=25, batch_size=4, imgsz=1024):
+    model_name = "rtdetrv2_obb_small"
+    pt_source = "weights/LibreRTDETRv2s-obb.pt"
+    target_pt = OUTPUT_WEIGHTS_DIR / f"plate_detector_{model_name}.pt"
+    target_onnx = OUTPUT_WEIGHTS_DIR / f"plate_detector_{model_name}.onnx"
+    save_run_dir = RUNS_DIR / f"train_{model_name}"
+
+    print("\n" + "=" * 70)
+    print(f"🚀 Training {model_name.upper()} (License: Apache-2.0)")
+    print(f"   Task:       OBB (Compact 31MB Rotated Rect ~65-85ms CPU)")
+    print(f"   Pretrained: {pt_source}")
+    print(f"   Dataset:    {OBB_DATA_YAML}")
+    print(f"   Epochs:     {epochs} | Batch: {batch_size} | Imgsz: {imgsz}")
+    print("=" * 70)
+
+    model = LibreYOLO(pt_source)
+    model.train(
+        data=str(OBB_DATA_YAML),
+        epochs=epochs,
+        batch=batch_size,
+        imgsz=imgsz,
+        lr0=1e-4,
+        device="cpu",
+        project=str(save_run_dir.parent),
+        name=save_run_dir.name,
+        exist_ok=True,
+    )
+
+    best_pt = save_run_dir / "weights" / "best.pt"
+    if not best_pt.exists():
+        candidates = list(save_run_dir.glob("**/*.pt")) + list(save_run_dir.glob("**/*.pth"))
+        if candidates:
+            best_pt = candidates[0]
+
+    if best_pt and best_pt.exists():
+        shutil.copy2(best_pt, target_pt)
+        print(f"✅ Saved fine-tuned weights → {target_pt}")
+        trained_model = LibreYOLO(str(target_pt), device="cpu")
+        trained_model.export(format="onnx", imgsz=imgsz, device="cpu", dynamic=False)
+        if hasattr(trained_model, "model_path"):
+            exp_onnx = Path(trained_model.model_path).with_suffix(".onnx")
+            if exp_onnx.exists() and exp_onnx.resolve() != target_onnx.resolve():
+                shutil.copy2(exp_onnx, target_onnx)
+                print(f"✅ Exported ONNX → {target_onnx}")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Train Model 1 Plate Detector Candidates")
-    parser.add_argument("--model", choices=["dfine_nano", "dfine_small", "rtdetrv2", "rfdetr_obb", "all"], default="all",
-                        help="Model to train (default: all)")
+    parser.add_argument("--model", type=str, default="all",
+                        help="Model(s) to train: dfine_nano, dfine_small, rtdetrv2, rfdetr_obb, picodet_s, rtdetrv2_obb, or comma-separated list e.g. 'rfdetr_obb,picodet_s,rtdetrv2_obb' or 'all'")
     parser.add_argument("--epochs", type=int, default=45, help="Number of training epochs (default: 45)")
     parser.add_argument("--batch", type=int, default=8, help="Batch size (default: 8)")
     args = parser.parse_args()
@@ -176,19 +276,28 @@ def main():
     OUTPUT_WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
 
+    selected_models = [m.strip() for m in args.model.split(",") if m.strip()]
+    run_all = "all" in selected_models
+
     t_start = time.time()
 
-    if args.model in ["dfine_nano", "all"]:
+    if run_all or "dfine_nano" in selected_models:
         train_dfine(size="n", epochs=args.epochs, batch=args.batch)
 
-    if args.model in ["dfine_small", "all"]:
+    if run_all or "dfine_small" in selected_models:
         train_dfine(size="s", epochs=args.epochs, batch=args.batch)
 
-    if args.model in ["rtdetrv2", "all"]:
+    if run_all or "rtdetrv2" in selected_models:
         train_rtdetrv2(epochs=args.epochs, batch=args.batch)
 
-    if args.model in ["rfdetr_obb", "all"]:
+    if run_all or "rfdetr_obb" in selected_models:
         train_rfdetr_obb(epochs=args.epochs, batch_size=max(2, args.batch // 2))
+
+    if run_all or "picodet_s" in selected_models:
+        train_picodet(size="s", epochs=args.epochs, batch=max(8, args.batch * 2))
+
+    if run_all or "rtdetrv2_obb" in selected_models:
+        train_rtdetrv2_obb(epochs=args.epochs, batch_size=max(2, args.batch // 2))
 
     total_mins = (time.time() - t_start) / 60
     print("\n" + "=" * 70)
