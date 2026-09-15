@@ -1,0 +1,200 @@
+"""
+src/train_all_candidates.py
+
+Unified training pipeline for Model 1 Thai License Plate Detectors:
+  1. LibreDFINE-Nano    (Fastest CPU detector ~26 ms)
+  2. LibreDFINE-Small   (High-accuracy compact detector ~67 ms)
+  3. LibreRTDETRv2-r18  (Real-Time DETR v2)
+  4. LibreRFDETR-OBB    (Oriented Bounding Box detector)
+
+Usage:
+  python src/train_all_candidates.py --all
+  python src/train_all_candidates.py --model dfine_nano --epochs 25
+"""
+
+import argparse
+import shutil
+import time
+from pathlib import Path
+from libreyolo import LibreYOLO
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+BBOX_DATA_YAML = PROJECT_ROOT / "datasets" / "Thai" / "LPR_2_BBox" / "data.yaml"
+OBB_DATA_YAML = PROJECT_ROOT / "datasets" / "Thai" / "LPR 2 - Polygon.yolov11_new" / "data.yaml"
+OUTPUT_WEIGHTS_DIR = PROJECT_ROOT / "weights"
+RUNS_DIR = PROJECT_ROOT / "runs"
+
+
+def ensure_datasets():
+    if not BBOX_DATA_YAML.exists():
+        from prepare_bbox_dataset import convert_polygon_to_bbox
+        convert_polygon_to_bbox()
+
+
+def train_dfine(size="n", epochs=20, batch=8, imgsz=640):
+    model_name = f"dfine_{'nano' if size == 'n' else 'small'}"
+    pt_source = f"weights/LibreDFINE{size}.pt"
+    target_pt = OUTPUT_WEIGHTS_DIR / f"plate_detector_{model_name}.pt"
+    target_onnx = OUTPUT_WEIGHTS_DIR / f"plate_detector_{model_name}.onnx"
+    save_run_dir = RUNS_DIR / f"train_{model_name}"
+
+    print("\n" + "=" * 70)
+    print(f"🚀 Training {model_name.upper()} (License: MIT)")
+    print(f"   Pretrained: {pt_source}")
+    print(f"   Dataset:    {BBOX_DATA_YAML}")
+    print(f"   Epochs:     {epochs} | Batch: {batch}")
+    print("=" * 70)
+
+    model = LibreYOLO(pt_source)
+    model.train(
+        data=str(BBOX_DATA_YAML),
+        epochs=epochs,
+        batch=batch,
+        imgsz=imgsz,
+        lr0=0.0005,
+        device="mps",
+        project=str(save_run_dir.parent),
+        name=save_run_dir.name,
+        exist_ok=True,
+    )
+
+    # Copy best weights
+    best_pt = save_run_dir / "weights" / "best.pt"
+    if not best_pt.exists():
+        candidates = list(save_run_dir.glob("**/*.pt"))
+        if candidates:
+            best_pt = candidates[0]
+
+    if best_pt and best_pt.exists():
+        shutil.copy2(best_pt, target_pt)
+        print(f"✅ Saved fine-tuned weights → {target_pt}")
+        # Export to ONNX
+        trained_model = LibreYOLO(str(target_pt))
+        trained_model.export(format="onnx", imgsz=imgsz, dynamic=False)
+        exp_onnx = trained_model.model_path.with_suffix(".onnx") if hasattr(trained_model, "model_path") else None
+        if exp_onnx and exp_onnx.exists():
+            shutil.copy2(exp_onnx, target_onnx)
+            print(f"✅ Exported ONNX → {target_onnx}")
+    else:
+        # Fallback export
+        model.export(format="onnx", imgsz=imgsz, dynamic=False)
+        print(f"✅ Exported base ONNX to weights/")
+
+
+def train_rtdetrv2(epochs=20, batch=8, imgsz=640):
+    model_name = "rtdetrv2_r18"
+    pt_source = "weights/LibreRTDETRv2r18.pt"
+    target_pt = OUTPUT_WEIGHTS_DIR / f"plate_detector_{model_name}.pt"
+    target_onnx = OUTPUT_WEIGHTS_DIR / f"plate_detector_{model_name}.onnx"
+    save_run_dir = RUNS_DIR / f"train_{model_name}"
+
+    print("\n" + "=" * 70)
+    print(f"🚀 Training {model_name.upper()} (License: Apache-2.0)")
+    print(f"   Pretrained: {pt_source}")
+    print(f"   Dataset:    {BBOX_DATA_YAML}")
+    print(f"   Epochs:     {epochs} | Batch: {batch}")
+    print("=" * 70)
+
+    model = LibreYOLO(pt_source)
+    model.train(
+        data=str(BBOX_DATA_YAML),
+        epochs=epochs,
+        batch=batch,
+        imgsz=imgsz,
+        lr0=0.0002,
+        device="mps",
+        project=str(save_run_dir.parent),
+        name=save_run_dir.name,
+        exist_ok=True,
+    )
+
+    best_pt = save_run_dir / "weights" / "best.pt"
+    if not best_pt.exists():
+        candidates = list(save_run_dir.glob("**/*.pt"))
+        if candidates:
+            best_pt = candidates[0]
+
+    if best_pt and best_pt.exists():
+        shutil.copy2(best_pt, target_pt)
+        print(f"✅ Saved fine-tuned weights → {target_pt}")
+        trained_model = LibreYOLO(str(target_pt))
+        trained_model.export(format="onnx", imgsz=imgsz, dynamic=False)
+        exp_onnx = trained_model.model_path.with_suffix(".onnx") if hasattr(trained_model, "model_path") else None
+        if exp_onnx and exp_onnx.exists():
+            shutil.copy2(exp_onnx, target_onnx)
+            print(f"✅ Exported ONNX → {target_onnx}")
+
+
+def train_rfdetr_obb(epochs=20, batch_size=4):
+    model_name = "rfdetr_obb_small"
+    pt_source = "weights/LibreRFDETRs-obb.pt"
+    target_pt = OUTPUT_WEIGHTS_DIR / f"plate_detector_{model_name}.pt"
+    target_onnx = OUTPUT_WEIGHTS_DIR / f"plate_detector_{model_name}.onnx"
+    save_run_dir = RUNS_DIR / f"train_{model_name}"
+
+    print("\n" + "=" * 70)
+    print(f"🚀 Training {model_name.upper()} (License: MIT)")
+    print(f"   Task:       OBB (Oriented Bounding Box)")
+    print(f"   Pretrained: {pt_source}")
+    print(f"   Dataset:    {OBB_DATA_YAML}")
+    print(f"   Epochs:     {epochs} | Batch: {batch_size}")
+    print("=" * 70)
+
+    model = LibreYOLO(pt_source)
+    model.train(
+        data=str(OBB_DATA_YAML),
+        epochs=epochs,
+        batch_size=batch_size,
+        lr=1e-4,
+        output_dir=str(save_run_dir),
+        accelerator="mps",
+    )
+
+    candidates = list(save_run_dir.glob("**/*.pth")) + list(save_run_dir.glob("**/*.pt"))
+    best_pt = candidates[0] if candidates else None
+
+    if best_pt and best_pt.exists():
+        shutil.copy2(best_pt, target_pt)
+        print(f"✅ Saved fine-tuned weights → {target_pt}")
+        trained_model = LibreYOLO(str(target_pt))
+        trained_model.export(format="onnx", imgsz=640, dynamic=False)
+        exp_onnx = trained_model.model_path.with_suffix(".onnx") if hasattr(trained_model, "model_path") else None
+        if exp_onnx and exp_onnx.exists():
+            shutil.copy2(exp_onnx, target_onnx)
+            print(f"✅ Exported ONNX → {target_onnx}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Train Model 1 Plate Detector Candidates")
+    parser.add_argument("--model", choices=["dfine_nano", "dfine_small", "rtdetrv2", "rfdetr_obb", "all"], default="all",
+                        help="Model to train (default: all)")
+    parser.add_argument("--epochs", type=int, default=45, help="Number of training epochs (default: 45)")
+    parser.add_argument("--batch", type=int, default=8, help="Batch size (default: 8)")
+    args = parser.parse_args()
+
+    ensure_datasets()
+    OUTPUT_WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
+    RUNS_DIR.mkdir(parents=True, exist_ok=True)
+
+    t_start = time.time()
+
+    if args.model in ["dfine_nano", "all"]:
+        train_dfine(size="n", epochs=args.epochs, batch=args.batch)
+
+    if args.model in ["dfine_small", "all"]:
+        train_dfine(size="s", epochs=args.epochs, batch=args.batch)
+
+    if args.model in ["rtdetrv2", "all"]:
+        train_rtdetrv2(epochs=args.epochs, batch=args.batch)
+
+    if args.model in ["rfdetr_obb", "all"]:
+        train_rfdetr_obb(epochs=args.epochs, batch_size=max(2, args.batch // 2))
+
+    total_mins = (time.time() - t_start) / 60
+    print("\n" + "=" * 70)
+    print(f"🎉 All requested training tasks finished in {total_mins:.1f} minutes!")
+    print("=" * 70)
+
+
+if __name__ == "__main__":
+    main()

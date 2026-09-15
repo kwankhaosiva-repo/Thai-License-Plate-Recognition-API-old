@@ -14,10 +14,12 @@ class Config:
 
     # --- Model 1: Plate Detector ---
     # Options (fastest → most accurate):
-    #   "plate_detector_rfdetr_small.pt"   ← RF-DETR-Small (recommended ⚡)
+    #   "plate_detector_dfine_nano.pt"     ← D-FINE-Nano (recommended ⚡, 25 ms CPU)
+    #   "plate_detector_dfine_small.pt"    ← D-FINE-Small (more accurate)
+    #   "plate_detector_rfdetr_small.pt"   ← RF-DETR-Small
     #   "plate_detector_rfdetr.pt"         ← RF-DETR-Base  (more accurate)
     #   "plate_detector_rtdetr.pt"         ← RT-DETR-L     (older)
-    MODEL_1_FILENAME = "plate_detector_rfdetr_small.pt"
+    MODEL_1_FILENAME = "plate_detector_dfine_nano.pt"
 
     # --- Model 2: Component Detector (plate_char / province bbox) ---
     #   "component_detector_rfdetr_small.pt"   ← RF-DETR-Small (recommended ⚡)
@@ -101,6 +103,12 @@ class Config:
     @property
     def MODEL_1_TAG(self):
         name = self.ACTIVE_MODEL_1_PATH.name.lower()
+        if "dfine_nano" in name:
+            return "D-FINE Nano (MIT, ~25 ms CPU)"
+        if "dfine_small" in name:
+            return "D-FINE Small (MIT, ~45 ms CPU)"
+        if "dfine" in name:
+            return "D-FINE (MIT)"
         if "rfdetr_small" in name:
             return "RF-DETR-Small (Apache-2.0)"
         if "rfdetr" in name:
