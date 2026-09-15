@@ -31,7 +31,7 @@ def ensure_datasets():
         convert_polygon_to_bbox()
 
 
-def train_dfine(size="n", epochs=20, batch=8, imgsz=640):
+def train_dfine(size="n", epochs=20, batch=8, imgsz=640, patience=12):
     model_name = f"dfine_{'nano' if size == 'n' else 'small'}"
     pt_source = f"weights/LibreDFINE{size}.pt"
     target_pt = OUTPUT_WEIGHTS_DIR / f"plate_detector_{model_name}.pt"
@@ -42,7 +42,7 @@ def train_dfine(size="n", epochs=20, batch=8, imgsz=640):
     print(f"🚀 Training {model_name.upper()} (License: MIT)")
     print(f"   Pretrained: {pt_source}")
     print(f"   Dataset:    {BBOX_DATA_YAML}")
-    print(f"   Epochs:     {epochs} | Batch: {batch}")
+    print(f"   Epochs:     {epochs} | Batch: {batch} | Patience: {patience}")
     print("=" * 70)
 
     model = LibreYOLO(pt_source)
@@ -52,6 +52,7 @@ def train_dfine(size="n", epochs=20, batch=8, imgsz=640):
         batch=batch,
         imgsz=imgsz,
         lr0=0.0005,
+        patience=patience,
         device="mps",
         project=str(save_run_dir.parent),
         name=save_run_dir.name,
@@ -69,8 +70,8 @@ def train_dfine(size="n", epochs=20, batch=8, imgsz=640):
         shutil.copy2(best_pt, target_pt)
         print(f"✅ Saved fine-tuned weights → {target_pt}")
         # Export to ONNX
-        trained_model = LibreYOLO(str(target_pt))
-        trained_model.export(format="onnx", imgsz=imgsz, dynamic=False)
+        trained_model = LibreYOLO(str(target_pt), device="cpu")
+        trained_model.export(format="onnx", imgsz=imgsz, device="cpu", dynamic=False)
         if hasattr(trained_model, "model_path"):
             exp_onnx = Path(trained_model.model_path).with_suffix(".onnx")
             if exp_onnx.exists() and exp_onnx.resolve() != target_onnx.resolve():
@@ -78,11 +79,11 @@ def train_dfine(size="n", epochs=20, batch=8, imgsz=640):
                 print(f"✅ Exported ONNX → {target_onnx}")
     else:
         # Fallback export
-        model.export(format="onnx", imgsz=imgsz, dynamic=False)
+        model.export(format="onnx", imgsz=imgsz, device="cpu", dynamic=False)
         print(f"✅ Exported base ONNX to weights/")
 
 
-def train_rtdetrv2(epochs=20, batch=8, imgsz=640):
+def train_rtdetrv2(epochs=20, batch=8, imgsz=640, patience=12):
     model_name = "rtdetrv2_r18"
     pt_source = "weights/LibreRTDETRv2r18.pt"
     target_pt = OUTPUT_WEIGHTS_DIR / f"plate_detector_{model_name}.pt"
@@ -93,7 +94,7 @@ def train_rtdetrv2(epochs=20, batch=8, imgsz=640):
     print(f"🚀 Training {model_name.upper()} (License: Apache-2.0)")
     print(f"   Pretrained: {pt_source}")
     print(f"   Dataset:    {BBOX_DATA_YAML}")
-    print(f"   Epochs:     {epochs} | Batch: {batch}")
+    print(f"   Epochs:     {epochs} | Batch: {batch} | Patience: {patience}")
     print("=" * 70)
 
     model = LibreYOLO(pt_source)
@@ -103,6 +104,7 @@ def train_rtdetrv2(epochs=20, batch=8, imgsz=640):
         batch=batch,
         imgsz=imgsz,
         lr0=0.0002,
+        patience=patience,
         device="mps",
         project=str(save_run_dir.parent),
         name=save_run_dir.name,
@@ -127,7 +129,7 @@ def train_rtdetrv2(epochs=20, batch=8, imgsz=640):
                 print(f"✅ Exported ONNX → {target_onnx}")
 
 
-def train_rfdetr_obb(epochs=20, batch_size=4):
+def train_rfdetr_obb(epochs=20, batch_size=4, patience=12):
     model_name = "rfdetr_obb_small"
     pt_source = "weights/LibreRFDETRs-obb.pt"
     target_pt = OUTPUT_WEIGHTS_DIR / f"plate_detector_{model_name}.pt"
@@ -139,7 +141,7 @@ def train_rfdetr_obb(epochs=20, batch_size=4):
     print(f"   Task:       OBB (Oriented Bounding Box)")
     print(f"   Pretrained: {pt_source}")
     print(f"   Dataset:    {OBB_DATA_YAML}")
-    print(f"   Epochs:     {epochs} | Batch: {batch_size}")
+    print(f"   Epochs:     {epochs} | Batch: {batch_size} | Patience: {patience}")
     print("=" * 70)
 
     model = LibreYOLO(pt_source)
@@ -148,6 +150,7 @@ def train_rfdetr_obb(epochs=20, batch_size=4):
         epochs=epochs,
         batch=batch_size,
         lr0=1e-4,
+        patience=patience,
         device="mps",
         project=str(save_run_dir.parent),
         name=save_run_dir.name,
@@ -172,7 +175,7 @@ def train_rfdetr_obb(epochs=20, batch_size=4):
                 print(f"✅ Exported ONNX → {target_onnx}")
 
 
-def train_picodet(size="s", epochs=30, batch=16, imgsz=416):
+def train_picodet(size="s", epochs=30, batch=16, imgsz=416, patience=12):
     model_name = f"picodet_{size}"
     pt_source = f"weights/LibrePICODET{size}.pt"
     target_pt = OUTPUT_WEIGHTS_DIR / f"plate_detector_{model_name}.pt"
@@ -184,7 +187,7 @@ def train_picodet(size="s", epochs=30, batch=16, imgsz=416):
     print(f"   Task:       AABB (Ultra-fast Straight Rect ~15-25ms CPU)")
     print(f"   Pretrained: {pt_source}")
     print(f"   Dataset:    {BBOX_DATA_YAML}")
-    print(f"   Epochs:     {epochs} | Batch: {batch} | Imgsz: {imgsz}")
+    print(f"   Epochs:     {epochs} | Batch: {batch} | Imgsz: {imgsz} | Patience: {patience}")
     print("=" * 70)
 
     model = LibreYOLO(pt_source)
@@ -194,6 +197,7 @@ def train_picodet(size="s", epochs=30, batch=16, imgsz=416):
         batch=batch,
         imgsz=imgsz,
         lr0=1e-3,
+        patience=patience,
         device="mps",
         project=str(save_run_dir.parent),
         name=save_run_dir.name,
@@ -218,7 +222,7 @@ def train_picodet(size="s", epochs=30, batch=16, imgsz=416):
                 print(f"✅ Exported ONNX → {target_onnx}")
 
 
-def train_rtdetrv2_obb(epochs=25, batch_size=4, imgsz=1024):
+def train_rtdetrv2_obb(epochs=25, batch_size=4, imgsz=1024, patience=12):
     model_name = "rtdetrv2_obb_small"
     pt_source = "weights/LibreRTDETRv2s-obb.pt"
     target_pt = OUTPUT_WEIGHTS_DIR / f"plate_detector_{model_name}.pt"
@@ -230,7 +234,7 @@ def train_rtdetrv2_obb(epochs=25, batch_size=4, imgsz=1024):
     print(f"   Task:       OBB (Compact 31MB Rotated Rect ~65-85ms CPU)")
     print(f"   Pretrained: {pt_source}")
     print(f"   Dataset:    {OBB_DATA_YAML}")
-    print(f"   Epochs:     {epochs} | Batch: {batch_size} | Imgsz: {imgsz}")
+    print(f"   Epochs:     {epochs} | Batch: {batch_size} | Imgsz: {imgsz} | Patience: {patience}")
     print("=" * 70)
 
     model = LibreYOLO(pt_source)
@@ -240,6 +244,7 @@ def train_rtdetrv2_obb(epochs=25, batch_size=4, imgsz=1024):
         batch=batch_size,
         imgsz=imgsz,
         lr0=1e-4,
+        patience=patience,
         device="cpu",
         project=str(save_run_dir.parent),
         name=save_run_dir.name,
@@ -270,6 +275,8 @@ def main():
                         help="Model(s) to train: dfine_nano, dfine_small, rtdetrv2, rfdetr_obb, picodet_s, rtdetrv2_obb, or comma-separated list e.g. 'rfdetr_obb,picodet_s,rtdetrv2_obb' or 'all'")
     parser.add_argument("--epochs", type=int, default=45, help="Number of training epochs (default: 45)")
     parser.add_argument("--batch", type=int, default=8, help="Batch size (default: 8)")
+    parser.add_argument("--patience", type=int, default=12,
+                        help="Early stopping patience: stop if no validation improvement for N epochs (default: 12)")
     args = parser.parse_args()
 
     ensure_datasets()
@@ -282,22 +289,22 @@ def main():
     t_start = time.time()
 
     if run_all or "dfine_nano" in selected_models:
-        train_dfine(size="n", epochs=args.epochs, batch=args.batch)
+        train_dfine(size="n", epochs=args.epochs, batch=args.batch, patience=args.patience)
 
     if run_all or "dfine_small" in selected_models:
-        train_dfine(size="s", epochs=args.epochs, batch=args.batch)
+        train_dfine(size="s", epochs=args.epochs, batch=args.batch, patience=args.patience)
 
     if run_all or "rtdetrv2" in selected_models:
-        train_rtdetrv2(epochs=args.epochs, batch=args.batch)
+        train_rtdetrv2(epochs=args.epochs, batch=args.batch, patience=args.patience)
 
     if run_all or "rfdetr_obb" in selected_models:
-        train_rfdetr_obb(epochs=args.epochs, batch_size=max(2, args.batch // 2))
+        train_rfdetr_obb(epochs=args.epochs, batch_size=max(2, args.batch // 2), patience=args.patience)
 
     if run_all or "picodet_s" in selected_models:
-        train_picodet(size="s", epochs=args.epochs, batch=max(8, args.batch * 2))
+        train_picodet(size="s", epochs=args.epochs, batch=max(8, args.batch * 2), patience=args.patience)
 
     if run_all or "rtdetrv2_obb" in selected_models:
-        train_rtdetrv2_obb(epochs=args.epochs, batch_size=max(2, args.batch // 2))
+        train_rtdetrv2_obb(epochs=args.epochs, batch_size=max(2, args.batch // 2), patience=args.patience)
 
     total_mins = (time.time() - t_start) / 60
     print("\n" + "=" * 70)
