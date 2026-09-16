@@ -10,16 +10,19 @@ class Config:
     # --- Compute Device ---
     # True  = Force CPU only (safe for any machine, ~150 ms on Apple Silicon)
     # False = Auto-detect: CUDA → MPS → CPU
-    FORCE_CPU = False
+    FORCE_CPU = True
 
     # --- Model 1: Plate Detector ---
-    # Options (fastest → most accurate):
-    #   "plate_detector_dfine_nano.pt"     ← D-FINE-Nano (recommended ⚡, 25 ms CPU)
-    #   "plate_detector_dfine_small.pt"    ← D-FINE-Small (more accurate)
-    #   "plate_detector_rfdetr_small.pt"   ← RF-DETR-Small
-    #   "plate_detector_rfdetr.pt"         ← RF-DETR-Base  (more accurate)
-    #   "plate_detector_rtdetr.pt"         ← RT-DETR-L     (older)
-    MODEL_1_FILENAME = "plate_detector_picodet_s.pt"
+    # Options (fastest → most accurate / specialized):
+    #   "plate_detector_picodet_s.pt"        ← PicoDet-S (⚡ Ultra-fast: ~6.5 ms CPU, 3.8 MB ONNX, Apache-2.0)
+    #   "plate_detector_dfine_nano.pt"       ← D-FINE-Nano (⚡ Recommended: ~27 ms CPU, 15 MB ONNX, MIT)
+    #   "plate_detector_dfine_small.pt"      ← D-FINE-Small (High accuracy: ~63 ms CPU, 40 MB ONNX, MIT)
+    #   "plate_detector_rfdetr_small.pt"     ← RF-DETR-Small (Transformer baseline: ~84 ms CPU, Apache-2.0)
+    #   "plate_detector_rfdetr_obb_small.pt" ← RF-DETR-OBB Small (1-Stage Rotated/Angled: Apache-2.0/MIT)
+    #   "plate_detector_rtdetrv2_r18.pt"     ← RT-DETRv2-R18 (Apache-2.0)
+    #   "plate_detector_rfdetr.pt"           ← RF-DETR-Base (More accurate, heavier)
+    #   "plate_detector_rtdetr.pt"           ← RT-DETR-L (Older baseline)
+    MODEL_1_FILENAME = "plate_detector_dfine_nano.pt"
 
     # --- Model 2: Component Detector (plate_char / province bbox) ---
     #   "component_detector_rfdetr_small.pt"   ← RF-DETR-Small (recommended ⚡)
