@@ -643,6 +643,8 @@ class LPRPipelineService:
             self.model_comp = self._load_rfdetr_model(active_m2_path, class_names=["plate_char", "province"])
         elif active_m2_path.name.endswith("_rtdetr.pt"):
             self.model_comp = RTDETR(str(active_m2_path))
+        elif any(k in active_m2_path.name.lower() for k in ["dfine", "libre", "picodet"]):
+            self.model_comp = self._load_libreyolo_model(active_m2_path, class_names=["plate_char", "province"])
         else:
             self.model_comp = YOLO(str(active_m2_path))
 
@@ -655,6 +657,8 @@ class LPRPipelineService:
             self.char_box_model = self._load_rfdetr_model(active_char_box_path, class_names=["char"])
         elif active_char_box_path.name.endswith("_rtdetr.pt"):
             self.char_box_model = RTDETR(str(active_char_box_path))
+        elif any(k in active_char_box_path.name.lower() for k in ["dfine", "libre", "picodet"]):
+            self.char_box_model = self._load_libreyolo_model(active_char_box_path, class_names=["char"])
         elif active_char_box_path.exists():
             self.char_box_model = YOLO(str(active_char_box_path))
         else:
@@ -727,9 +731,12 @@ class LPRPipelineService:
         )
 
     def _load_rfdetr_model(self, model_path: Path, class_names: list[str] | dict[int, str] | None = None):
-        """Loads an RF-DETR (Base or Small) model from a checkpoint (.pt or .pth) and wraps it."""
-        from rfdetr import RFDETRBase, RFDETRSmall
-        if "small" in str(model_path).lower():
+        """Loads an RF-DETR (Base, Small, or Nano) model from a checkpoint (.pt or .pth) and wraps it."""
+        from rfdetr import RFDETRBase, RFDETRSmall, RFDETRNano
+        name_lower = str(model_path).lower()
+        if "nano" in name_lower:
+            model = RFDETRNano.from_checkpoint(str(model_path), trust_checkpoint=True)
+        elif "small" in name_lower:
             model = RFDETRSmall.from_checkpoint(str(model_path), trust_checkpoint=True)
         else:
             try:

@@ -264,7 +264,7 @@ def train_rtdetrv2_obb(epochs=25, batch_size=4, imgsz=1024, patience=12):
 def main():
     parser = argparse.ArgumentParser(description="Train Model 1 Plate Detector Candidates")
     parser.add_argument("--model", type=str, default="all",
-                        help="Model(s) to train: dfine_nano, dfine_small, rtdetrv2, rfdetr_obb, picodet_s, rtdetrv2_obb, or comma-separated list e.g. 'rfdetr_obb,picodet_s,rtdetrv2_obb' or 'all'")
+                        help="Model(s) to train: dfine_nano, dfine_small, rtdetrv2, rfdetr_obb, picodet_s, picodet_m, rtdetrv2_obb, rfdetr_nano, or comma-separated list e.g. 'picodet_m,picodet_s' or 'all'")
     parser.add_argument("--epochs", type=int, default=45, help="Number of training epochs (default: 45)")
     parser.add_argument("--batch", type=int, default=8, help="Batch size (default: 8)")
     parser.add_argument("--patience", type=int, default=12,
@@ -295,8 +295,15 @@ def main():
     if run_all or "picodet_s" in selected_models:
         train_picodet(size="s", epochs=args.epochs, batch=max(8, args.batch * 2), patience=args.patience)
 
+    if run_all or "picodet_m" in selected_models:
+        train_picodet(size="m", epochs=args.epochs, batch=max(8, args.batch * 2), patience=args.patience)
+
     if run_all or "rtdetrv2_obb" in selected_models:
         train_rtdetrv2_obb(epochs=args.epochs, batch_size=max(2, args.batch // 2), patience=args.patience)
+
+    if run_all or "rfdetr_nano" in selected_models:
+        from train_rfdetr_nano_plate import train_rfdetr_nano_plate
+        train_rfdetr_nano_plate(epochs=args.epochs, batch_size=max(2, args.batch // 2), patience=args.patience, export_onnx=True)
 
     total_mins = (time.time() - t_start) / 60
     print("\n" + "=" * 70)
