@@ -10,7 +10,7 @@ class Config:
     # --- Compute Device ---
     # True  = Force CPU only (safe for any machine, ~150 ms on Apple Silicon)
     # False = Auto-detect: CUDA → MPS → CPU
-    FORCE_CPU = True
+    FORCE_CPU = False
 
     # --- Model 1: Plate Detector ---
     # Options (fastest → most accurate):
@@ -19,7 +19,7 @@ class Config:
     #   "plate_detector_rfdetr_small.pt"   ← RF-DETR-Small
     #   "plate_detector_rfdetr.pt"         ← RF-DETR-Base  (more accurate)
     #   "plate_detector_rtdetr.pt"         ← RT-DETR-L     (older)
-    MODEL_1_FILENAME = "plate_detector_dfine_nano.pt"
+    MODEL_1_FILENAME = "plate_detector_picodet_s.pt"
 
     # --- Model 2: Component Detector (plate_char / province bbox) ---
     #   "component_detector_rfdetr_small.pt"   ← RF-DETR-Small (recommended ⚡)
@@ -103,16 +103,22 @@ class Config:
     @property
     def MODEL_1_TAG(self):
         name = self.ACTIVE_MODEL_1_PATH.name.lower()
+        if "picodet" in name:
+            return "PicoDet-S (PaddleDetection / Apache-2.0, ~7 ms CPU)"
         if "dfine_nano" in name:
             return "D-FINE Nano (MIT, ~25 ms CPU)"
         if "dfine_small" in name:
             return "D-FINE Small (MIT, ~45 ms CPU)"
         if "dfine" in name:
             return "D-FINE (MIT)"
+        if "rfdetr_obb" in name:
+            return "RF-DETR-OBB Small (Apache-2.0 / MIT)"
         if "rfdetr_small" in name:
             return "RF-DETR-Small (Apache-2.0)"
         if "rfdetr" in name:
             return "RF-DETR-Base (Apache-2.0)"
+        if "rtdetrv2" in name:
+            return "RT-DETRv2-R18 (Apache-2.0)"
         if "rtdetr" in name:
             if self.PLATE_CORNER_MODEL_PATH.exists():
                 return "RT-DETR-L + Polygon Quad (Apache-2.0 / BSD-3)"
