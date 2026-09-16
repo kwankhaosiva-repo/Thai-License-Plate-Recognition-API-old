@@ -129,6 +129,11 @@
         if (data.model_tags) {
           applyModelTags(data.model_tags);
         }
+        // Sync debug toggle with server cfg.DEBUG_MODE on page load
+        if (debugToggle && typeof data.debug_mode === 'boolean') {
+          debugToggle.checked = data.debug_mode;
+          state.isDebug = data.debug_mode;
+        }
       }
     } catch (e) {
       console.warn('[Model Tags] Could not fetch initial model tags from /api/health:', e);
