@@ -230,26 +230,18 @@ def train_rtdetrv2_obb(epochs=25, batch_size=4, imgsz=1024, patience=12):
     save_run_dir = RUNS_DIR / f"train_{model_name}"
 
     print("\n" + "=" * 70)
-    print(f"🚀 Training {model_name.upper()} (License: Apache-2.0)")
-    print(f"   Task:       OBB (Compact 31MB Rotated Rect ~65-85ms CPU)")
-    print(f"   Pretrained: {pt_source}")
-    print(f"   Dataset:    {OBB_DATA_YAML}")
-    print(f"   Epochs:     {epochs} | Batch: {batch_size} | Imgsz: {imgsz} | Patience: {patience}")
+    print(f"ℹ️  RT-DETRv2 OBB is inference-only in LibreYOLO (upstream training head is not open-sourced)")
+    print(f"   Pretrained checkpoint: {pt_source}")
+    print(f"   Exporting pretrained ONNX for C# evaluation directly...")
     print("=" * 70)
 
-    model = LibreYOLO(pt_source)
-    model.train(
-        data=str(OBB_DATA_YAML),
-        epochs=epochs,
-        batch=batch_size,
-        imgsz=imgsz,
-        lr0=1e-4,
-        patience=patience,
-        device="cpu",
-        project=str(save_run_dir.parent),
-        name=save_run_dir.name,
-        exist_ok=True,
-    )
+    trained_model = LibreYOLO(pt_source, device="cpu")
+    trained_model.export(format="onnx", imgsz=imgsz, device="cpu", dynamic=False)
+    exp_onnx = Path("weights/LibreRTDETRv2s-obb.onnx")
+    if exp_onnx.exists() and exp_onnx.resolve() != target_onnx.resolve():
+        shutil.copy2(exp_onnx, target_onnx)
+        print(f"✅ Exported ONNX → {target_onnx}")
+    return
 
     best_pt = save_run_dir / "weights" / "best.pt"
     if not best_pt.exists():

@@ -618,13 +618,12 @@ class LPRPipelineService:
         char_lao_class_path = cfg.WEIGHTS_DIR / "character_classifier_lao.pth"
         char_lao_map_path = cfg.WEIGHTS_DIR / "char_classifier_map_lao.json"
 
-        # 1. Load Model 1 (Plate Detector)
         active_m1_path = cfg.ACTIVE_MODEL_1_PATH
-        if "rfdetr" in active_m1_path.name and active_m1_path.exists():
+        if "rfdetr" in active_m1_path.name and "obb" not in active_m1_path.name and active_m1_path.exists():
             self.model_plate = self._load_rfdetr_model(active_m1_path, class_names=["plate"])
         elif active_m1_path.name.endswith("_rtdetr.pt"):
             self.model_plate = RTDETR(str(active_m1_path))
-        elif "dfine" in active_m1_path.name.lower() or "libre" in active_m1_path.name.lower():
+        elif any(k in active_m1_path.name.lower() for k in ["dfine", "libre", "picodet", "rtdetrv2", "obb"]):
             self.model_plate = self._load_libreyolo_model(active_m1_path, class_names=["plate"])
         else:
             self.model_plate = YOLO(str(active_m1_path))
