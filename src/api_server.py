@@ -434,10 +434,168 @@ def select_best_truck_6_digits(char_boxes_detail: list, crop_w: int, crop_h: int
     return best_text
 
 
+class RFDETRSingleBox:
+    """Wraps an individual detection box to provide .conf, .xyxy, .cls tensor-like properties."""
+    def __init__(self, xyxy: torch.Tensor, conf: torch.Tensor, cls: torch.Tensor):
+        self.xyxy = xyxy.unsqueeze(0) if xyxy.dim() == 1 else xyxy
+        self.conf = conf.unsqueeze(0) if conf.dim() == 0 else conf
+        self.cls = cls.unsqueeze(0) if cls.dim() == 0 else cls
+
+
+class RFDETRResultBoxes:
+    """Provides a .boxes attribute mimicking Ultralytics Results.boxes."""
+    def __init__(self, xyxy, conf, cls):
+        self._xyxy = torch.from_numpy(np.array(xyxy, dtype=np.float32)) if not isinstance(xyxy, torch.Tensor) else xyxy
+        self._conf = torch.from_numpy(np.array(conf, dtype=np.float32)) if not isinstance(conf, torch.Tensor) else conf
+        self._cls = torch.from_numpy(np.array(cls, dtype=np.float32)) if not isinstance(cls, torch.Tensor) else cls
+
+    @property
+    def xyxy(self):
+        return self._xyxy
+
+    @property
+    def conf(self):
+        return self._conf
+
+    @property
+    def cls(self):
+        return self._cls
+
+    def __len__(self):
+        return len(self._xyxy)
+
+    def __iter__(self):
+        for i in range(len(self._xyxy)):
+            yield RFDETRSingleBox(self._xyxy[i], self._conf[i], self._cls[i])
+
+
+class RFDETRResult:
+    """Mimics Ultralytics Result object for RF-DETR detections."""
+    def __init__(self, detections, names: dict[int, str] | None = None):
+        xyxy = detections.xyxy if hasattr(detections, 'xyxy') and detections.xyxy is not None and len(detections.xyxy) > 0 else np.empty((0, 4), dtype=np.float32)
+        conf = detections.confidence if hasattr(detections, 'confidence') and detections.confidence is not None and len(detections.confidence) > 0 else np.empty((0,), dtype=np.float32)
+        cls = detections.class_id if hasattr(detections, 'class_id') and detections.class_id is not None and len(detections.class_id) > 0 else np.empty((0,), dtype=np.float32)
+        self.boxes = RFDETRResultBoxes(xyxy, conf, cls)
+        self.masks = None  # RF-DETR is a bounding-box detector
+        self.names = names or {}
+
+
+class LibreYOLOWrapper:
+    """Wraps a LibreYOLO (D-FINE / RT-DETRv2) model so it is callable identically to Ultralytics YOLO/RTDETR."""
+
+    def __init__(self, model, names: dict | list | None = None, device: str = "cpu"):
+        self.model = model
+        self.device = str(device) if device else "cpu"
+        if names is None:
+            self.names = {0: "plate"}
+        elif isinstance(names, list):
+            self.names = {i: n for i, n in enumerate(names)}
+        else:
+            self.names = {int(k): v for k, v in names.items()}
+
+    def __call__(self, img, conf: float = 0.25, imgsz: int | None = None, verbose: bool = False, device=None):
+        target_device = str(device) if device is not None else self.device
+        kwargs: dict = {
+            "conf": float(conf) if conf is not None else 0.25,
+            "device": target_device,
+        }
+        if imgsz is not None:
+            kwargs["imgsz"] = int(imgsz)
+        results = self.model.predict(img, **kwargs)
+        # LibreYOLO may return a Results object directly; normalise to list-of-one
+        r = results[0] if isinstance(results, list) else results
+        # Ensure masks attribute exists (D-FINE is bbox-only)
+        if not hasattr(r, "masks") or r.masks is None:
+            r.masks = None
+        # Inject class names if not present
+        if not getattr(r, "names", None):
+            r.names = self.names
+        return [r]
+
+
+class RFDETRWrapper:
+    """Wraps an RFDETRBase instance so it is callable identically to an Ultralytics YOLO/RTDETR model."""
+    def __init__(self, model, names: dict[int, str] | list[str] | None = None, device=None):
+        self.model = model
+        self.device = device
+        if names is None:
+            raw_names = getattr(getattr(self.model, "model", None), "class_names", {})
+            if isinstance(raw_names, list):
+                self.names = {i: n for i, n in enumerate(raw_names)}
+            elif isinstance(raw_names, dict):
+                self.names = {int(k): v for k, v in raw_names.items()}
+            else:
+                self.names = {}
+        elif isinstance(names, list):
+            self.names = {i: n for i, n in enumerate(names)}
+        elif isinstance(names, dict):
+            self.names = {int(k): v for k, v in names.items()}
+        else:
+            self.names = {}
+
+    def __call__(self, img, conf=0.25, imgsz=None, verbose=False, device=None):
+        import cv2
+        import numpy as np
+
+        if isinstance(img, np.ndarray):
+            h, w = img.shape[:2]
+            # RF-DETR is natively trained at 560x560.
+            # If the raw camera input is HD/4K (e.g. 1550x1174), running unresized causes CPU latency to explode.
+            # Resizing to 640 preserves full plate detail while dropping inference time from 2000ms to ~45ms!
+            target_dim = 640
+            if max(h, w) > target_dim:
+                scale = target_dim / float(max(h, w))
+                new_w, new_h = int(w * scale), int(h * scale)
+                img_resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+            else:
+                img_resized = img
+                scale = 1.0
+
+            if len(img_resized.shape) == 3 and img_resized.shape[2] == 3:
+                img_rgb = cv2.cvtColor(img_resized, cv2.COLOR_BGR2RGB)
+            else:
+                img_rgb = img_resized
+        else:
+            img_rgb = img
+            scale = 1.0
+
+        threshold = float(conf) if conf is not None else 0.25
+        dets = self.model.predict(img_rgb, threshold=threshold)
+
+        # Rescale detected boxes back to original image dimensions if resized
+        if scale != 1.0 and hasattr(dets, 'xyxy') and dets.xyxy is not None and len(dets.xyxy) > 0:
+            dets.xyxy = dets.xyxy / scale
+
+        return [RFDETRResult(dets, names=self.names)]
+
+
 class LPRPipelineService:
+    @staticmethod
+    def _print_banner(device: str, models: list[tuple[str, str]], debug: bool) -> None:
+        """Print a clean startup banner to terminal."""
+        W = 70
+        device_icon = "🔵 CPU" if "cpu" in str(device) else ("🟢 CUDA" if "cuda" in str(device) else "🟠 MPS")
+        debug_icon  = "🔴 ON " if debug else "⚫ OFF"
+        sep  = "─" * W
+        sep2 = "═" * W
+        print()
+        print(f"╔{'═' * W}╗")
+        print(f"║{'  Thai & Lao LPR — Model Startup':^{W}}║")
+        print(f"╠{'═' * W}╣")
+        print(f"║  Compute Device : {device_icon:<{W-21}}║")
+        print(f"║  Debug Mode     : {debug_icon:<{W-21}}║")
+        print(f"╠{'═' * W}╣")
+        print(f"║  {'Model':<12}  {'File':<32}  {'Tag':<{W-50}}║")
+        print(f"║  {sep}║")
+        for label, fname, tag in models:
+            fname_short = fname[:30] + ".." if len(fname) > 32 else fname
+            tag_short   = tag[:W-50]
+            print(f"║  {label:<12}  {fname_short:<32}  {tag_short:<{W-50}}║")
+        print(f"╚{'═' * W}╝")
+        print()
+
     def __init__(self):
         self.device = cfg.DEVICE
-        print(f"[LPRPipelineService] Initializing on device: {self.device}")
 
         # Model Paths
         m1_path = cfg.WEIGHTS_DIR / "plate_polygon_detector.pt"
@@ -460,20 +618,20 @@ class LPRPipelineService:
         char_lao_class_path = cfg.WEIGHTS_DIR / "character_classifier_lao.pth"
         char_lao_map_path = cfg.WEIGHTS_DIR / "char_classifier_map_lao.json"
 
-        # 1. Load Model 1 (Plate Detector)
         active_m1_path = cfg.ACTIVE_MODEL_1_PATH
-        if active_m1_path.name.endswith("_rtdetr.pt"):
-            print(f"[Model 1] Loading RT-DETR enterprise plate detector from: {active_m1_path}")
+        if "rfdetr" in active_m1_path.name and "obb" not in active_m1_path.name and active_m1_path.exists():
+            self.model_plate = self._load_rfdetr_model(active_m1_path, class_names=["plate"])
+        elif active_m1_path.name.endswith("_rtdetr.pt"):
             self.model_plate = RTDETR(str(active_m1_path))
+        elif any(k in active_m1_path.name.lower() for k in ["dfine", "libre", "picodet", "rtdetrv2", "obb"]):
+            self.model_plate = self._load_libreyolo_model(active_m1_path, class_names=["plate"])
         else:
-            print(f"[Model 1] Loading plate polygon detector from: {active_m1_path}")
             self.model_plate = YOLO(str(active_m1_path))
 
-        # 1.1 Load Plate 4-Corner Homography Regressor (Permissive BSD-3 MobileNetV3)
+        # 1.1 Load Plate 4-Corner Homography Regressor
         corner_model_path = cfg.PLATE_CORNER_MODEL_PATH
         self.plate_corner_model = None
         if corner_model_path.exists():
-            print(f"[Model 1] Loading Plate 4-Corner Homography Regressor from: {corner_model_path}")
             self.plate_corner_model = self._load_plate_corner_model(corner_model_path)
 
         # 2. Load Model 1.5 (Country Classifier: Thai vs Laos)
@@ -481,24 +639,23 @@ class LPRPipelineService:
 
         # 3. Load Model 2 (Component Detector: plate_char & province)
         active_m2_path = cfg.ACTIVE_MODEL_2_PATH
-        if active_m2_path.name.endswith("_rtdetr.pt"):
-            print(f"[Model 2] Loading RT-DETR enterprise component detector from: {active_m2_path}")
+        if "rfdetr" in active_m2_path.name and active_m2_path.exists():
+            self.model_comp = self._load_rfdetr_model(active_m2_path, class_names=["plate_char", "province"])
+        elif active_m2_path.name.endswith("_rtdetr.pt"):
             self.model_comp = RTDETR(str(active_m2_path))
         else:
-            print(f"[Model 2] Loading YOLO component detector from: {active_m2_path}")
             self.model_comp = YOLO(str(active_m2_path))
 
         # 4. Load Model 3A (Thai OCR Model - ResNetCRNN CTC)
-        print(f"[Model 3A] Loading ResNetCRNN OCR model from: {ocr_path}")
         self.ocr_model, self.int_to_char = self._load_ocr_model(ocr_path, char_map_path)
 
-        # 4.5. Load Character Box Detector & Character Classifier (Individual Boxes)
+        # 4.5. Load Character Box Detector & Character Classifier
         active_char_box_path = cfg.ACTIVE_CHAR_BOX_MODEL_PATH
-        if active_char_box_path.name.endswith("_rtdetr.pt"):
-            print(f"[Model 3A] Loading RT-DETR character box detector from: {active_char_box_path}")
+        if "rfdetr" in active_char_box_path.name and active_char_box_path.exists():
+            self.char_box_model = self._load_rfdetr_model(active_char_box_path, class_names=["char"])
+        elif active_char_box_path.name.endswith("_rtdetr.pt"):
             self.char_box_model = RTDETR(str(active_char_box_path))
         elif active_char_box_path.exists():
-            print(f"[Model 3A] Loading YOLO character box detector from: {active_char_box_path}")
             self.char_box_model = YOLO(str(active_char_box_path))
         else:
             self.char_box_model = None
@@ -507,17 +664,14 @@ class LPRPipelineService:
         self.digit_classifier = self._load_digit_classifier(digit_class_path)
 
         # 5. Load Model 3B (Thai Province Model)
-        print(f"[Model 3B] Loading Thai Province model ({cfg.PROV_MODEL_THAI_TAG}) from: {prov_path}")
         self.prov_model_thai, self.int_to_prov_thai = self._load_prov_model(prov_path, prov_map_path)
 
         # 6. Load Model 3B_Lao (Lao Province Model)
-        print(f"[Model 3B_Lao] Loading Lao Province model ({cfg.PROV_MODEL_LAO_TAG}) from: {prov_lao_path}")
         self.prov_model_lao, self.int_to_prov_lao = self._load_lao_prov_model(prov_lao_path, prov_lao_map_path)
 
         # 7. Transforms
         self.tf_ocr = get_ocr_transforms(is_train=False)
         if "grayscale" in prov_path.name or "grayscale" in prov_lao_path.name:
-            print("[Model 3B] Using GrayscaleSmartResize dynamic background tone padding transform")
             self.tf_prov = get_grayscale_prov_transforms(is_train=False)
         else:
             self.tf_prov = get_prov_transforms(is_train=False)
@@ -551,10 +705,50 @@ class LPRPipelineService:
         # Global latest detection for RTSP stream viewer
         self.latest_stream_detection: Optional[Dict[str, Any]] = None
 
-        print("[LPRPipelineService] Multi-Country Models Successfully Loaded & Ready!")
+        # ── Pretty startup banner ────────────────────────────────────────
+        active_m1   = cfg.ACTIVE_MODEL_1_PATH
+        active_m2   = cfg.ACTIVE_MODEL_2_PATH
+        active_m3a  = cfg.ACTIVE_CHAR_BOX_MODEL_PATH
+        active_m3b  = cfg.ACTIVE_PROV_MODEL_THAI_PATH
+        active_lao  = cfg.ACTIVE_PROV_MODEL_LAO_PATH
+
+        self._print_banner(
+            device=str(self.device),
+            models=[
+                ("Model 1",     active_m1.name,  cfg.MODEL_1_TAG),
+                ("Model 1.5",   "country_classifier.pth", cfg.MODEL_1_5_TAG),
+                ("Model 2",     active_m2.name,  cfg.MODEL_2_TAG),
+                ("Model 3A-Box",active_m3a.name, cfg.CHAR_BOX_TAG),
+                ("Model 3A-OCR","ocr_model.pth", cfg.OCR_MODEL_TAG),
+                ("Model 3B-TH", active_m3b.name, cfg.PROV_MODEL_THAI_TAG),
+                ("Model 3B-Lao",active_lao.name, cfg.PROV_MODEL_LAO_TAG),
+            ],
+            debug=cfg.DEBUG_MODE,
+        )
+
+    def _load_rfdetr_model(self, model_path: Path, class_names: list[str] | dict[int, str] | None = None):
+        """Loads an RF-DETR (Base or Small) model from a checkpoint (.pt or .pth) and wraps it."""
+        from rfdetr import RFDETRBase, RFDETRSmall
+        if "small" in str(model_path).lower():
+            model = RFDETRSmall.from_checkpoint(str(model_path), trust_checkpoint=True)
+        else:
+            try:
+                model = RFDETRBase.from_checkpoint(str(model_path), trust_checkpoint=True)
+            except Exception:
+                model = RFDETRSmall.from_checkpoint(str(model_path), trust_checkpoint=True)
+
+        # Force RF-DETR to respect self.device (otherwise RF-DETR auto-detects MPS and ignores FORCE_CPU)
+        if hasattr(model, "model") and hasattr(model.model, "device"):
+            model.model.device = self.device
+        return RFDETRWrapper(model, names=class_names, device=self.device)
+
+    def _load_libreyolo_model(self, model_path: Path, class_names: list[str] | dict[int, str] | None = None):
+        """Loads a LibreYOLO checkpoint (D-FINE Nano/Small or RT-DETRv2) and wraps it."""
+        from libreyolo import LibreYOLO
+        model = LibreYOLO(str(model_path))
+        return LibreYOLOWrapper(model, names=class_names, device=self.device)
 
     def _load_country_classifier(self, path: Path):
-        print(f"[Model 1.5] Loading Country Classifier from: {path}")
         if not path.exists():
             print("   Country Classifier weights not found. Defaulting to Thai.")
             return None
@@ -588,11 +782,13 @@ class LPRPipelineService:
 
         ckpt = torch.load(model_path, map_location=self.device)
         state_dict = ckpt.get("model_state", ckpt.get("model_state_dict", ckpt))
-        backbone = ckpt.get("backbone", "")
+        backbone = ckpt.get("backbone", "").lower()
         is_resnet = "resnet" in backbone or any(k.startswith("model.conv1") or k.startswith("model.layer") for k in state_dict.keys())
 
         if is_resnet:
-            model = ResNetProvinceClassifier(n_classes=len(int_to_prov), backbone="resnet18", pretrained=False).to(self.device)
+            bb = "resnet34" if ("resnet34" in backbone or any("layer4.2" in k for k in state_dict.keys())) else "resnet18"
+            from src.models import ResNetProvinceClassifier
+            model = ResNetProvinceClassifier(n_classes=len(int_to_prov), backbone=bb, pretrained=False).to(self.device)
         else:
             model = ProvinceClassifier(n_classes=len(int_to_prov), pretrained=False).to(self.device)
 
@@ -612,11 +808,13 @@ class LPRPipelineService:
 
         ckpt = torch.load(model_path, map_location=self.device)
         state_dict = ckpt.get("model_state", ckpt.get("model_state_dict", ckpt))
-        backbone = ckpt.get("backbone", "")
+        backbone = ckpt.get("backbone", "").lower()
         is_resnet = "resnet" in backbone or any(k.startswith("model.conv1") or k.startswith("model.layer") for k in state_dict.keys())
 
         if is_resnet:
-            model = ResNetProvinceClassifier(n_classes=len(int_to_prov), backbone="resnet18", pretrained=False).to(self.device)
+            bb = "resnet34" if ("resnet34" in backbone or any("layer4.2" in k for k in state_dict.keys())) else "resnet18"
+            from src.models import ResNetProvinceClassifier
+            model = ResNetProvinceClassifier(n_classes=len(int_to_prov), backbone=bb, pretrained=False).to(self.device)
         else:
             model = models.mobilenet_v2(weights=None)
             model.classifier = nn.Sequential(
@@ -844,8 +1042,8 @@ class LPRPipelineService:
             preview_bgr = img_bgr.copy()
 
         # Determine optimal inference resolution for Model 1:
-        # RT-DETR Vision Transformer is strictly trained at 640x640; for YOLO, 1280 can be used on high-res.
-        is_rtdetr_m1 = isinstance(self.model_plate, RTDETR) or cfg.ACTIVE_MODEL_1_PATH.name.endswith("_rtdetr.pt")
+        # RT-DETR and RF-DETR Vision Transformers use 640/560 fixed resolution; for YOLO, 1280 can be used on high-res.
+        is_rtdetr_m1 = isinstance(self.model_plate, (RTDETR, RFDETRWrapper, LibreYOLOWrapper)) or cfg.ACTIVE_MODEL_1_PATH.name.endswith(("_rtdetr.pt", "_rfdetr.pt"))
         m1_imgsz = 640 if is_rtdetr_m1 else (1280 if max(h_orig, w_orig) >= 960 else 640)
 
         # --- Stage 1: Model 1 Plate Polygon Detection & Rectification ---
@@ -1773,7 +1971,19 @@ class LPRPipelineService:
         t_m3 = int((time.time() - t3_start) * 1000)
         t_total = int((time.time() - t_start) * 1000)
 
-        # --- Debug Artifacts Generation ---
+        # ── Per-request latency log ──────────────────────────────────────
+        _bar = lambda ms: ("█" * min(int(ms / 10), 20)).ljust(20)
+        print(
+            f"\n  ┌─ Inference ({'DEBUG' if debug else 'PROD'}) ─────────────────────────────────────\n"
+            f"  │  M1 Plate     {t_m1:>4} ms  {_bar(t_m1)}\n"
+            f"  │  M1.5 Country {t_country:>4} ms  {_bar(t_country)}\n"
+            f"  │  M2 Component {t_m2:>4} ms  {_bar(t_m2)}\n"
+            f"  │  M3 OCR+Prov  {t_m3:>4} ms  {_bar(t_m3)}\n"
+            f"  │  {'─'*48}\n"
+            f"  └─ TOTAL        {t_total:>4} ms  {_bar(t_total)}"
+        )
+
+
         debug_payload = None
         if debug:
             poly_overlay_bgr = preview_bgr.copy()
@@ -1905,6 +2115,7 @@ def api_health():
         "status": "online",
         "service": "Multi-Country (Thai & Laos) LPR Recognition Engine",
         "device": str(cfg.DEVICE),
+        "debug_mode": cfg.DEBUG_MODE,
         "models": {
             "model_1": f"{cfg.ACTIVE_MODEL_1_PATH.name} (Plate Detection)",
             "model_1_5": "country_classifier.pth (Thai vs Laos Classifier)",
@@ -1920,13 +2131,22 @@ def api_health():
     }
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """Silence browser favicon 404 requests."""
+    from fastapi.responses import Response
+    return Response(status_code=204)
+
+
 @app.post("/api/detect/image")
 async def detect_image_endpoint(
     files: List[UploadFile] = File(...),
-    debug: bool = Form(False),
+    debug: Optional[bool] = Form(None),
     conf_m1: float = Form(0.35),
     conf_m2: float = Form(0.25),
 ):
+    # Use cfg.DEBUG_MODE as default; dashboard can still override per-request
+    use_debug = cfg.DEBUG_MODE if debug is None else debug
     if pipeline_service is None:
         raise HTTPException(status_code=503, detail="Pipeline service not initialized yet")
 
@@ -1947,7 +2167,7 @@ async def detect_image_endpoint(
         res = pipeline_service.process_image(
             img_bgr,
             filename=f.filename,
-            debug=debug,
+            debug=use_debug,
             conf_m1=conf_m1,
             conf_m2=conf_m2,
         )
@@ -1960,9 +2180,10 @@ async def detect_image_endpoint(
 @app.post("/api/detect/video")
 async def detect_video_endpoint(
     file: UploadFile = File(...),
-    debug: bool = Form(False),
+    debug: Optional[bool] = Form(None),
     sample_rate: int = Form(5),
 ):
+    use_debug = cfg.DEBUG_MODE if debug is None else debug
     if pipeline_service is None:
         raise HTTPException(status_code=503, detail="Pipeline service not initialized yet")
 
@@ -1989,7 +2210,7 @@ async def detect_video_endpoint(
 
             if frame_count % sample_rate == 0:
                 sec = round(frame_count / fps, 2)
-                res = pipeline_service.process_image(frame, debug=debug)
+                res = pipeline_service.process_image(frame, debug=use_debug)
                 if res.get("detected"):
                     res["timestamp_sec"] = sec
                     res["frame_idx"] = frame_count
