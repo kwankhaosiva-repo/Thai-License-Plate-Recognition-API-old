@@ -113,6 +113,7 @@ All Model 1 candidates have been trained and benchmarked on identical test sets 
 | Candidate Architecture | Resolution | Model Size (ONNX) | CPU Latency | MPS Latency | License | Best Use Case |
 | :--- | :---: | :---: | :---: | :---: | :---: | :--- |
 | **PicoDet-S** ⭐ | $416 \times 416$ | **3.8 MB** | **6.5 ms** | ~5.0 ms | **Apache-2.0** | **Ultra-fast Edge / Embedded CPU / Low Power** |
+| **PicoDet-M** ⭐ | $416 \times 416$ | **8.9 MB** | **12.0 ms** | ~7.5 ms | **Apache-2.0** | **Higher capacity edge / stacked convs=4 (Medium)** |
 | **D-FINE Nano** ⭐ | $640 \times 640$ | **15.0 MB** | **27.0 ms** | ~18.0 ms | **MIT** | **Balanced Server & CPU Production (High mAP)** |
 | **D-FINE Small** | $640 \times 640$ | **40.0 MB** | **63.5 ms** | ~22.0 ms | **MIT** | High-precision / Distant plate localization |
 | **RF-DETR-Small** | $640 \times 640$ | 122.0 MB | 84.0 ms | 21.0 ms | **Apache-2.0** | Robust baseline with transformer feature maps |
@@ -190,29 +191,76 @@ Train and fine-tune any Model 1 candidate using [`src/train_all_candidates.py`](
 # Train PicoDet-S with early stopping patience of 12 epochs
 python src/train_all_candidates.py --model picodet_s --epochs 35 --batch 16 --patience 12
 
+# Train PicoDet-M (Medium: 4 stacked convs, 128 neck/head ch)
+python src/train_picodet_m_plate.py --epochs 35 --batch 16 --patience 12
+
 # Train D-FINE Nano
 python src/train_all_candidates.py --model dfine_nano --epochs 30 --batch 8 --patience 12
 
 # Train RF-DETR-OBB (Oriented Bounding Box)
 python src/train_all_candidates.py --model rfdetr_obb --epochs 25 --batch 4 --patience 12
 
+# Train RF-DETR-Nano for Model 1 Plate Detection
+python src/train_all_candidates.py --model rfdetr_nano --epochs 30 --batch 4 --patience 10
+
 # Train multiple candidates in a single sequential run
-python src/train_all_candidates.py --model "picodet_s,dfine_nano,dfine_small" --epochs 30
+python src/train_all_candidates.py --model "picodet_s,dfine_nano,rfdetr_nano" --epochs 30
+```
+
+### 🚀 D-FINE Nano Training Suite (MIT License — Recommended ⚡)
+
+Fine-tune high-accuracy, ultra-compact **D-FINE Nano** foundation models across all object detection stages. All models export automatically to standalone ONNX:
+
+```bash
+# 1. Master Pipeline: Train all remaining models (automatically skips Model 1 which is already trained)
+python src/train_dfine_nano_all.py --epochs 30 --batch 8
+
+# 2. Train specific detectors via comma-separated list
+python src/train_dfine_nano_all.py --model components,charbox --epochs 30
+
+# 3. Train all 4 models from scratch sequentially
+python src/train_dfine_nano_all.py --all --epochs 30
+
+# 4. Train individual detector scripts directly
+python src/train_dfine_nano_components.py --epochs 30  # Model 2: Component Detector
+python src/train_dfine_nano_charbox.py    --epochs 30  # Model 3A: Character Box Detector
+python src/train_dfine_nano_lao_plate.py  --epochs 30  # Lao: Lao Plate Detector
+python src/train_dfine_nano_plate.py      --epochs 30  # Model 1: Plate Detector (already trained)
+```
+
+### 🚀 RF-DETR-Nano Training Suite (Apache-2.0)
+
+Fine-tune lightweight **RF-DETR-Nano** foundation models across all detection stages:
+
+```bash
+# 1. Master Pipeline: Train ALL 4 detector models sequentially
+python src/train_rfdetr_nano_all.py --all
+
+# 2. Train specific detectors via comma-separated list
+python src/train_rfdetr_nano_all.py --model components,charbox --epochs 30 --batch-size 4
+
+# 3. Train individual detector scripts directly
+python src/train_rfdetr_nano_plate.py      --epochs 30 --export-onnx  # Model 1: Plate Detector
+python src/train_rfdetr_nano_components.py --epochs 30 --export-onnx  # Model 2: Component Detector
+python src/train_rfdetr_nano_charbox.py    --epochs 30 --export-onnx  # Model 3A: Character Box Detector
+python src/train_rfdetr_nano_lao_plate.py  --epochs 30 --export-onnx  # Lao: Lao Plate Detector
 ```
 
 ### Key Training Options:
 | Flag | Default | Description |
 | :--- | :---: | :--- |
-| `--model` | `all` | Target model: `picodet_s`, `dfine_nano`, `dfine_small`, `rtdetrv2`, `rfdetr_obb`, `rtdetrv2_obb`, or comma-separated list |
-| `--epochs` | `45` | Maximum training epochs |
-| `--batch` | `8` | Batch size (automatically scaled for smaller/larger models) |
+| `--model` | `components,charbox,lao_plate` | Target models: `components`, `charbox`, `lao_plate`, `plate`, or comma-separated list / `all` |
+| `--epochs` | `30` | Maximum training epochs |
+| `--batch` / `--batch-size` | `8` / `4` | Batch size per step |
 | `--patience` | `12` | Early stopping threshold: stops if validation loss fails to improve for $N$ epochs |
+| `--device` | `mps` | Compute device: `mps` (Apple Silicon GPU), `cuda`, or `cpu` |
+| `--no-onnx` | `False` | Skip automatic standalone ONNX export |
 
 > [!NOTE]
-> **Hardware Acceleration & ONNX Safety:**
-> - `picodet_s`, `rfdetr`, and `rfdetr_obb` train with GPU acceleration on Apple Silicon (`device="mps"`).
-> - `dfine` models automatically route their backward pass on CPU where PyTorch MPS lacks `aten::grid_sampler_2d_backward` support.
-> - ONNX exports are automatically isolated on CPU (`device="cpu"`), preventing MPS JIT constant-folding conflicts.
+> **Hardware Acceleration & Weights Isolation:**
+> - All RF-DETR-Nano models train natively on Apple Silicon GPU (`device="mps"`) or CUDA.
+> - Pretrained foundation weights (`rf-detr-nano.pth`) are stored in `~/.roboflow/models/` with MD5 checksum verification.
+> - Fine-tuned checkpoints are safely saved to `weights/` without overwriting existing Small or Base weights.
 
 ---
 

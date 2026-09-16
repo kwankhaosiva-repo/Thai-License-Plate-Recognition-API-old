@@ -15,8 +15,10 @@ class Config:
     # --- Model 1: Plate Detector ---
     # Options (fastest → most accurate / specialized):
     #   "plate_detector_picodet_s.pt"        ← PicoDet-S (⚡ Ultra-fast: ~6.5 ms CPU, 3.8 MB ONNX, Apache-2.0)
+    #   "plate_detector_picodet_m.pt"        ← PicoDet-M (⚡ Medium: ~12 ms CPU, 8.9 MB ONNX, Apache-2.0)
     #   "plate_detector_dfine_nano.pt"       ← D-FINE-Nano (⚡ Recommended: ~27 ms CPU, 15 MB ONNX, MIT)
     #   "plate_detector_dfine_small.pt"      ← D-FINE-Small (High accuracy: ~63 ms CPU, 40 MB ONNX, MIT)
+    #   "plate_detector_rfdetr_nano.pt"      ← RF-DETR-Nano (⚡ Ultra-fast transformer, Apache-2.0)
     #   "plate_detector_rfdetr_small.pt"     ← RF-DETR-Small (Transformer baseline: ~84 ms CPU, Apache-2.0)
     #   "plate_detector_rfdetr_obb_small.pt" ← RF-DETR-OBB Small (1-Stage Rotated/Angled: Apache-2.0/MIT)
     #   "plate_detector_rtdetrv2_r18.pt"     ← RT-DETRv2-R18 (Apache-2.0)
@@ -25,15 +27,19 @@ class Config:
     MODEL_1_FILENAME = "plate_detector_dfine_nano.pt"
 
     # --- Model 2: Component Detector (plate_char / province bbox) ---
-    #   "component_detector_rfdetr_small.pt"   ← RF-DETR-Small (recommended ⚡)
+    #   "component_detector_dfine_nano.pt"     ← D-FINE-Nano (⚡ recommended: MIT, ultra-fast & high mAP)
+    #   "component_detector_rfdetr_nano.pt"    ← RF-DETR-Nano (Apache-2.0)
+    #   "component_detector_rfdetr_small.pt"   ← RF-DETR-Small
     #   "component_detector_rfdetr.pt"         ← RF-DETR-Base
     #   "component_detector_rtdetr.pt"         ← RT-DETR-L (older)
     MODEL_2_FILENAME = "component_detector_rfdetr_small.pt"
 
     # --- Model 3A: Character Box Detector ---
-    #   "character_box_detector_rfdetr_small.pt"  ← RF-DETR-Small (recommended ⚡)
-    #   "character_box_detector_rfdetr.pt"        ← RF-DETR-Base
-    #   "character_box_detector_rtdetr.pt"        ← RT-DETR-L (older)
+    #   "character_box_detector_dfine_nano.pt"  ← D-FINE-Nano (⚡ recommended: MIT, precise char localization)
+    #   "character_box_detector_rfdetr_nano.pt" ← RF-DETR-Nano (Apache-2.0)
+    #   "character_box_detector_rfdetr_small.pt"← RF-DETR-Small
+    #   "character_box_detector_rfdetr.pt"      ← RF-DETR-Base
+    #   "character_box_detector_rtdetr.pt"      ← RT-DETR-L (older)
     MODEL_3A_FILENAME = "character_box_detector_rfdetr_small.pt"
 
     # --- Model 3A: OCR (CTC Text Recognition) ---
@@ -45,8 +51,10 @@ class Config:
     MODEL_3B_THAI_FILENAME = "province_model_grayscale_thai.pth"
 
     # --- Lao Plate Detector ---
-    #   "plate_detector_lao_rfdetr_small.pt"  ← RF-DETR-Small (recommended ⚡)
-    #   "plate_detector_lao_rfdetr.pt"        ← RF-DETR-Base
+    #   "plate_detector_lao_dfine_nano.pt"   ← D-FINE-Nano (⚡ recommended: MIT)
+    #   "plate_detector_lao_rfdetr_nano.pt"  ← RF-DETR-Nano (Apache-2.0)
+    #   "plate_detector_lao_rfdetr_small.pt" ← RF-DETR-Small
+    #   "plate_detector_lao_rfdetr.pt"       ← RF-DETR-Base
     MODEL_LAO_FILENAME = "plate_detector_lao_rfdetr_small.pt"
 
     # --- Model 3B: Lao Province Classifier ---
@@ -106,6 +114,8 @@ class Config:
     @property
     def MODEL_1_TAG(self):
         name = self.ACTIVE_MODEL_1_PATH.name.lower()
+        if "picodet_m" in name:
+            return "PicoDet-M (PaddleDetection / Apache-2.0, ~12 ms CPU)"
         if "picodet" in name:
             return "PicoDet-S (PaddleDetection / Apache-2.0, ~7 ms CPU)"
         if "dfine_nano" in name:
@@ -116,6 +126,8 @@ class Config:
             return "D-FINE (MIT)"
         if "rfdetr_obb" in name:
             return "RF-DETR-OBB Small (Apache-2.0 / MIT)"
+        if "rfdetr_nano" in name:
+            return "RF-DETR-Nano (Apache-2.0, ⚡)"
         if "rfdetr_small" in name:
             return "RF-DETR-Small (Apache-2.0)"
         if "rfdetr" in name:
@@ -137,12 +149,18 @@ class Config:
     MODEL_2_RTDETR_PATH = WEIGHTS_DIR / "component_detector_rtdetr.pt"
     MODEL_2_RFDETR_PATH = WEIGHTS_DIR / "component_detector_rfdetr.pt"
     MODEL_2_RFDETR_SMALL_PATH = WEIGHTS_DIR / "component_detector_rfdetr_small.pt"
+    MODEL_2_RFDETR_NANO_PATH = WEIGHTS_DIR / "component_detector_rfdetr_nano.pt"
+    MODEL_2_DFINE_NANO_PATH = WEIGHTS_DIR / "component_detector_dfine_nano.pt"
 
     @property
     def ACTIVE_MODEL_2_PATH(self):
         chosen = self.WEIGHTS_DIR / self.MODEL_2_FILENAME
         if chosen.exists():
             return chosen
+        if self.MODEL_2_DFINE_NANO_PATH.exists():
+            return self.MODEL_2_DFINE_NANO_PATH
+        if self.MODEL_2_RFDETR_NANO_PATH.exists():
+            return self.MODEL_2_RFDETR_NANO_PATH
         if self.MODEL_2_RFDETR_SMALL_PATH.exists():
             return self.MODEL_2_RFDETR_SMALL_PATH
         if self.MODEL_2_RFDETR_PATH.exists():
@@ -154,6 +172,10 @@ class Config:
     @property
     def MODEL_2_TAG(self):
         name = self.ACTIVE_MODEL_2_PATH.name.lower()
+        if "dfine_nano" in name:
+            return "D-FINE Nano (MIT, ⚡)"
+        if "rfdetr_nano" in name:
+            return "RF-DETR-Nano (Apache-2.0, ⚡)"
         if "rfdetr_small" in name:
             return "RF-DETR-Small (Apache-2.0)"
         if "rfdetr" in name:
@@ -167,12 +189,18 @@ class Config:
     CHAR_BOX_MODEL_RTDETR_PATH = WEIGHTS_DIR / "character_box_detector_rtdetr.pt"
     CHAR_BOX_MODEL_RFDETR_PATH = WEIGHTS_DIR / "character_box_detector_rfdetr.pt"
     CHAR_BOX_MODEL_RFDETR_SMALL_PATH = WEIGHTS_DIR / "character_box_detector_rfdetr_small.pt"
+    CHAR_BOX_MODEL_RFDETR_NANO_PATH = WEIGHTS_DIR / "character_box_detector_rfdetr_nano.pt"
+    CHAR_BOX_MODEL_DFINE_NANO_PATH = WEIGHTS_DIR / "character_box_detector_dfine_nano.pt"
 
     @property
     def ACTIVE_CHAR_BOX_MODEL_PATH(self):
         chosen = self.WEIGHTS_DIR / self.MODEL_3A_FILENAME
         if chosen.exists():
             return chosen
+        if self.CHAR_BOX_MODEL_DFINE_NANO_PATH.exists():
+            return self.CHAR_BOX_MODEL_DFINE_NANO_PATH
+        if self.CHAR_BOX_MODEL_RFDETR_NANO_PATH.exists():
+            return self.CHAR_BOX_MODEL_RFDETR_NANO_PATH
         if self.CHAR_BOX_MODEL_RFDETR_SMALL_PATH.exists():
             return self.CHAR_BOX_MODEL_RFDETR_SMALL_PATH
         if self.CHAR_BOX_MODEL_RFDETR_PATH.exists():
@@ -184,6 +212,10 @@ class Config:
     @property
     def CHAR_BOX_TAG(self):
         name = self.ACTIVE_CHAR_BOX_MODEL_PATH.name.lower()
+        if "dfine_nano" in name:
+            return "D-FINE Nano (MIT, ⚡)"
+        if "rfdetr_nano" in name:
+            return "RF-DETR-Nano (Apache-2.0, ⚡)"
         if "rfdetr_small" in name:
             return "RF-DETR-Small (Apache-2.0)"
         if "rfdetr" in name:
