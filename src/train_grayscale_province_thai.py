@@ -237,5 +237,13 @@ def train_grayscale_thai(epochs=12, batch_size=32, lr=2e-4):
         print("=" * 70)
 
 
+import argparse
+
 if __name__ == "__main__":
-    train_grayscale_thai(epochs=12, batch_size=32, lr=2e-4)
+    parser = argparse.ArgumentParser(description="Train Thai Province Grayscale ResNet18 Classifier (77 classes)")
+    parser.add_argument("--epochs", type=int, default=15, help="Number of training epochs (default: 15)")
+    parser.add_argument("--batch", type=int, default=32, help="Batch size (default: 32)")
+    parser.add_argument("--lr", type=float, default=2e-4, help="Learning rate (default: 2e-4)")
+    args = parser.parse_args()
+
+    train_grayscale_thai(epochs=args.epochs, batch_size=args.batch, lr=args.lr)
