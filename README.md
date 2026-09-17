@@ -130,18 +130,19 @@ All Model 1 candidates have been trained and benchmarked on identical test sets 
 
 ## 🗂️ Complete Production Model Catalog
 
-| Stage | Model Name | Architecture | Input Shape | Output Format | License |
-| :--- | :--- | :--- | :---: | :--- | :---: |
-| **Stage 1 (Plate Detector)** | `plate_detector_picodet_s.pt` / `.onnx`<br>`plate_detector_dfine_nano.pt` / `.onnx` | PicoDet-S / D-FINE Nano | $416 \times 416$<br>$640 \times 640$ | `[1, 3598, 5]` or `[1, 300, 4]` (Bounding Boxes) | **Apache-2.0** / **MIT** |
-| **Stage 1.1 (Corner Regressor)**| `plate_corner_regressor_opset18.onnx` | MobileNetV3 Keypoint Regressor | $224 \times 224$ | `[1, 8]` (4 physical corners: $x_1, y_1 \dots x_4, y_4$) | **BSD-3** |
-| **Stage 1.5 (Country Cls)** | `country_classifier.pth` | MobileNetV3-Small | $128 \times 128$ | `[1, 2]` (0: Thai, 1: Laos) | **BSD-3** |
-| **Stage 2 (Component Detector)**| `component_detector_rfdetr_small.pt` | RF-DETR-Small | $320 \times 160$ | `[1, 300, 4]` (`plate_char`, `province`) | **Apache-2.0** |
-| **Stage 3A (Char Box Detector)**| `character_box_detector_rfdetr_small.pt`| RF-DETR-Small | $160 \times 320$ | `[1, 300, 4]` (Individual character boxes) | **Apache-2.0** |
-| **Stage 3A (Thai Char Cls)** | `character_classifier.pth` | CNN / ResNet | $64 \times 64$ | `[1, 70]` (Thai consonants & digits) | **BSD-3** |
-| **Stage 3A (Thai OCR CTC)** | `ocr_model.pth` | ResNet18 + BiLSTM + CTC | $32 \times 256$ | `[T, B, 71]` (CTC sequence logits) | **Apache-2.0** |
-| **Stage 3A (Lao Char Cls)** | `character_classifier_lao.pth` / `.onnx`| MobileNetV2 (30 Classes) | $64 \times 64$ | `[1, 30]` (Lao consonants & digits) | **BSD-3** |
-| **Stage 3B (Thai Province)** | `province_model_grayscale_thai.pth` | Grayscale ResNet18 | $64 \times 192$ | `[1, 77]` (77 Thai Provinces) | **BSD-3** |
-| **Stage 3B (Lao Province)** | `province_model_grayscale_lao.pth` | Grayscale ResNet18 | $64 \times 192$ | `[1, 18]` (18 Lao Provinces) | **BSD-3** |
+| Stage | Model Name | Architecture | Input Shape | Output Format | License | Default in `config.py` |
+| :--- | :--- | :--- | :---: | :--- | :---: | :---: |
+| **Stage 1 (Plate Detector)** | `plate_detector_dfine_nano.pt` / `.onnx` | D-FINE-Nano (FDR Loss) | $640 \times 640$ | `[1, 300, 4]` (Bounding Boxes) | **MIT** | ✅ Active (`~27ms CPU`) |
+| *Alternative Stage 1* | `plate_detector_picodet_s.pt` / `.onnx` | PicoDet-S (ESNet) | $416 \times 416$ | `[1, 3598, 5]` (Bounding Boxes) | **Apache-2.0** | Available (`~6.5ms CPU`) |
+| **Stage 1.1 (Corner Regressor)**| `plate_corner_regressor_opset18.onnx` | MobileNetV3 Keypoint Regressor | $224 \times 224$ | `[1, 8]` (4 physical corners: $x_1, y_1 \dots x_4, y_4$) | **BSD-3** | ✅ Active (`~3.2ms CPU`) |
+| **Stage 1.5 (Country Cls)** | `country_classifier.pth` | MobileNetV3-Small | $128 \times 128$ | `[1, 2]` (0: Thai, 1: Laos) | **BSD-3** | ✅ Active (`~1.5ms CPU`) |
+| **Stage 2 (Component Detector)**| `component_detector_dfine_nano.pt` | D-FINE-Nano | $320 \times 160$ | `[1, 300, 4]` (`plate_char`, `province`) | **MIT** | ✅ Active (`~18ms CPU`) |
+| **Stage 3A (Char Box Detector)**| `character_box_detector_dfine_nano.pt`| D-FINE-Nano | $160 \times 320$ | `[1, 300, 4]` (Individual character boxes) | **MIT** | ✅ Active (`~16ms CPU`) |
+| **Stage 3A (Thai Char Cls)** | `character_classifier.pth` | MobileNetV2 (50 Classes) | $64 \times 64$ | `[1, 50]` (Thai consonants & digits) | **BSD-3** | ✅ Active (`~1.8ms CPU`) |
+| **Stage 3A (Thai OCR CTC)** | `ocr_model.pth` | ResNet18 + BiLSTM + CTC | $32 \times 256$ | `[T, B, 71]` (CTC sequence logits) | **Apache-2.0** | ✅ Active (`~8.5ms CPU`) |
+| **Stage 3A (Lao Char Cls)** | `character_classifier_lao.pth` / `.onnx`| MobileNetV2 (34 Classes) | $64 \times 64$ | `[1, 34]` (Lao consonants & digits) | **BSD-3** | ✅ Active (`~1.8ms CPU`) |
+| **Stage 3B (Thai Province)** | `province_model_grayscale_thai.pth` | Grayscale ResNet18 | $64 \times 256$ | `[1, 77]` (77 Thai Provinces) | **BSD-3** | ✅ Active (`98.97% Top-1`) |
+| **Stage 3B (Lao Province)** | `province_model_grayscale_lao.pth` | Grayscale ResNet18 | $64 \times 256$ | `[1, 18]` (18 Lao Provinces) | **BSD-3** | ✅ Active (`99.2% Top-1`) |
 
 ---
 
@@ -153,32 +154,36 @@ All system parameters, active model filenames, and hardware acceleration flags a
 # src/config.py
 
 class Config:
-    # --- Compute Device ---
-    # True  = Force CPU only (safe for low-memory environments, containers, or test machines)
-    # False = Auto-detect: CUDA -> Apple Silicon MPS -> CPU
-    FORCE_CPU = False
-
     # --- Model 1: Plate Detector ---
     # Options (fastest -> highest accuracy):
-    #   "plate_detector_picodet_s.pt"      <- PicoDet-S (⚡ Fastest: 6.5 ms CPU, 3.8 MB)
-    #   "plate_detector_dfine_nano.pt"     <- D-FINE Nano (⚡ Recommended: 27 ms CPU, 15 MB)
-    #   "plate_detector_dfine_small.pt"    <- D-FINE Small (High precision: 63 ms CPU, 40 MB)
-    #   "plate_detector_rfdetr_small.pt"   <- RF-DETR-Small
-    #   "plate_detector_rfdetr_obb_small.pt" <- RF-DETR-OBB (Oriented Bounding Box)
-    MODEL_1_FILENAME = "plate_detector_picodet_s.pt"
+    #   "plate_detector_picodet_s.pt"      <- PicoDet-S (⚡ Fastest: 6.5 ms CPU, 3.8 MB ONNX)
+    #   "plate_detector_picodet_m.pt"      <- PicoDet-M (⚡ Medium: 12.0 ms CPU, 8.9 MB ONNX)
+    #   "plate_detector_dfine_nano.pt"     <- D-FINE Nano (⚡ Recommended: 27 ms CPU, 15 MB ONNX)
+    #   "plate_detector_dfine_small.pt"    <- D-FINE Small (High precision: 63 ms CPU, 40 MB ONNX)
+    #   "plate_detector_rfdetr_nano.pt"    <- RF-DETR-Nano (Transformer: 42 ms CPU)
+    MODEL_1_FILENAME = "plate_detector_dfine_nano.pt"
 
     # --- Model 2: Component Detector ---
-    MODEL_2_FILENAME = "component_detector_rfdetr_small.pt"
+    #   "component_detector_dfine_nano.pt"   <- D-FINE Nano (⚡ recommended: MIT, high mAP)
+    #   "component_detector_rfdetr_small.pt" <- RF-DETR-Small (Apache-2.0)
+    MODEL_2_FILENAME = "component_detector_dfine_nano.pt"
 
     # --- Model 3A: Character Box Detector ---
-    MODEL_3A_FILENAME = "character_box_detector_rfdetr_small.pt"
+    #   "character_box_detector_dfine_nano.pt" <- D-FINE Nano (⚡ recommended: MIT, precise localization)
+    MODEL_3A_FILENAME = "character_box_detector_dfine_nano.pt"
+
+    # --- Model 3A: OCR Engine (ResNet-CRNN + CTC) ---
+    OCR_FILENAME = "ocr_model.pth"
 
     # --- Model 3B: Province Classifiers ---
     MODEL_3B_THAI_FILENAME = "province_model_grayscale_thai.pth"
     MODEL_3B_LAO_FILENAME  = "province_model_grayscale_lao.pth"
+
+    # --- Lao Plate Detector ---
+    MODEL_LAO_FILENAME = "plate_detector_lao_dfine_nano.pt"
 ```
 
-To switch models on the fly, simply update `MODEL_1_FILENAME`. The backend router automatically adapts the inference wrapper to PicoDet, D-FINE, RF-DETR, or RT-DETRv2.
+To switch models on the fly, simply update the filename in `src/config.py`. The backend automatically adapts the inference wrapper to PicoDet, D-FINE, RF-DETR, or RT-DETRv2 without server restart.
 
 ---
 

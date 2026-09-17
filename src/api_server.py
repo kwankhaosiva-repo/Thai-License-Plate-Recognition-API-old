@@ -1706,24 +1706,6 @@ class LPRPipelineService:
                 top_prov_name = self.int_to_prov_thai.get(top_indices[0].item(), "Unknown")
                 top_prov_prob = float(top_probs[0].item())
 
-                # Automated DLT Truck Province Code Extraction (Top Banner):
-                if pattern_name == "NN-NNNN (Truck/Transport)":
-                    top_cand_names = [self.int_to_prov_thai.get(idx_val.item(), "") for idx_val in top_indices]
-                    dlt_cand_code, dlt_cand_prov, dlt_cand_conf, dlt_matched = self.extract_dlt_truck_code(
-                        rectified_plate, prov_candidates=top_cand_names
-                    )
-                    if dlt_cand_code and dlt_cand_prov:
-                        dlt_truck_code = dlt_cand_code
-                        dlt_truck_province = dlt_cand_prov
-                        truck_code_matched = dlt_matched
-                        # ONLY reinforce if DLT code matches one of Model 3B top candidates or top_prov_name matches!
-                        # (Prevents noisy digit hallucinations like '55' from overriding actual provinces)
-                        if truck_code_matched and dlt_cand_conf >= 0.70:
-                            top_prov_name = dlt_cand_prov
-                            top_prov_prob = max(top_prov_prob, 0.95)
-                        elif top_prov_name == dlt_cand_prov:
-                            top_prov_prob = 0.99
-
                 # Fallback to verified ground truth lookup if present:
                 f_base = Path(filename).name if filename else ""
                 gt_truck_prov = THAI_TRUCK_GT_LOOKUP.get(f_base) or THAI_TRUCK_GT_LOOKUP.get(formatted_plate_text)
@@ -1732,8 +1714,8 @@ class LPRPipelineService:
                     top_prov_prob = 0.99
 
                 # Guard against low-confidence / noisy province predictions:
-                # If probability is < 30% and not verified by DLT code or GT, flag as ambiguous
-                if top_prov_prob < 0.30 and not gt_truck_prov and not dlt_truck_code:
+                # If probability is < 30% and not verified by GT, flag as ambiguous
+                if top_prov_prob < 0.30 and not gt_truck_prov:
                     is_ambiguous = True
 
                 if debug:

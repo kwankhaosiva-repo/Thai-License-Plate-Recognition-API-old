@@ -16,6 +16,7 @@ class Config:
     # Options (fastest → most accurate / specialized):
     #   "plate_detector_picodet_s.pt"        ← PicoDet-S (⚡ Ultra-fast: ~6.5 ms CPU, 3.8 MB ONNX, Apache-2.0)
     #   "plate_detector_picodet_m.pt"        ← PicoDet-M (⚡ Medium: ~12 ms CPU, 8.9 MB ONNX, Apache-2.0)
+    #   "plate_detector_mobilenet_v3.pt"     ← MobileNetV3 Detector (Ultra-lightweight baseline)
     #   "plate_detector_dfine_nano.pt"       ← D-FINE-Nano (⚡ Recommended: ~27 ms CPU, 15 MB ONNX, MIT)
     #   "plate_detector_dfine_small.pt"      ← D-FINE-Small (High accuracy: ~63 ms CPU, 40 MB ONNX, MIT)
     #   "plate_detector_rfdetr_nano.pt"      ← RF-DETR-Nano (⚡ Ultra-fast transformer, Apache-2.0)
@@ -32,15 +33,20 @@ class Config:
     #   "component_detector_rfdetr_small.pt"   ← RF-DETR-Small
     #   "component_detector_rfdetr.pt"         ← RF-DETR-Base
     #   "component_detector_rtdetr.pt"         ← RT-DETR-L (older)
-    MODEL_2_FILENAME = "component_detector_rfdetr_small.pt"
+    MODEL_2_FILENAME = "component_detector_dfine_nano.pt"
 
     # --- Model 3A: Character Box Detector ---
     #   "character_box_detector_dfine_nano.pt"  ← D-FINE-Nano (⚡ recommended: MIT, precise char localization)
+    #   "character_box_detector_dfine_small.pt" ← D-FINE-Small (MIT, higher capacity)
     #   "character_box_detector_rfdetr_nano.pt" ← RF-DETR-Nano (Apache-2.0)
     #   "character_box_detector_rfdetr_small.pt"← RF-DETR-Small
     #   "character_box_detector_rfdetr.pt"      ← RF-DETR-Base
     #   "character_box_detector_rtdetr.pt"      ← RT-DETR-L (older)
-    MODEL_3A_FILENAME = "character_box_detector_rfdetr_small.pt"
+    MODEL_3A_FILENAME = "character_box_detector_dfine_nano.pt"
+
+    # --- Model 3A: Character Classifier (MobileNetV2) ---
+    #   "character_classifier.pth" ← MobileNetV2 (50 Thai character & digit classes)
+    CHAR_CLASSIFIER_THAI_FILENAME = "character_classifier.pth"
 
     # --- Model 3A: OCR (CTC Text Recognition) ---
     OCR_FILENAME = "ocr_model.pth"
@@ -55,7 +61,7 @@ class Config:
     #   "plate_detector_lao_rfdetr_nano.pt"  ← RF-DETR-Nano (Apache-2.0)
     #   "plate_detector_lao_rfdetr_small.pt" ← RF-DETR-Small
     #   "plate_detector_lao_rfdetr.pt"       ← RF-DETR-Base
-    MODEL_LAO_FILENAME = "plate_detector_lao_rfdetr_small.pt"
+    MODEL_LAO_FILENAME = "plate_detector_lao_dfine_nano.pt"
 
     # --- Model 3B: Lao Province Classifier ---
     MODEL_3B_LAO_FILENAME = "province_model_grayscale_lao.pth"
@@ -191,12 +197,15 @@ class Config:
     CHAR_BOX_MODEL_RFDETR_SMALL_PATH = WEIGHTS_DIR / "character_box_detector_rfdetr_small.pt"
     CHAR_BOX_MODEL_RFDETR_NANO_PATH = WEIGHTS_DIR / "character_box_detector_rfdetr_nano.pt"
     CHAR_BOX_MODEL_DFINE_NANO_PATH = WEIGHTS_DIR / "character_box_detector_dfine_nano.pt"
+    CHAR_BOX_MODEL_DFINE_SMALL_PATH = WEIGHTS_DIR / "character_box_detector_dfine_small.pt"
 
     @property
     def ACTIVE_CHAR_BOX_MODEL_PATH(self):
         chosen = self.WEIGHTS_DIR / self.MODEL_3A_FILENAME
         if chosen.exists():
             return chosen
+        if self.CHAR_BOX_MODEL_DFINE_SMALL_PATH.exists():
+            return self.CHAR_BOX_MODEL_DFINE_SMALL_PATH
         if self.CHAR_BOX_MODEL_DFINE_NANO_PATH.exists():
             return self.CHAR_BOX_MODEL_DFINE_NANO_PATH
         if self.CHAR_BOX_MODEL_RFDETR_NANO_PATH.exists():
@@ -212,6 +221,8 @@ class Config:
     @property
     def CHAR_BOX_TAG(self):
         name = self.ACTIVE_CHAR_BOX_MODEL_PATH.name.lower()
+        if "dfine_small" in name:
+            return "D-FINE Small (MIT, ⚡)"
         if "dfine_nano" in name:
             return "D-FINE Nano (MIT, ⚡)"
         if "rfdetr_nano" in name:
@@ -224,7 +235,10 @@ class Config:
             return "RT-DETR-L (Apache-2.0)"
         return "YOLO11-Box"
     
-    CHAR_CLASS_THAI_PATH = WEIGHTS_DIR / "character_classifier.pth"
+    @property
+    def CHAR_CLASS_THAI_PATH(self):
+        return self.WEIGHTS_DIR / self.CHAR_CLASSIFIER_THAI_FILENAME
+    
     CHAR_CLASS_THAI_TAG = "MobileNetV2 (50 Thai Classes)"
     
     CHAR_CLASS_LAO_PATH = WEIGHTS_DIR / "character_classifier_lao.pth"
