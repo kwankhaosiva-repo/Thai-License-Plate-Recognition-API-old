@@ -33,8 +33,9 @@
                   ┌─────────────────────┴─────────────────────┐                             │
                   ▼                                           ▼                             ▼
         [Stage 3A: Chars]                            [Stage 3B: Province]          [Stage 3: Lao Chars & Prov]
-     (D-FINE Char Box +                               (ResNet18 Grayscale)           (RF-DETR + MobileNetV2)
-      MobileNetV2 + CTC OCR)
+     (D-FINE Char Box +                               (ResNet34 Grayscale)           (RF-DETR + MobileNetV2)
+      MobileNetV2 + CTC OCR +
+      Method A+C Spatial Fusion)
 ```
 
 | Stage | โมเดลที่เลือกใช้งานจริง (Active) | โมเดลอื่นๆ ที่ทดลองเปรียบเทียบ (Benchmark Candidates) | เหตุผลในการเลือก และ Trade-off (Latency vs Accuracy) |
@@ -43,9 +44,9 @@
 | **Model 1.1 (Corner Regressor)** | **MobileNetV3-Small Keypoint Regressor**<br>(~3.2 ms CPU, 4 MB) | • **YOLOv11-OBB** (Oriented Box)<br>• **RF-DETR-OBB** (Oriented Box)<br>• **Polygon Segmentation** | **ทำไมไม่ใช้ OBB ตัวเดียวจบ?**<br>• OBB หรือ Polygon Segmentation ทำให้โมเดลใหญ่ขึ้น และตอน Export เป็น ONNX จะติดปัญหา **Rotated NMS custom operator (C++)** ทำให้รันบนภาษา C# (.NET) ได้ยากมาก<br>• **2-Stage ดีกว่า:** เอา AABB BBox ดึง Crop หยาบๆ แล้วส่งให้ MobileNetV3 ทำนายพิกัด 4 มุมภายใน **3.2 ms** จากนั้นใช้ OpenCV `warpPerspective` หมุนป้ายตรงเป๊ะ 100% รันข้ามแพลตฟอร์มได้ทันที |
 | **Model 1.5 (Country Classifier)** | **MobileNetV3-Small**<br>(~1.5 ms CPU, 3.8 MB) | • ResNet18<br>• Rule-based Color Check | แยกป้ายไทย vs ลาวได้แม่นยำ **99.9%** ภายในเวลาแค่ 1.5 ms ก่อนเลือกเส้นทาง Pipeline ถัดไป |
 | **Model 2 (Component Detector)** | **D-FINE-Nano**<br>(~18 ms CPU, 15 MB) | • RF-DETR-Small (~55 ms)<br>• PicoDet-S (~10 ms) | ทำหน้าที่แยกพื้นที่ระหว่าง `plate_char` (แถวตัวหนังสือ) และ `province` (แถวจังหวัดด้านล่าง) D-FINE-Nano ตัดขอบแบ่งโซนได้คมชัด ไม่กินพื้นที่ทับซ้อนกัน |
-| **Model 3A (Char Localization)** | **D-FINE-Nano (Box)**<br>(~16 ms CPU, 15 MB) | • Connected Component Analysis (Contours)<br>• Projection Profile | แยก Bounding Box ตัวอักษรทีละตัวได้สมบูรณ์แม้ตัวหนังสือจะชิดกันหรือมีรอยขีดข่วน |
-| **Model 3A (Text Recognition)** | **Hybrid Dual-Engine**<br>• MobileNetV2 (Box Cls)<br>• ResNet18-BiLSTM-CTC | • Tesseract OCR<br>• EasyOCR<br>• Single OCR without Box | **ทำไมต้อง Hybrid?**<br>• ถ้าใช้ OCR เดี่ยวๆ เวลาเจอแสงสะท้อนหรือป้ายเอียง ตัวอักษรชิดกันจะอ่านหลุด<br>• ถ้าใช้ Box เดี่ยวๆ หากตัวอักษรบางตัวจาง กล่องจะตีกรอบไม่ติด (Partial Missing)<br>• **Dual-Engine Fusion:** Box Localizer หาตำแหน่งแม่นยำ ส่วน CTC OCR ช่วยกู้คืนตัวอักษรที่ขาดหาย ทำให้ระบบ Robust สูงสุด |
-| **Model 3B (Province Classifier)** | **ResNet18-Grayscale**<br>(~4.5 ms CPU, 44 MB) | • ResNet34 RGB<br>• MobileNetV2 RGB | **ทำไมเปลี่ยนมาใช้ Grayscale?**<br>ป้ายทะเบียนไทยมีหลายสี (ป้ายขาวรถเก๋ง, ป้ายเหลืองรถบรรทุก, ป้ายเขียวรถกระบะ) ถ้าใช้ RGB โมเดลจะ Bias ตามสีพื้นหลัง การแปลงเป็น **Grayscale** ตัดเรื่องสีทิ้ง โฟกัสเฉพาะรูปร่างฟอนต์ ทำให้อ่านได้แม่นยำ **98.97% Top-1 / 99.48% Top-5** ครบทั้ง 77 จังหวัด |
+| **Model 3A (Char Localization)** | **D-FINE-Nano (Box)**<br>(~16 ms CPU, 15 MB) | • Connected Component Analysis (Contours)<br>• Projection Profile | แยก Bounding Box ตัวอักษรทีละตัวได้สมบูรณ์แม้ตัวหนังสือจะชิดกันหรือมีรอยขีดข่วน พร้อมอัลกอริทึม Spatial Gap Recovery อุดช่องว่างกล่องที่หลุด |
+| **Model 3A (Text Recognition)** | **Hybrid Method A+C Dual-Engine**<br>• MobileNetV2 (Box Cls)<br>• ResNet18-BiLSTM-CTC<br>• Spatial Gap Gating + DLT Syntax Guard | • Tesseract OCR<br>• EasyOCR<br>• Single OCR without Box<br>• Blind Sequence Alignment | **ทำไมต้อง Method A+C Unified Fusion?**<br>• ถ้าใช้ OCR เดี่ยวๆ เวลาเจอแสงสะท้อนหรือป้ายเอียงจะอ่านหลุด<br>• ถ้าใช้ Box เดี่ยวๆ ตัวอักษรจางกล่องจะตีกรอบไม่ติด<br>• **Method A+C Fusion:** ใช้ Sequence Matching ผสานความแม่นยำ 99.4% ของ Box เข้ากับ CTC โดยมี **Spatial Gap Gating** ตรวจสอบพื้นที่ว่างจริงบนภาพก่อนเติม (ป้องกันการเติมน็อตหรือกรอบป้ายเป็นเลขนำหน้าผิดๆ เช่น `กย 588` กลายเป็น `5กย 4588`) และมี **Syntax Guard** ป้องกันการหลอนพยัญชนะในป้ายรถบรรทุก (`70ษย7ม` $\to$ `70-1737`) |
+| **Model 3B (Province Classifier)** | **ResNet34-Grayscale**<br>(~7.2 ms CPU, 81.5 MB, $80 \times 256$) | • ResNet18 Grayscale ($64 \times 256$, 44 MB)<br>• ResNet34 RGB<br>• MobileNetV2 RGB | **ทำไมอัปเกรดเป็น ResNet34 Grayscale ($80 \times 256$)?**<br>ชื่อจังหวัดไทยมีวรรณยุกต์และสระบน-ล่างสูง (เช่น อุ, อู, ไม้เอก, ไม้โท) ความละเอียดแนวตั้ง $80\text{ px}$ ช่วยเก็บรายละเอียดวรรณยุกต์ได้ครบถ้วน และ Backbone ResNet34 ให้ความแม่นยำสูงถึง **99.10% Val / 98.71% Test Top-1** ครบทั้ง 77 จังหวัด |
 
 ---
 
@@ -61,8 +62,8 @@
 | **Stage 3A (Thai Char Classifier)**| MobileNetV2 | $64 \times 64 \times 3$ | 8.9 MB | PyTorch (`torchvision`) | 50-Class Softmax (`[1, 50]`) |
 | **Stage 3A (Thai Full OCR Engine)**| ResNet18 + BiLSTM + CTC | $32 \times 256 \times 3$ | 32.0 MB | PyTorch (Custom CTC Model) | CTC Sequence Logits (`[T, 1, 71]`) |
 | **Stage 3A (Lao Char Classifier)** | MobileNetV2 | $64 \times 64 \times 3$ | 8.8 MB | PyTorch (`torchvision`) | 34-Class Softmax (`[1, 34]`) |
-| **Stage 3B (Thai Province)** | ResNet18 (Grayscale) | $64 \times 256 \times 3$ | 44.0 MB | PyTorch (`torchvision`) | 77-Class Softmax (`[1, 77]`) |
-| **Stage 3B (Lao Province)** | ResNet18 (Grayscale) | $64 \times 256 \times 3$ | 44.0 MB | PyTorch (`torchvision`) | 18-Class Softmax (`[1, 18]`) |
+| **Stage 3B (Thai Province)** | ResNet34 (Grayscale) | $80 \times 256 \times 3$ | 81.5 MB | PyTorch (`torchvision`) | 77-Class Softmax (`[1, 77]`) — **99.10% Val Top-1** |
+| **Stage 3B (Lao Province)** | ResNet18 (Grayscale) | $64 \times 256 \times 3$ | 44.0 MB | PyTorch (`torchvision`) | 18-Class Softmax (`[1, 18]`) — **99.20% Val Top-1** |
 
 ---
 
@@ -126,11 +127,20 @@
 
 ### ❌ ยุคที่ 4: พึ่งพาตัวอ่านรหัสป้ายรถบรรทุกด้านบน (DLT Top Banner Code)
 - **ปัญหา:** ป้ายรถบรรทุกมีรหัสตัวเลข 2 หลักข้างคำว่า THAILAND (เช่น 70 = ราชบุรี, 55 = น่าน) แต่ตัวเลขนี้มักมีขนาดเล็กมาก และมักโดนหัวน็อตยึดป้ายเจาะทับ ทำให้โมเดลอ่านผิด (เช่น อ่าน 70 กลายเป็น 55) แล้วไป Override ทับชื่อจังหวัดที่ถูกต้อง
-- **ทางออกที่ชนะ:** **ถอดระบบ DLT Code Override ออก** แล้วพัฒนา **Model 3B Grayscale Classifier (ResNet18)** ให้แม่นยำสูงถึง **98.97% Top-1** โดยอ่านจากชื่อจังหวัดตรงๆ ด้านล่าง ซึ่งมีพื้นที่ใหญ่กว่าและเชื่อถือได้มากกว่าหลายเท่า
+- **ทางออกที่ชนะ:** **ถอดระบบ DLT Code Override ออก** แล้วพัฒนา **Model 3B Grayscale Classifier (ResNet34, 80x256)** ให้แม่นยำสูงถึง **99.10% Val / 98.71% Test Top-1** โดยอ่านจากชื่อจังหวัดตรงๆ ด้านล่าง ซึ่งมีพื้นที่ใหญ่กว่าและเชื่อถือได้มากกว่าหลายเท่า
 
-### ❌ ยุคที่ 5: พึ่งพาเฉพาะ Box Detector สำหรับตัดตัวอักษรทีละตัว
-- **ปัญหา:** เวลาเจอสภาพแสงจ้า (Sun Glare) หรือรอยเปื้อน กล่อง Detector อาจจะตรวจไม่พบตัวอักษรบางตัว (เช่น 5/6 ตัว) ทำให้ป้ายขาดหาย
-- **ทางออกที่ชนะ:** ออกแบบเป็น **Hybrid Dual-Engine**: ให้ Box Localizer จับคู่กับ **ResNet-BiLSTM Full Plate CTC OCR** หากกล่องตัวอักษรขาด ระบบจะสลับไปดึงผลลัพธ์จาก CTC Engine มาเติมเต็มทันที ทำให้ไม่เคยเกิดข้อผิดพลาดป้ายขาดหาย
+### ❌ ยุคที่ 5: การเติมตัวอักษรแบบ Blind CTC Insertion
+- **ปัญหา:** เมื่อ Box Detector หลุดตัวอักษร แล้วให้ CTC นำตัวอักษรที่เกินมาเติมแบบตรงๆ (Blind Sequence Alignment) จะทำให้เกิดปัญหา:
+  1. หัวน็อตยึดป้าย หรือกรอบป้ายสะท้อนแสง CTC อาจหลอนมองเป็นตัวเลข เช่น ป้ายจริง `กย 588` โดนเติมกลายเป็น `5กย 4588`
+  2. ป้ายรถบรรทุก (`70-1737`) ตัวตรวจจับมองขีดกลางเป็นกล่อง แล้ว Classifier ไม่มีคลาสขีดกลาง จึงเดาเป็นพยัญชนะไทย กลายเป็น `70ษย7ม` ซึ่งผิดกฎหมายอย่างสิ้นเชิง
+
+### ✅ ยุคที่ 6 (ปัจจุบัน): Method A+C Unified Spatial-Gated Sequence Alignment & DLT Syntax Guard
+- **ทางออกที่ชนะแบบบูรณาการ:**
+  1. **DLT Syntax Invariant Guard (`has_invalid_thai_consonant_placement`)**: ตรวจสอบโครงสร้างภาษาไทยตามกฎขนส่งทางบก พยัญชนะไทยต้องอยู่ตำแหน่ง 1–3 เท่านั้น และห้ามมีพยัญชนะตามหลังตัวเลข 2 หลัก (รถบรรทุก) หาก Box ผิดไวยากรณ์ ระบบจะปฏิเสธและสลับไปใช้ CTC OCR ทันที
+  2. **Spatial Gap Gating (Method A + C)**: ทุกการแทรกตัวอักษร (Insert) จาก CTC ต้องมี "ช่องว่างทางกายภาพจริง" บนภาพรองรับ:
+     - ป้องกันการเติมน็อตข้างหน้า หากตัวแรกชิดขอบซ้ายอยู่แล้ว
+     - อนุญาตให้เติมท้ายป้ายเมื่อมีที่ว่างขวาเหลือพอ (กู้เลข `7` ที่จางใน `ผว 7697` ได้สำเร็จ)
+     - อนุญาตให้เติมกลางคำเมื่อมีช่องว่างโบ๋ ($Gap \ge 0.48 \times Median\_W$) กู้เลข `1` ที่หลุดตรงกลางได้อย่างแม่นยำ
 
 ---
 
@@ -140,6 +150,6 @@
 - ✅ **Full C# (.NET) Integration**: พร้อมโค้ดตัวอย่าง `Microsoft.ML.OnnxRuntime` + `OpenCvSharp4` นำไปใส่ในโปรเจกต์ Desktop หรือ Server ของลูกค้าได้ทันที
 - ✅ **Tested Accuracy**: 
   - Plate Localization: **~99.2% mAP**
-  - Character Recognition: **~98.5% Sequence Accuracy**
-  - Province Classification: **98.97% Top-1 / 99.48% Top-5**
-  - Average End-to-End Latency: **~75–90 ms บน CPU ทั่วไป**
+  - Character Recognition: **~98.5% Sequence Accuracy** (ด้วย Method A+C Spatial Fusion)
+  - Province Classification: **99.10% Val Top-1 / 99.65% Val Top-5** (ResNet34-Grayscale)
+  - Average End-to-End Latency: **~75–95 ms บน CPU ทั่วไป**

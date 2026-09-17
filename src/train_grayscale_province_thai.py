@@ -33,7 +33,7 @@ os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 DATA_DIR = PROJECT_ROOT / "datasets" / "Thai" / "thai_province_crops"
 PROV_MAP_PATH = PROJECT_ROOT / "weights" / "province_map.json"
 WEIGHTS_DIR = PROJECT_ROOT / "weights"
-MODEL_SAVE_PATH = WEIGHTS_DIR / "province_model_grayscale_thai.pth"
+DEFAULT_MODEL_SAVE_PATH = WEIGHTS_DIR / "province_model_resnet34_grayscale_thai.pth"
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
 
@@ -145,18 +145,24 @@ def evaluate(model, loader, device, top_k=5):
     return val_loss / val_total, val_correct_1 / val_total, val_correct_k / val_total
 
 
-def train_grayscale_thai(epochs=15, batch_size=32, lr=2e-4, backbone="resnet34"):
+def train_grayscale_thai(epochs=15, batch_size=32, lr=2e-4, backbone="resnet34", save_name=None):
+    if save_name is None:
+        save_name = f"province_model_{backbone}_grayscale_thai.pth" if backbone == "resnet34" else "province_model_grayscale_thai.pth"
+    model_save_path = WEIGHTS_DIR / save_name
+
     print("=" * 70)
-    print(f"🇹🇭 Training Thai Province Grayscale Classifier ({backbone.upper()} - 77 Classes)")
-    print(f"Device: {DEVICE}")
-    print(f"Dataset: {DATA_DIR}")
-    print(f"Target Checkpoint: {MODEL_SAVE_PATH}")
+    print(f"🇹🇭 TRAINING THAI PROVINCE GRAYSCALE CLASSIFIER ({backbone.upper()})")
+    print(f"  Architecture: {backbone.upper()} (Pretrained ImageNet-1K)")
+    print(f"  Input Shape : (256, 80) Grayscale (Enhanced with Sharpness & Autocontrast)")
+    print(f"  Device      : {DEVICE}")
+    print(f"  Epochs      : {epochs} | Batch Size: {batch_size} | LR: {lr}")
+    print(f"  Weights Dest: {model_save_path}")
     print("=" * 70)
 
+    # 1. Load Province Map
     with open(PROV_MAP_PATH, "r", encoding="utf-8") as f:
         prov_map = json.load(f)
     n_classes = len(prov_map)
-
     class_to_idx = {f"{int(k):02d}_{v}": int(k) for k, v in prov_map.items()}
 
     train_tf = get_grayscale_transforms(is_train=True)
@@ -223,19 +229,19 @@ def train_grayscale_thai(epochs=15, batch_size=32, lr=2e-4, backbone="resnet34")
                 "epoch": epoch,
                 "val_top1": val_top1,
                 "val_top5": val_top5,
-            }, MODEL_SAVE_PATH)
-            print(f"  🏆 New best Top-1: {val_top1 * 100:.2f}% -> Saved to {MODEL_SAVE_PATH.name}")
+            }, model_save_path)
+            print(f"  🏆 New best Top-1: {val_top1 * 100:.2f}% -> Saved to {model_save_path.name}")
 
     # Evaluate best model on test set
-    if MODEL_SAVE_PATH.exists():
-        ckpt = torch.load(MODEL_SAVE_PATH, map_location=DEVICE)
+    if model_save_path.exists():
+        ckpt = torch.load(model_save_path, map_location=DEVICE)
         model.load_state_dict(ckpt["model_state"])
         test_loss, test_top1, test_top5 = evaluate(model, test_loader, DEVICE, top_k=5)
         print("\n" + "=" * 70)
         print(f"🏁 Final Test Set Evaluation ({backbone.upper()}):")
         print(f"  Top-1 Accuracy: {test_top1 * 100:.2f}%")
         print(f"  Top-5 Accuracy: {test_top5 * 100:.2f}%")
-        print(f"  Weights saved: {MODEL_SAVE_PATH}")
+        print(f"  Weights saved: {model_save_path}")
         print("=" * 70)
 
 
@@ -247,6 +253,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch", type=int, default=32, help="Batch size (default: 32)")
     parser.add_argument("--lr", type=float, default=2e-4, help="Learning rate (default: 2e-4)")
     parser.add_argument("--backbone", type=str, default="resnet34", choices=["resnet18", "resnet34"], help="Backbone architecture (default: resnet34)")
+    parser.add_argument("--save-name", type=str, default=None, help="Custom filename to save weights in weights/ (default: auto)")
     args = parser.parse_args()
 
-    train_grayscale_thai(epochs=args.epochs, batch_size=args.batch, lr=args.lr, backbone=args.backbone)
+    train_grayscale_thai(epochs=args.epochs, batch_size=args.batch, lr=args.lr, backbone=args.backbone, save_name=args.save_name)

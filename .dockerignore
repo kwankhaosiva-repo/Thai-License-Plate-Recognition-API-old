@@ -1,28 +1,52 @@
+# Git & Env
 .git
 .gitignore
 .dockerignore
 .env
 .venv
-__pycache__
-*.pyc
-*.pyo
-*.pyd
+env/
+venv/
+__pycache__/
+*.py[cod]
+*.so
+.DS_Store
+Thumbs.db
 
-# Datasets & Temporary Files
+# IDE
+.vscode/
+.idea/
+
+# Datasets & Training Runs (Exclude entirely from Docker build context)
+datasets/
 yolo_datasets/
 crops_all/
-debug_api/
-debug_images/
+crops_test_run/
+output/
+runs/
 yolo_train_runs/
 CarPlateDetect_DATASETs/
+data/
+scratch/
 
-# Large Model Files
-# We do NOT ignore weights/ because we COPY them in Dockerfile
-# But we can ignore temporary training backups if any
+# Debug, Logs & Documentation
+debug_api/
+debug_images/
+test_evaluation_results.csv
+*.log
+README.md
+presentation_briefing.md
+RESUME.docx
+rules.txt
+
+# Weights: Exclude bulky experimental & unused model checkpoints
+# (Preserves active production weights: D-FINE nano/small, MobileNetV2, ResNetCRNN OCR, ResNet18 province)
+weights/*.lock
+weights/*.download*
+weights/*backup*
 weights/last.pt
 weights/best_epoch_*.pt
-
-# Testing & Docs
-test_evaluation_results.csv
-README.md
-RESUME.docx
+weights/*obb*
+weights/*rtdetr*
+weights/*rfdetr*
+weights/province_model.pth
+weights/province_model_resnet34_grayscale_thai.pth

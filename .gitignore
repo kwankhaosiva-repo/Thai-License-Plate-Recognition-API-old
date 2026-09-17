@@ -20,6 +20,10 @@ output/
 runs/
 yolo_train_runs/
 CarPlateDetect_DATASETs/
+data/
+*.db
+*.sqlite
+*.sqlite3
 
 # Logs & Debug
 *.log
