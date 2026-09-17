@@ -50,7 +50,7 @@ flowchart TD
         TH_CHAR_BOX --> TH_CHAR_CLS["Model 3A (Cls): 70-Class Character Classifier\n(Thai Letters ก-ฮ + Digits 0-9)"]
         S2_TH -->|"plate_char crop"| TH_OCR["Model 3A (OCR): ResNet18 + BiLSTM + CTC\n(Full Sequence OCR Engine)"]
         TH_CHAR_CLS & TH_OCR --> TH_FUSION["Smart Consonant-Digit Fusion &\nStroke Morphology Disambiguation (ศ vs ผ, ช vs ข)"]
-        S2_TH -->|"province crop"| TH_PROV["Model 3B: Thai Province Classifier\n(Grayscale ResNet18: 77 Provincial Classes)"]
+        S2_TH -->|"province crop"| TH_PROV["Model 3B: Thai Province Classifier\n(Grayscale ResNet34: 77 Provincial Classes)"]
     end
 
     subgraph STAGE3_LA["Stage 3: Laos Recognition Pipeline"]
@@ -102,7 +102,17 @@ flowchart LR
 
 ### 4. Spatial Gap Recovery Algorithm
 - Road dust, mounting screws, or sun glare can obscure individual characters.
-- `recover_character_boxes(..., is_lao=True)` analyzes inter-glyph horizontal spacing. If a gap exceeds $1.45 \times$ the median character width, the missing coordinate is geometrically interpolated to ensure consistent 6-character recovery.
+- `recover_character_boxes(..., is_lao=True)` analyzes inter-glyph horizontal spacing. If a gap exceeds $1.35 \times$ the median character width, the missing coordinate is geometrically interpolated to ensure consistent character recovery.
+
+### 5. Method A+C Unified Spatial-Gated Sequence Alignment & DLT Syntax Guard
+- **The Problem:** Blind sequence alignment (Method C) risks inserting false characters when CTC OCR hallucinates mounting screws, rivets, or edge frames as digits (e.g. valid `กย 588` mutated into `5กย 4588`). Conversely, box detectors can detect the hyphen `-` on commercial truck plates (`70-1737`) and misclassify it as consonant `ษ` (`70ษย7ม`).
+- **The Unified Solution:**
+  1. **DLT Syntax Invariant Guard (`has_invalid_thai_consonant_placement`)**: Enforces Thai Department of Land Transport legal grammar — consonants are strictly confined to positions 1–3, can never follow digits, and commercial transport numbers (`NN-NNNN`) forbid consonants. Any syntactic violation immediately triggers automatic fallback to continuous CTC OCR.
+  2. **Spatial Gap Gating (Method A + C)**: Every character insertion proposed by CTC must be supported by real physical space on the plate image ($Median\_W$ verification):
+     - Blocks false leading insertions if the first box is already near the left margin (protects against screw noise).
+     - Blocks false inter-group insertions between consonants and digits unless a genuine wide gap exists ($\ge 1.35 \times Median\_W$).
+     - Reclaims faint trailing characters (e.g. dropped '7' in `ผว 7697`) when remaining right margin space is detected ($\ge 0.75 \times Median\_W$).
+     - Reclaims dropped internal digits (e.g. slender '1' in `กข 713`) when internal spacing exceeds $0.48 \times Median\_W$.
 
 ---
 
@@ -141,7 +151,7 @@ All Model 1 candidates have been trained and benchmarked on identical test sets 
 | **Stage 3A (Thai Char Cls)** | `character_classifier.pth` | MobileNetV2 (50 Classes) | $64 \times 64$ | `[1, 50]` (Thai consonants & digits) | **BSD-3** | ✅ Active (`~1.8ms CPU`) |
 | **Stage 3A (Thai OCR CTC)** | `ocr_model.pth` | ResNet18 + BiLSTM + CTC | $32 \times 256$ | `[T, B, 71]` (CTC sequence logits) | **Apache-2.0** | ✅ Active (`~8.5ms CPU`) |
 | **Stage 3A (Lao Char Cls)** | `character_classifier_lao.pth` / `.onnx`| MobileNetV2 (34 Classes) | $64 \times 64$ | `[1, 34]` (Lao consonants & digits) | **BSD-3** | ✅ Active (`~1.8ms CPU`) |
-| **Stage 3B (Thai Province)** | `province_model_grayscale_thai.pth` | Grayscale ResNet18 | $64 \times 256$ | `[1, 77]` (77 Thai Provinces) | **BSD-3** | ✅ Active (`98.97% Top-1`) |
+| **Stage 3B (Thai Province)** | `province_model_resnet34_grayscale_thai.pth` | Grayscale ResNet34 | $80 \times 256$ | `[1, 77]` (77 Thai Provinces) | **BSD-3** | ✅ Active (`99.10% Val / 98.71% Test Top-1`) |
 | **Stage 3B (Lao Province)** | `province_model_grayscale_lao.pth` | Grayscale ResNet18 | $64 \times 256$ | `[1, 18]` (18 Lao Provinces) | **BSD-3** | ✅ Active (`99.2% Top-1`) |
 
 ---
@@ -176,7 +186,8 @@ class Config:
     OCR_FILENAME = "ocr_model.pth"
 
     # --- Model 3B: Province Classifiers ---
-    MODEL_3B_THAI_FILENAME = "province_model_grayscale_thai.pth"
+    #   "province_model_resnet34_grayscale_thai.pth" <- Grayscale ResNet34 (⚡ 80x256, 99.10% Val Top-1)
+    MODEL_3B_THAI_FILENAME = "province_model_resnet34_grayscale_thai.pth"
     MODEL_3B_LAO_FILENAME  = "province_model_grayscale_lao.pth"
 
     # --- Lao Plate Detector ---

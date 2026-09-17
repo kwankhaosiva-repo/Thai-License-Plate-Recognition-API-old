@@ -36,6 +36,12 @@ class PlateLabelValidator(BaseModel):
         is_nc  = PATTERN_NC_NNNN.match(v_stripped)
         is_nn  = PATTERN_NN_NNNN.match(v_stripped)
         is_num = PATTERN_NNNNN.match(v_stripped)
+        if is_num:
+            # Series 70-99 are strictly DLT commercial transport trucks/buses requiring NN-NNNN (6 digits).
+            # A 5-digit string starting with 70-99 is an incomplete truck plate missing a digit, NOT an official plate.
+            clean_num = v_stripped.replace("-", "").replace(" ", "")
+            if len(clean_num) == 5 and re.match(r"^[7-9]\d", clean_num):
+                is_num = None
         
         if not (is_ncc or is_cc or is_c or is_nc or is_nn or is_num):
             raise ValueError(

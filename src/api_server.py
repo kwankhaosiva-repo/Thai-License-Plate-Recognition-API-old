@@ -35,6 +35,7 @@ import io
 import re
 import time
 import json
+import difflib
 import base64
 import tempfile
 import asyncio
@@ -125,12 +126,22 @@ THAI_TRUCK_GT_LOOKUP: Dict[str, str] = {
     "0333.jpg": "สระแก้ว",
 }
 
-from fastapi import FastAPI, UploadFile, File, Form, Query, Request, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, Query, Request, Response, Body, HTTPException, Depends
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.config import cfg
+from src.auth_manager import (
+    get_auth_config,
+    register_user_account,
+    authenticate_user_password,
+    decode_session_jwt,
+    get_user_profile,
+    update_user_settings,
+    login_dev_admin,
+    get_current_user_profile,
+)
 from src.models import ResNetCRNN, ProvinceClassifier, ResNetProvinceClassifier, best_path_decode
 from src.preprocess import get_ocr_transforms, get_prov_transforms, get_grayscale_prov_transforms
 from src.validators import (
@@ -150,6 +161,13 @@ from src.prepare_perspective_dataset import (
     extract_quad_corners,
     warp_perspective_plate,
     fine_deskew_plate,
+)
+from src.history_manager import (
+    save_recognition,
+    query_history,
+    get_history_stats,
+    export_history_csv,
+    clear_history,
 )
 
 # Initialize FastAPI App
@@ -213,6 +231,9 @@ def determine_pattern_name(text: str, country: str = "Thai") -> str:
     if PATTERN_NN_NNNN.match(clean) or re.match(r"^\d{2}-\d{4}$", clean) or re.match(r"^\d{6}$", clean):
         return "NN-NNNN (Truck/Transport)"
     if PATTERN_NNNNN.match(clean):
+        # Disambiguate DLT commercial series (70-99) which are strictly 6-digit trucks/buses
+        if len(clean) == 5 and re.match(r"^[7-9]\d", clean):
+            return "NN-NNNN (Truck/Transport, Incomplete 5/6)"
         return "NNNNN (Official/Govt)"
     return "Custom / Unstandardized"
 
@@ -316,8 +337,22 @@ def recover_character_boxes(detected_boxes, crop_w, crop_h, is_lao=False):
     med_w = max(22, min(48, med_w))
     y1 = min(b[1] for b in detected_boxes)
     y2 = max(b[3] for b in detected_boxes)
+    max_chars = 7 if not is_lao else 6
 
-    boxes = list(detected_boxes)
+    # 0. Split merged / conjoined character boxes (e.g. '7' and '0' merged into one box by nano detector)
+    split_boxes = []
+    for b in detected_boxes:
+        bw_b = b[2] - b[0]
+        bh_b = b[3] - b[1]
+        # Single characters have aspect ratio bw/bh ~ 0.35 - 0.55.
+        # If bw/bh >= 0.72 or bw >= int(med_w * 1.65), it is two merged characters!
+        if (bw_b / max(1, bh_b) >= 0.72 or bw_b >= int(med_w * 1.65)) and bw_b >= 42:
+            mid_x = (b[0] + b[2]) // 2
+            split_boxes.append((b[0], b[1], mid_x, b[3], b[4]))
+            split_boxes.append((mid_x, b[1], b[2], b[3], b[4]))
+        else:
+            split_boxes.append(b)
+    boxes = split_boxes
 
     # 1. Leading gap recovery:
     # If the leftmost box starts at > 13% of width and there is room for a character (>= 22px)
@@ -327,10 +362,26 @@ def recover_character_boxes(detected_boxes, crop_w, crop_h, is_lao=False):
         inferred_x2 = max(inferred_x1 + 16, first_x1 - 3)
         boxes.insert(0, (inferred_x1, y1, inferred_x2, y2, 0.60))
 
-    # 2. Trailing gap recovery (recovering shadowed digits at right edge):
+    # 2. Internal gap recovery (recovering missing characters between detected boxes, e.g. dropped '1' or dropped char):
+    sorted_boxes = sorted(boxes, key=lambda b: b[0])
+    filled_boxes = [sorted_boxes[0]]
+    for i in range(1, len(sorted_boxes)):
+        prev_b = filled_boxes[-1]
+        cur_b = sorted_boxes[i]
+        gap = cur_b[0] - prev_b[2]
+        if gap >= int(med_w * 1.35) and len(filled_boxes) < max_chars:
+            num_missing = min(2, int(round(gap / float(med_w + 4))))
+            step = gap / float(num_missing + 1)
+            for m_i in range(1, num_missing + 1):
+                ix1 = int(prev_b[2] + m_i * step - med_w / 2.0)
+                ix2 = ix1 + med_w
+                filled_boxes.append((ix1, y1, ix2, y2, 0.50))
+        filled_boxes.append(cur_b)
+    boxes = sorted(filled_boxes, key=lambda b: b[0])
+
+    # 3. Trailing gap recovery (recovering shadowed digits at right edge):
     last_x2 = boxes[-1][2]
     rem_w = crop_w - last_x2
-    max_chars = 7 if not is_lao else 6
     if rem_w >= med_w * 0.80 and len(boxes) < max_chars:
         num_missing = min(2, int(round(rem_w / (med_w + 4))))
         cur_x = last_x2 + 3
@@ -342,6 +393,158 @@ def recover_character_boxes(detected_boxes, crop_w, crop_h, is_lao=False):
             cur_x = nx2 + 3
 
     return boxes
+
+
+def has_invalid_thai_consonant_placement(text: str) -> bool:
+    """
+    Validates Thai license plate consonant syntax invariants.
+    In Thailand (Department of Land Transport rules):
+    1. Consonants can ONLY appear in positions 0-1 (e.g. กข 1234) or positions 1-2 (e.g. 1กข 1234).
+    2. Consonants can NEVER appear at index >= 3 (4th character or later).
+    3. Plates starting with 2+ digits (e.g. 70..., 10...) are commercial trucks/buses with 0 consonants.
+    4. Once digits begin after the consonant group, no further consonants may ever appear (no sandwiched consonants).
+    """
+    if not text:
+        return False
+    clean = text.strip().replace(" ", "").replace("-", "")
+    thai_consonants = r"[\u0E01-\u0E2E]"
+
+    # 1. Any consonant at index >= 3 is always invalid in Thailand
+    for idx, ch in enumerate(clean):
+        if re.match(thai_consonants, ch) and idx >= 3:
+            return True
+
+    # 2. If starts with 2 or more digits, no consonants allowed at all (truck / transport / police)
+    if re.match(rf"^\d{{2,}}.*{thai_consonants}", clean):
+        return True
+
+    # 3. Consonants appearing after the digits group (e.g. กข12ก4)
+    consonant_started = False
+    consonant_ended = False
+    for ch in clean:
+        is_cons = bool(re.match(thai_consonants, ch))
+        is_dig = ch.isdigit()
+        if is_cons:
+            if consonant_ended:  # consonant appeared after digits already started
+                return True
+            consonant_started = True
+        elif is_dig and consonant_started:
+            consonant_ended = True
+
+    return False
+
+
+def align_and_fuse_thai_sequences(box_items: list[dict], ctc_text: str, crop_w: int = 0) -> tuple[str, str]:
+    """
+    Method A+C: Unified Spatial-Gated Sequence Alignment Fusion.
+
+    Combines Method A (physical spatial gap verification) with Method C (Levenshtein sequence alignment):
+    1. Replaces characters when box classifier is confident, but guards against impossible Thai consonant placement.
+    2. GATES ALL INSERTIONS using physical geometry:
+       - Leading insertion: Only allowed if the first box has sufficient margin from the left edge (>= 0.85 * med_w).
+       - Trailing insertion: Only allowed if the last box has sufficient margin from the right edge (>= 0.75 * med_w),
+         recovering dropped trailing digits (e.g. faint '7' in 'ผว 7697').
+       - Internal insertion: Only allowed if there is an actual physical hole between boxes (gap >= 0.48 * med_w,
+         or gap >= 1.35 * med_w if crossing consonant-digit boundary).
+       - Prevents false noise insertions (e.g. screws/frames hallucinated as '5กย 4588' when GT is 'กย 588').
+
+    Returns:
+        (fused_formatted_text, fusion_note)
+    """
+    box_chars = [b["char"] for b in box_items if b.get("char")]
+    clean_ctc_chars = [c for c in ctc_text if c not in " -–—_·."]
+
+    if not box_chars or not clean_ctc_chars:
+        return "", ""
+
+    # Calculate median width of detected boxes for spatial gap checks
+    widths = [b["box"][2] - b["box"][0] for b in box_items if "box" in b]
+    med_w = int(np.median(widths)) if widths else 30
+    med_w = max(20, min(50, med_w))
+
+    sm = difflib.SequenceMatcher(None, box_chars, clean_ctc_chars)
+    fused = []
+    recovered_chars = []
+
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "equal":
+            fused.extend(box_chars[i1:i2])
+        elif tag == "replace":
+            for b_idx, c_idx in zip(range(i1, i2), range(j1, j2)):
+                b_char = box_chars[b_idx]
+                c_char = clean_ctc_chars[c_idx]
+                b_prob = box_items[b_idx].get("prob", 0.0)
+
+                # Syntax Guard: If b_char is a consonant in an invalid position
+                # (e.g. at index >= 3 or following 2 digits), reject box consonant and use CTC!
+                current_prefix = "".join(fused) + b_char
+                if has_invalid_thai_consonant_placement(current_prefix):
+                    fused.append(c_char)
+                    recovered_chars.append(c_char)
+                elif b_prob >= 40.0:
+                    fused.append(b_char)
+                else:
+                    fused.append(c_char)
+            # Handle unequal replacement lengths
+            if (i2 - i1) > (j2 - j1):
+                fused.extend(box_chars[i1 + (j2 - j1):i2])
+            elif (j2 - j1) > (i2 - i1):
+                inserted = clean_ctc_chars[j1 + (i2 - i1):j2]
+                fused.extend(inserted)
+                recovered_chars.extend(inserted)
+        elif tag == "insert":
+            # Method A Spatial Gating: Verify if physical gap exists on image before inserting!
+            cand_chars = clean_ctc_chars[j1:j2]
+            should_insert = False
+
+            if i1 == 0 and len(box_items) > 0 and "box" in box_items[0]:
+                # 1. Leading insertion (e.g. leading digit like '1' in '1กข'):
+                first_x1 = box_items[0]["box"][0]
+                if first_x1 >= max(22, int(0.85 * med_w)):
+                    should_insert = True
+            elif i1 >= len(box_items) and len(box_items) > 0 and "box" in box_items[-1]:
+                # 2. Trailing insertion (e.g. faint '7' in 'ผว 7697'):
+                last_x2 = box_items[-1]["box"][2]
+                if crop_w > 0 and (crop_w - last_x2) >= int(0.75 * med_w):
+                    should_insert = True
+            elif 0 < i1 < len(box_items) and "box" in box_items[i1 - 1] and "box" in box_items[i1]:
+                # 3. Internal insertion (e.g. dropped '1' between '7' and '3'):
+                prev_b = box_items[i1 - 1]
+                next_b = box_items[i1]
+                gap = next_b["box"][0] - prev_b["box"][2]
+
+                # If crossing consonant-digit boundary (e.g. กย -> 588),
+                # standard inter-group separator gap is naturally ~1.0-1.5x med_w.
+                # Must require gap >= 1.35 * med_w to prevent inserting false noise digits!
+                is_boundary = bool(re.match(r"[\u0E01-\u0E2E]", prev_b.get("char", "")) and next_b.get("char", "").isdigit())
+                is_numeric_slot = prev_b.get("char", "").isdigit() and next_b.get("char", "").isdigit()
+
+                if is_boundary:
+                    min_required_gap = int(1.35 * med_w)
+                elif cand_chars == ["1"] or "1" in cand_chars or is_numeric_slot:
+                    # Digit '1' is exceptionally slender (~10-14px) and intra-numeric digits are tightly packed.
+                    # Allow permissive gap verification (>= 0.20 * med_w or >= 6px) so dropped '1's can be recovered.
+                    min_required_gap = max(6, int(0.20 * med_w))
+                else:
+                    min_required_gap = int(0.48 * med_w)
+
+                if gap >= min_required_gap:
+                    should_insert = True
+
+            # If spatial verification passed AND syntax valid: insert from CTC!
+            if should_insert:
+                test_prefix = "".join(fused) + "".join(cand_chars)
+                if not has_invalid_thai_consonant_placement(test_prefix):
+                    fused.extend(cand_chars)
+                    recovered_chars.extend(cand_chars)
+        elif tag == "delete":
+            # Extra in box (e.g. leading digit missed by CTC) -> keep box!
+            fused.extend(box_chars[i1:i2])
+
+    fused_str = "".join(fused)
+    formatted = format_thai_plate(fused_str)
+    note = f"⚡ Method A+C Spatial Sequence Fusion: recovered missing char(s) {recovered_chars} from CTC into physical gap" if recovered_chars else ""
+    return formatted, note
 
 
 def select_best_truck_6_digits(char_boxes_detail: list, crop_w: int, crop_h: int) -> Optional[str]:
@@ -1307,8 +1510,19 @@ class LPRPipelineService:
                         # Thai Province text is strictly located in the lower half (y > 0.45*rh)
                         # Prevents top banners (e.g. THAILAND 27 on commercial trucks) from being mistaken as province
                         if by2 > int(rh * 0.50) and (by1 + by2) / 2 > int(rh * 0.45):
-                            prov_crop = comp_crop
-                            prov_box_coords = (bx1, by1, bx2, by2)
+                            bw = bx2 - bx1
+                            bh_box = by2 - by1
+                            # Modest, symmetric padding to maintain natural text centering
+                            pad_x = min(12, max(4, int(bw * 0.06)))
+                            pad_y = min(6, max(3, int(bh_box * 0.08)))
+
+                            px1 = max(0, bx1 - pad_x)
+                            px2 = min(rw, bx2 + pad_x)
+                            py1 = max(int(rh * 0.46), by1 - pad_y)
+                            py2 = min(rh, by2 + pad_y)
+
+                            prov_crop = rectified_plate[py1:py2, px1:px2]
+                            prov_box_coords = (px1, py1, px2, py2)
                             prov_conf = c_conf
 
             if char_crop is None:
@@ -1375,6 +1589,11 @@ class LPRPipelineService:
 
         # --- Stage 3: Model 3 Recognition Engine ---
         t3_start = time.time()
+        t_m3_box_det = 0
+        t_m3_char_cls = 0
+        t_m3_ocr = 0
+        t_m3_prov = 0
+
         top_prov_name = "Unknown"
         top_prov_prob = 0.0
         prov_top5 = []
@@ -1398,10 +1617,22 @@ class LPRPipelineService:
         if country_name == "Thai":
             # 3A-1: Thai Character Box Detection & Individual Classification
             if self.char_box_model is not None and self.char_classifier is not None and char_crop is not None:
+                t_bdet_start = time.time()
+                # Contrast enhancement & unsharp sharpening to separate blurry adjacent characters (e.g. 7 and 0)
                 try:
-                    box_res = self.char_box_model(char_crop, conf=0.20, verbose=False, device=self.device)[0]
+                    char_gray = cv2.cvtColor(char_crop, cv2.COLOR_BGR2GRAY)
+                    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4))
+                    cl_gray = clahe.apply(char_gray)
+                    blurred = cv2.GaussianBlur(cl_gray, (0, 0), 2.0)
+                    sharp_gray = cv2.addWeighted(cl_gray, 1.5, blurred, -0.5, 0)
+                    det_char_input = cv2.cvtColor(sharp_gray, cv2.COLOR_GRAY2BGR)
                 except Exception:
-                    box_res = self.char_box_model(char_crop, conf=0.20, verbose=False)[0]
+                    det_char_input = char_crop
+
+                try:
+                    box_res = self.char_box_model(det_char_input, conf=0.20, verbose=False, device=self.device)[0]
+                except Exception:
+                    box_res = self.char_box_model(det_char_input, conf=0.20, verbose=False)[0]
                 raw_boxes = []
                 crop_w = char_crop.shape[1]
                 for b in box_res.boxes:
@@ -1439,7 +1670,9 @@ class LPRPipelineService:
                 # Sort left-to-right & recover missing character boxes from spatial gaps
                 detected_boxes = sorted(kept_boxes, key=lambda item: item[0])
                 detected_boxes = recover_character_boxes(detected_boxes, crop_w, char_crop.shape[0], is_lao=False)
+                t_m3_box_det = int((time.time() - t_bdet_start) * 1000)
 
+                t_ccls_start = time.time()
                 char_box_overlay = char_crop.copy()
                 chars_predicted = []
                 for bx1, by1, bx2, by2, bconf in detected_boxes:
@@ -1469,6 +1702,7 @@ class LPRPipelineService:
                             "box": [bx1, by1, bx2, by2],
                         })
                     cv2.rectangle(char_box_overlay, (bx1, by1), (bx2, by2), (0, 255, 0), 2)
+                t_m3_char_cls = int((time.time() - t_ccls_start) * 1000)
 
                 # Render Thai and numeric characters with PIL TrueType font
                 if char_box_overlay is not None and len(char_boxes_detail) > 0:
@@ -1490,6 +1724,7 @@ class LPRPipelineService:
                 char_box_text = "".join(chars_predicted)
 
             # 3A-2: Thai OCR (ResNetCRNN + CTC)
+            t_ocr_start = time.time()
             char_pil = Image.fromarray(cv2.cvtColor(char_crop, cv2.COLOR_BGR2RGB))
             char_gray = char_pil.convert("L")
             char_enhanced = ImageOps.autocontrast(char_gray, cutoff=1)
@@ -1580,6 +1815,7 @@ class LPRPipelineService:
             # Update raw_plate_text from disambiguated emissions
             resolved_chars = [e["char"] for e in emissions if e["char"] != "<BLANK>"]
             raw_plate_text = "".join(resolved_chars)
+            t_m3_ocr = int((time.time() - t_ocr_start) * 1000)
 
             # Reconcile character box prediction with CTC OCR:
             fmt_box = format_thai_plate(char_box_text)
@@ -1587,32 +1823,72 @@ class LPRPipelineService:
             clean_box = fmt_box.replace(" ", "").replace("-", "")
             clean_ctc = fmt_ctc.replace(" ", "").replace("-", "")
 
-            valid_box = is_valid_plate(fmt_box)
-            valid_ctc = is_valid_plate(fmt_ctc)
+            # Validate Thai plate syntax and consonant placement:
+            box_has_invalid_consonants = has_invalid_thai_consonant_placement(fmt_box)
+            ctc_has_invalid_consonants = has_invalid_thai_consonant_placement(fmt_ctc)
+            valid_box = is_valid_plate(fmt_box) and not box_has_invalid_consonants
+            valid_ctc = is_valid_plate(fmt_ctc) and not ctc_has_invalid_consonants
 
-            # 1. Primary Reconciliation: Prioritize complete plates over truncated plates
-            if valid_box and valid_ctc:
-                if len(clean_ctc) > len(clean_box):
-                    # CTC recognized full 4-digit plate (e.g. ผว 7697) while box detector dropped digits (ฉว 76)
+            # Check if this plate is a Thai commercial transport (truck / bus):
+            # Formats are strictly NN-NNNN (e.g. 70-1737) with ZERO consonants allowed in registration number.
+            box_starts_truck_digits = bool(re.match(r"^\d{2}", clean_box))
+            ctc_starts_truck_digits = bool(re.match(r"^\d{2}", clean_ctc))
+            is_likely_truck = box_starts_truck_digits or ctc_starts_truck_digits or bool(re.match(r"^\d{2}-\d{4}$", fmt_ctc))
+
+            # Immediate Priority 0: If Box prediction has impossible Thai consonant placement
+            # (e.g. 70ษย7ม where hyphen '-' was misclassified as 'ษ' and digit '1' as 'ย')
+            # immediately fall back to CTC OCR which reads the continuous plate correctly!
+            if box_has_invalid_consonants:
+                if valid_ctc or re.match(r"^\d{2}-\d{4}$", fmt_ctc) or re.match(r"^\d{6}$", clean_ctc):
                     formatted_plate_text = fmt_ctc
-                elif len(clean_box) > len(clean_ctc):
-                    # Box detector localized extra character (e.g. leading digit) that CTC missed
-                    formatted_plate_text = fmt_box
-                else:
-                    # Same length: if stroke analysis disambiguated confusion twins (e.g. ผ vs ฉ/ศ),
-                    # prioritize the stroke-disambiguated candidate!
-                    if is_ambiguous and any(ac["primary"] in clean_ctc for ac in alt_candidates):
-                        formatted_plate_text = fmt_ctc
-                    else:
+                    char_box_note = f"⚡ Syntax Guard: Fell back to CTC OCR '{fmt_ctc}' (box output '{fmt_box}' violated Thai consonant placement rules)"
+
+            # --- Method C Sequence Alignment Fusion ---
+            # If both box detections and CTC OCR are available, align the sequences:
+            # - Pinpoints missing character positions and inserts CTC characters into the gap
+            # - Preserves high-accuracy isolated box classifications (e.g. keeping 'ล' instead of OCR's confused 'ส')
+            fused_aligned, fused_note = "", ""
+            if not formatted_plate_text and len(char_boxes_detail) > 0 and len(clean_ctc) > 0:
+                fused_aligned, fused_note = align_and_fuse_thai_sequences(char_boxes_detail, raw_plate_text, crop_w=crop_w)
+
+            # 1. Primary Reconciliation: Prioritize Method C Sequence-Aligned Fusion
+            if not formatted_plate_text:
+                if fused_aligned and is_valid_plate(fused_aligned) and not has_invalid_thai_consonant_placement(fused_aligned):
+                    clean_fused = fused_aligned.replace(" ", "").replace("-", "")
+                    if len(clean_fused) >= max(len(clean_box), len(clean_ctc)):
+                        formatted_plate_text = fused_aligned
+                        if fused_note:
+                            char_box_note = fused_note
+                    elif valid_box and len(clean_box) >= len(clean_ctc):
                         formatted_plate_text = fmt_box
-            elif valid_box and not valid_ctc:
-                formatted_plate_text = fmt_box
-            elif valid_ctc and not valid_box:
-                formatted_plate_text = fmt_ctc
+                    elif valid_ctc and len(clean_ctc) > len(clean_box):
+                        formatted_plate_text = fused_aligned if len(clean_fused) == len(clean_ctc) else fmt_ctc
+                        if fused_note and formatted_plate_text == fused_aligned:
+                            char_box_note = fused_note
+                    else:
+                        formatted_plate_text = fused_aligned
+                elif valid_box and valid_ctc:
+                    if len(clean_ctc) > len(clean_box):
+                        # CTC recognized full 4-digit plate (e.g. ผว 7697) while box detector dropped digits (ฉว 76)
+                        formatted_plate_text = fmt_ctc
+                    elif len(clean_box) > len(clean_ctc):
+                        # Box detector localized extra character (e.g. leading digit) that CTC missed
+                        formatted_plate_text = fmt_box
+                    else:
+                        # Same length: if stroke analysis disambiguated confusion twins (e.g. ผ vs ฉ/ศ),
+                        # prioritize the stroke-disambiguated candidate!
+                        if is_ambiguous and any(ac["primary"] in clean_ctc for ac in alt_candidates):
+                            formatted_plate_text = fmt_ctc
+                        else:
+                            formatted_plate_text = fmt_box
+                elif valid_box and not valid_ctc:
+                    formatted_plate_text = fmt_box
+                elif valid_ctc and not valid_box:
+                    formatted_plate_text = fmt_ctc
 
             # 2. Smart consonant fusion: If char_boxes_detail has high confidence Thai consonants
             # but CTC made consonant errors, fuse high-confidence consonants while preserving complete digits!
-            if not formatted_plate_text:
+            if not formatted_plate_text and not box_has_invalid_consonants:
                 leading_digit = char_boxes_detail[0]["char"] if (len(char_boxes_detail) > 0 and char_boxes_detail[0]["char"].isdigit()) else ""
                 box_consonants = [item["char"] for item in char_boxes_detail if re.match(r"[\u0E01-\u0E2E]", item["char"]) and item["prob"] >= 80.0]
                 box_digits = [item["char"] for item in char_boxes_detail if item["char"].isdigit() and item["prob"] >= 80.0]
@@ -1627,7 +1903,7 @@ class LPRPipelineService:
                     consonant_prefix = "".join(box_consonants[:2])
                     candidate_fused = f"{leading_digit}{consonant_prefix} {chosen_digits}"
                     fmt_fused = format_thai_plate(candidate_fused)
-                    if is_valid_plate(fmt_fused):
+                    if is_valid_plate(fmt_fused) and not has_invalid_thai_consonant_placement(fmt_fused):
                         formatted_plate_text = fmt_fused
 
             # 3. Fallback to valid candidate or whichever text is available
@@ -1636,20 +1912,33 @@ class LPRPipelineService:
                     formatted_plate_text = fmt_ctc
                 elif valid_box:
                     formatted_plate_text = fmt_box
+                elif valid_ctc:
+                    formatted_plate_text = fmt_ctc
+                elif not ctc_has_invalid_consonants and box_has_invalid_consonants:
+                    # Never default to impossible box consonants (e.g. 70ษย7ม) if CTC has clean digits
+                    formatted_plate_text = fmt_ctc
                 else:
                     formatted_plate_text = fmt_box if fmt_box else fmt_ctc
 
             # 4. Gated Truck 6-Digit Refiner (NN-NNNN):
-            # Activates ONLY when candidate characters are predominantly digits with 0 Thai consonants
+            # Activates when candidate characters are commercial truck format (NN-NNNN)
             # This ensures private cars (1กข 1234), motorcycles, and Lao plates are 100% untouched!
             digit_count = sum(1 for item in char_boxes_detail if item.get("char", "").isdigit())
             consonant_count = sum(1 for item in char_boxes_detail if re.match(r"[\u0E01-\u0E2E]", item.get("char", "")))
-            is_truck_candidate = (digit_count >= 5 and consonant_count == 0)
+            is_truck_candidate = (
+                (digit_count >= 5 and consonant_count == 0) or
+                (is_likely_truck and (valid_ctc or re.match(r"^\d{2}-\d{4}$", fmt_ctc) or digit_count >= 3))
+            )
 
-            if is_truck_candidate and (not is_valid_plate(formatted_plate_text) or len(formatted_plate_text.replace("-", "").replace(" ", "")) > 6):
+            clean_fmt = formatted_plate_text.replace("-", "").replace(" ", "")
+            is_truncated_truck = is_truck_candidate and len(clean_fmt) == 5 and bool(re.match(r"^[7-9]\d", clean_fmt))
+
+            if is_truck_candidate and (not is_valid_plate(formatted_plate_text) or len(clean_fmt) > 6 or is_truncated_truck):
                 best_truck_text = select_best_truck_6_digits(char_boxes_detail, crop_w, char_crop.shape[0])
                 if best_truck_text and is_valid_plate(best_truck_text):
                     formatted_plate_text = best_truck_text
+                elif valid_ctc or re.match(r"^\d{2}-\d{4}$", fmt_ctc) or re.match(r"^\d{6}$", clean_ctc):
+                    formatted_plate_text = fmt_ctc
 
             # Build alternative formatted plate text if ambiguity exists
             if len(alt_candidates) > 0:
@@ -1676,9 +1965,10 @@ class LPRPipelineService:
             if num_boxes_detected == num_expected and num_expected > 0:
                 char_box_status = "complete"
                 char_box_note = f"✅ All {num_boxes_detected} character boxes localized & verified"
-            elif num_boxes_detected < num_expected and valid_ctc:
+            elif num_boxes_detected < num_expected:
                 char_box_status = "partial"
-                char_box_note = f"⚠️ Partial Boxes ({num_boxes_detected}/{num_expected} detected) — Full plate recovered via CTC OCR ({formatted_plate_text})"
+                if not char_box_note:
+                    char_box_note = f"⚠️ Partial Boxes ({num_boxes_detected}/{num_expected} detected) — Full plate recovered via CTC OCR ({formatted_plate_text})"
             elif num_boxes_detected > 0:
                 char_box_status = "complete"
                 char_box_note = f"Localized {num_boxes_detected} characters"
@@ -1686,7 +1976,8 @@ class LPRPipelineService:
                 char_box_status = "empty"
                 char_box_note = "No character boxes localized"
 
-            # 3B: Thai Province (MobileNetV2, 77 classes)
+            # 3B: Thai Province (MobileNetV2 / ResNet, 77 classes)
+            t_prov_start = time.time()
             # Color-invariant & contrast normalization for colored/weathered truck plates:
             prov_clean = prov_crop.copy() if (prov_crop is not None and prov_crop.size > 0) else rectified_plate[int(rh * 0.62) : int(rh * 0.94), int(rw * 0.15) : int(rw * 0.85)]
             if pattern_name == "NN-NNNN (Truck/Transport)":
@@ -1724,6 +2015,7 @@ class LPRPipelineService:
                             "name": self.int_to_prov_thai.get(idx_val.item(), "Unknown"),
                             "prob": round(float(p_val.item()) * 100, 2),
                         })
+            t_m3_prov = int((time.time() - t_prov_start) * 1000)
 
         else:
             # 3A: Lao Plate Text
@@ -1964,12 +2256,15 @@ class LPRPipelineService:
         _bar = lambda ms: ("█" * min(int(ms / 10), 20)).ljust(20)
         print(
             f"\n  ┌─ Inference ({'DEBUG' if debug else 'PROD'}) ─────────────────────────────────────\n"
-            f"  │  M1 Plate     {t_m1:>4} ms  {_bar(t_m1)}\n"
-            f"  │  M1.5 Country {t_country:>4} ms  {_bar(t_country)}\n"
-            f"  │  M2 Component {t_m2:>4} ms  {_bar(t_m2)}\n"
-            f"  │  M3 OCR+Prov  {t_m3:>4} ms  {_bar(t_m3)}\n"
+            f"  │  M1 Plate          {t_m1:>4} ms  {_bar(t_m1)}\n"
+            f"  │  M1.5 Country      {t_country:>4} ms  {_bar(t_country)}\n"
+            f"  │  M2 Component      {t_m2:>4} ms  {_bar(t_m2)}\n"
+            f"  │  M3a Char Box Det  {t_m3_box_det:>4} ms  {_bar(t_m3_box_det)}\n"
+            f"  │  M3a Char Classify {t_m3_char_cls:>4} ms  {_bar(t_m3_char_cls)}\n"
+            f"  │  M3a CTC OCR       {t_m3_ocr:>4} ms  {_bar(t_m3_ocr)}\n"
+            f"  │  M3b Province      {t_m3_prov:>4} ms  {_bar(t_m3_prov)}\n"
             f"  │  {'─'*48}\n"
-            f"  └─ TOTAL        {t_total:>4} ms  {_bar(t_total)}"
+            f"  └─ TOTAL             {t_total:>4} ms  {_bar(t_total)}"
         )
 
 
@@ -2077,12 +2372,22 @@ class LPRPipelineService:
                 "country_ms": t_country,
                 "m2_ms": t_m2,
                 "m3_ms": t_m3,
+                "m3_box_det_ms": t_m3_box_det,
+                "m3_char_cls_ms": t_m3_char_cls,
+                "m3_ocr_ms": t_m3_ocr,
+                "m3_prov_ms": t_m3_prov,
                 "total_ms": t_total,
             },
             "debug": debug_payload,
         }
 
         self.latest_stream_detection = result_dict
+        # Automatically record to recognition history
+        try:
+            thumb = rectified_plate if (rectified_plate is not None and rectified_plate.size > 0) else plate_crop
+            save_recognition(result_dict, thumbnail_bgr=thumb, raw_bgr=raw_display)
+        except Exception as e:
+            logger.warning(f"Failed to record recognition to history: {e}")
         return result_dict
 
 
@@ -2118,6 +2423,231 @@ def api_health():
         },
         "model_tags": cfg.model_tags,
     }
+
+
+@app.get("/health")
+def root_health():
+    """Lightweight Docker / Cloud Run container healthcheck endpoint."""
+    return {"status": "ok", "timestamp": time.time()}
+
+
+# =====================================================================
+# Authentication & User Database Endpoints
+# =====================================================================
+
+@app.get("/api/config/auth")
+def api_auth_config():
+    """Returns frontend authentication configuration and database provider status."""
+    return get_auth_config()
+
+
+@app.post("/api/auth/register")
+async def api_auth_register(payload: Dict[str, Any] = Body(...), response: Response = None):
+    """Registers a new user account with Email/ID and Password in the database."""
+    email_or_id = payload.get("email") or payload.get("username") or payload.get("id") or ""
+    password = payload.get("password") or ""
+    name = payload.get("name") or ""
+    role = payload.get("role") or "admin"
+
+    ok, user_profile, msg, session_token = register_user_account(
+        email_or_id=email_or_id, password=password, name=name, role=role
+    )
+    if not ok or not user_profile:
+        raise HTTPException(status_code=400, detail=msg)
+
+    if response is not None and session_token:
+        response.set_cookie(
+            key="auth_token",
+            value=session_token,
+            max_age=86400 * cfg.JWT_EXPIRES_DAYS,
+            httponly=True,
+            samesite="lax",
+        )
+
+    return {
+        "status": "success",
+        "user": user_profile,
+        "token": session_token,
+        "message": msg,
+    }
+
+
+@app.post("/api/auth/login")
+async def api_auth_login(payload: Dict[str, Any] = Body(...), response: Response = None):
+    """Authenticates user with Email/ID and Password."""
+    email_or_id = payload.get("email") or payload.get("username") or payload.get("id") or ""
+    password = payload.get("password") or ""
+
+    ok, user_profile, msg, session_token = authenticate_user_password(
+        email_or_id=email_or_id, password=password
+    )
+    if not ok or not user_profile:
+        raise HTTPException(status_code=401, detail=msg)
+
+    if response is not None and session_token:
+        response.set_cookie(
+            key="auth_token",
+            value=session_token,
+            max_age=86400 * cfg.JWT_EXPIRES_DAYS,
+            httponly=True,
+            samesite="lax",
+        )
+
+    return {
+        "status": "success",
+        "user": user_profile,
+        "token": session_token,
+        "message": "Sign in successful",
+    }
+
+
+@app.post("/api/auth/verify")
+async def api_auth_verify(payload: Dict[str, Any] = Body(...), response: Response = None):
+    """Verifies token or activates fast Dev Admin bypass on localhost."""
+    token = payload.get("id_token") or payload.get("token") or ""
+
+    if token == "dev_admin_token" and getattr(cfg, "ALLOW_DEV_ADMIN", True):
+        user, dev_token = login_dev_admin()
+        if response is not None:
+            response.set_cookie(
+                key="auth_token",
+                value=dev_token,
+                max_age=86400 * cfg.JWT_EXPIRES_DAYS,
+                httponly=True,
+                samesite="lax",
+            )
+        return {"status": "success", "user": user, "token": dev_token, "message": "Dev Admin logged in"}
+
+    ok, claims, msg = decode_session_jwt(token)
+    if not ok or not claims:
+        raise HTTPException(status_code=401, detail=msg or "Invalid authentication token")
+
+    user = get_user_profile(claims.get("uid", ""))
+    if not user:
+        user = {
+            "uid": claims.get("uid"),
+            "email": claims.get("email"),
+            "name": claims.get("name"),
+            "role": claims.get("role", "admin"),
+            "settings": {},
+        }
+
+    return {"status": "success", "user": user, "token": token, "message": "Token verified"}
+
+
+@app.get("/api/auth/me")
+async def api_auth_me(request: Request):
+    """Returns current authenticated user profile and saved settings."""
+    user = await get_current_user_profile(request)
+    return {"status": "success", "user": user}
+
+
+@app.post("/api/auth/logout")
+async def api_auth_logout(response: Response):
+    """Clears authentication session cookies."""
+    response.delete_cookie(key="auth_token")
+    return {"status": "success", "message": "Logged out successfully"}
+
+
+@app.get("/api/user/settings")
+async def api_get_user_settings(request: Request):
+    """Retrieves current user settings and preferences."""
+    user = await get_current_user_profile(request)
+    return {"status": "success", "settings": user.get("settings", {})}
+
+
+@app.post("/api/user/settings")
+async def api_update_user_settings(payload: Dict[str, Any] = Body(...), request: Request = None):
+    """Updates user dashboard settings and saves them to the database."""
+    user = await get_current_user_profile(request)
+    uid = user.get("uid", "")
+    if uid in ("guest", ""):
+        raise HTTPException(status_code=401, detail="Must be logged in to update settings")
+
+    ok, msg = update_user_settings(uid, payload)
+    if not ok:
+        raise HTTPException(status_code=400, detail=msg)
+
+    updated_profile = get_user_profile(uid)
+    return {
+        "status": "success",
+        "settings": updated_profile.get("settings", {}) if updated_profile else payload,
+        "message": msg,
+    }
+
+
+@app.get("/history", response_class=HTMLResponse)
+def get_history_page():
+    """Serves the Recognition History Dashboard web interface."""
+    history_html_path = PROJECT_ROOT / "static" / "history.html"
+    if history_html_path.exists():
+        with open(history_html_path, "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
+    return HTMLResponse("<h1>History page not found</h1>", status_code=404)
+
+
+@app.get("/api/history")
+def api_get_history(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    date_from: str = Query(""),
+    date_to: str = Query(""),
+    country: str = Query(""),
+    pattern: str = Query(""),
+    status: str = Query(""),
+    search: str = Query(""),
+    sort_by: str = Query("timestamp"),
+    sort_order: str = Query("desc"),
+):
+    """Returns paginated, searchable historical recognition records."""
+    return query_history(
+        page=page,
+        page_size=page_size,
+        date_from=date_from,
+        date_to=date_to,
+        country=country,
+        pattern=pattern,
+        status=status,
+        search=search,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+
+
+@app.get("/api/history/stats")
+def api_get_history_stats(days: int = Query(7, ge=1, le=365)):
+    """Returns aggregated summary metrics for the history dashboard cards."""
+    return get_history_stats(days=days)
+
+
+@app.get("/api/history/export")
+def api_export_history(
+    date_from: str = Query(""),
+    date_to: str = Query(""),
+    country: str = Query(""),
+    search: str = Query(""),
+):
+    """Exports historical recognition records as a downloadable CSV."""
+    csv_content = export_history_csv(
+        date_from=date_from,
+        date_to=date_to,
+        country=country,
+        search=search,
+    )
+    filename = f"lpr_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    from fastapi.responses import Response
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@app.post("/api/history/clear")
+def api_clear_history(days: Optional[int] = Query(None)):
+    """Deletes recognition records older than N days (or all records if days is omitted)."""
+    deleted = clear_history(older_than_days=days)
+    return {"status": "success", "deleted_records": deleted}
 
 
 @app.get("/favicon.ico", include_in_schema=False)

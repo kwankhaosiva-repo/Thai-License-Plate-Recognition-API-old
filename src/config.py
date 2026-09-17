@@ -52,12 +52,14 @@ class Config:
     OCR_FILENAME = "ocr_model.pth"
 
     # --- Model 3B: Thai Province Classifier ---
-    #   "province_model_grayscale_thai.pth"  ← Grayscale ResNet18 (recommended ⚡)
-    #   "province_model.pth"                 ← ResNet34
+    #   "province_model_resnet34_grayscale_thai.pth" ← Grayscale ResNet34 (recommended: 256x80, handles accents)
+    #   "province_model_grayscale_thai.pth"          ← Grayscale ResNet18 (legacy: 256x64)
+    #   "province_model.pth"                         ← ResNet34 (Color)
     MODEL_3B_THAI_FILENAME = "province_model_grayscale_thai.pth"
 
     # --- Lao Plate Detector ---
     #   "plate_detector_lao_dfine_nano.pt"   ← D-FINE-Nano (⚡ recommended: MIT)
+    #   "plate_detector_lao_dfine_small.pt"  ← D-FINE-Small (Higher mAP / robust: MIT)
     #   "plate_detector_lao_rfdetr_nano.pt"  ← RF-DETR-Nano (Apache-2.0)
     #   "plate_detector_lao_rfdetr_small.pt" ← RF-DETR-Small
     #   "plate_detector_lao_rfdetr.pt"       ← RF-DETR-Base
@@ -87,6 +89,7 @@ class Config:
     NUM_WORKERS = 0 
     
     # Data Paths
+    DATA_DIR  = PROJECT_ROOT / "data"
     CROPS_DIR = PROJECT_ROOT / "output" / "ground_truth_crops"
     TRAIN_CSV = CROPS_DIR / "train.csv"
     VAL_CSV   = CROPS_DIR / "val.csv"
@@ -250,6 +253,7 @@ class Config:
     # Model 3B: Province Classification
     PROV_MODEL_THAI_PATH = WEIGHTS_DIR / "province_model.pth"
     PROV_MODEL_THAI_GRAYSCALE_PATH = WEIGHTS_DIR / "province_model_grayscale_thai.pth"
+    PROV_MODEL_THAI_RESNET34_PATH = WEIGHTS_DIR / "province_model_resnet34_grayscale_thai.pth"
 
     PROV_MODEL_LAO_PATH = WEIGHTS_DIR / "province_model_lao.pth"
     PROV_MODEL_LAO_GRAYSCALE_PATH = WEIGHTS_DIR / "province_model_grayscale_lao.pth"
@@ -259,13 +263,18 @@ class Config:
         chosen = self.WEIGHTS_DIR / self.MODEL_3B_THAI_FILENAME
         if chosen.exists():
             return chosen
+        if self.PROV_MODEL_THAI_RESNET34_PATH.exists():
+            return self.PROV_MODEL_THAI_RESNET34_PATH
         if self.PROV_MODEL_THAI_GRAYSCALE_PATH.exists():
             return self.PROV_MODEL_THAI_GRAYSCALE_PATH
         return self.PROV_MODEL_THAI_PATH
 
     @property
     def PROV_MODEL_THAI_TAG(self):
-        if self.PROV_MODEL_THAI_GRAYSCALE_PATH.exists():
+        name = self.ACTIVE_PROV_MODEL_THAI_PATH.name.lower()
+        if "resnet34" in name:
+            return "ResNet34-Grayscale (77 Thai Provinces, 256x80)"
+        if "grayscale" in name:
             return "ResNet18-Grayscale (77 Thai Provinces)"
         if self.PROV_MODEL_THAI_PATH.exists():
             return "ResNet34 (77 Thai Provinces)"
@@ -340,6 +349,18 @@ class Config:
     DEBUG_MODE = True
     DEBUG_IMAGE_DIR = PROJECT_ROOT / "debug_api"
 
+    # --- Authentication & User Database ---
+    AUTH_ENABLED = True
+    ALLOW_DEV_ADMIN = True
+    JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "thai_lpr_jwt_super_secret_key_2026")
+    JWT_ALGORITHM = "HS256"
+    JWT_EXPIRES_DAYS = 7
+    USERS_DB_PATH = DATA_DIR / "lpr_users.db"
+    FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "")
+    FIREBASE_CREDENTIALS_PATH = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
+    FIRESTORE_USERS_COLLECTION = "users"
+
 cfg = Config()
 cfg.WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
 cfg.DEBUG_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+cfg.DATA_DIR.mkdir(parents=True, exist_ok=True)

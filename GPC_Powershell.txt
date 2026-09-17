@@ -15,17 +15,23 @@ gcloud auth configure-docker asia-southeast1-docker.pkg.dev
 
 docker build -t asia-southeast1-docker.pkg.dev/[PROJECT_ID]/[REPO_NAME]/[IMAGE_NAME] .
 
-# ปลี่ยนชื่อ tag image doker ให้ตรงกับ GCP (กรณี build ผิดชื่อ)
-docker tag asia-southeast1-docker.pkg.dev/simai-ocr-api-dev/lpr-repo/thai-lpr-api asia-southeast1-docker.pkg.dev/simai-lpr-ocr-project/lpr-repo/thai-lpr-api
+# 1. Build and tag image (using optimized Dockerfile with PyTorch CPU wheels)
+docker build -t asia-southeast1-docker.pkg.dev/simai-lpr-ocr-project/lpr-repo/thai-lpr-api .
 
+# 2. Push image to Google Artifact Registry
 docker push asia-southeast1-docker.pkg.dev/simai-lpr-ocr-project/lpr-repo/thai-lpr-api
 
+# 3. Deploy to Cloud Run (Near-Zero Cost & Serverless CPU)
 gcloud run deploy thai-lpr-api `
   --image asia-southeast1-docker.pkg.dev/simai-lpr-ocr-project/lpr-repo/thai-lpr-api `
   --region asia-southeast1 `
   --platform managed `
   --allow-unauthenticated `
+  --cpu 2 `
   --memory 2Gi `
-  --max-instances 1 `
+  --concurrency 8 `
+  --timeout 60s `
   --min-instances 0 `
-  --cpu-throttling
+  --max-instances 1 `
+  --cpu-throttling `
+  --port 8080
