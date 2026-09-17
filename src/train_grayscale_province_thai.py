@@ -39,7 +39,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.b
 
 
 class GrayscaleSmartResize:
-    def __init__(self, size=(256, 64)):
+    def __init__(self, size=(256, 80)):
         self.target_w, self.target_h = size
 
     def __call__(self, img_pil: Image.Image):
@@ -65,16 +65,17 @@ class GrayscaleSmartResize:
 def get_grayscale_transforms(is_train=False):
     if is_train:
         return transforms.Compose([
-            GrayscaleSmartResize((256, 64)),
-            transforms.RandomAffine(degrees=4, translate=(0.02, 0.04)),
+            GrayscaleSmartResize((256, 80)),
+            transforms.RandomAffine(degrees=5, translate=(0.03, 0.04)),
             transforms.ColorJitter(brightness=0.3, contrast=0.3),
-            transforms.RandomAutocontrast(p=0.4),
+            transforms.RandomAdjustSharpness(sharpness_factor=2.0, p=0.5),
+            transforms.RandomAutocontrast(p=0.5),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.25, 0.25, 0.25]),
         ])
     else:
         return transforms.Compose([
-            GrayscaleSmartResize((256, 64)),
+            GrayscaleSmartResize((256, 80)),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.25, 0.25, 0.25]),
         ])
@@ -144,9 +145,9 @@ def evaluate(model, loader, device, top_k=5):
     return val_loss / val_total, val_correct_1 / val_total, val_correct_k / val_total
 
 
-def train_grayscale_thai(epochs=12, batch_size=32, lr=2e-4):
+def train_grayscale_thai(epochs=15, batch_size=32, lr=2e-4, backbone="resnet34"):
     print("=" * 70)
-    print("🇹🇭 Training Thai Province Grayscale Classifier (77 Classes)")
+    print(f"🇹🇭 Training Thai Province Grayscale Classifier ({backbone.upper()} - 77 Classes)")
     print(f"Device: {DEVICE}")
     print(f"Dataset: {DATA_DIR}")
     print(f"Target Checkpoint: {MODEL_SAVE_PATH}")
@@ -171,7 +172,7 @@ def train_grayscale_thai(epochs=12, batch_size=32, lr=2e-4):
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
     test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False)
 
-    model = ResNetProvinceClassifier(n_classes=n_classes, backbone="resnet18", pretrained=True)
+    model = ResNetProvinceClassifier(n_classes=n_classes, backbone=backbone, pretrained=True)
     model = model.to(DEVICE)
 
     class_weights = compute_class_weights(train_ds.samples, n_classes).to(DEVICE)
@@ -217,6 +218,7 @@ def train_grayscale_thai(epochs=12, batch_size=32, lr=2e-4):
             WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
             torch.save({
                 "model_state": model.state_dict(),
+                "backbone": backbone,
                 "n_classes": n_classes,
                 "epoch": epoch,
                 "val_top1": val_top1,
@@ -230,7 +232,7 @@ def train_grayscale_thai(epochs=12, batch_size=32, lr=2e-4):
         model.load_state_dict(ckpt["model_state"])
         test_loss, test_top1, test_top5 = evaluate(model, test_loader, DEVICE, top_k=5)
         print("\n" + "=" * 70)
-        print(f"🏁 Final Test Set Evaluation:")
+        print(f"🏁 Final Test Set Evaluation ({backbone.upper()}):")
         print(f"  Top-1 Accuracy: {test_top1 * 100:.2f}%")
         print(f"  Top-5 Accuracy: {test_top5 * 100:.2f}%")
         print(f"  Weights saved: {MODEL_SAVE_PATH}")
@@ -240,10 +242,11 @@ def train_grayscale_thai(epochs=12, batch_size=32, lr=2e-4):
 import argparse
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train Thai Province Grayscale ResNet18 Classifier (77 classes)")
+    parser = argparse.ArgumentParser(description="Train Thai Province Grayscale Classifier (77 classes)")
     parser.add_argument("--epochs", type=int, default=15, help="Number of training epochs (default: 15)")
     parser.add_argument("--batch", type=int, default=32, help="Batch size (default: 32)")
     parser.add_argument("--lr", type=float, default=2e-4, help="Learning rate (default: 2e-4)")
+    parser.add_argument("--backbone", type=str, default="resnet34", choices=["resnet18", "resnet34"], help="Backbone architecture (default: resnet34)")
     args = parser.parse_args()
 
-    train_grayscale_thai(epochs=args.epochs, batch_size=args.batch, lr=args.lr)
+    train_grayscale_thai(epochs=args.epochs, batch_size=args.batch, lr=args.lr, backbone=args.backbone)

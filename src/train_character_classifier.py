@@ -32,7 +32,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
-BASE_DIR = PROJECT_ROOT / "datasets" / "thai_character_crops"
+BASE_DIR = PROJECT_ROOT / "datasets" / "Thai" / "thai_character_crops"
 SPLITS_DIR = BASE_DIR / "splits"
 WEIGHTS_DIR = PROJECT_ROOT / "weights"
 MAP_PATH = WEIGHTS_DIR / "char_classifier_map.json"
@@ -69,9 +69,27 @@ def compute_class_weights(samples, n_classes=50):
     for _, label in samples:
         counts[label] += 1
     total = float(len(samples))
-    weights = (total / (n_classes * np.maximum(counts, 1.0))) ** 0.5
-    weights = np.clip(weights, 0.2, 8.0)
+    # Stronger class weighting to balance 60-image rare consonants against 2000-image digits
+    weights = (total / (n_classes * np.maximum(counts, 1.0))) ** 0.7
+    weights = np.clip(weights, 0.1, 25.0)
     return torch.tensor(weights, dtype=torch.float32)
+
+
+def make_balanced_sampler(samples, n_classes=50):
+    """Creates a WeightedRandomSampler so rare consonants and frequent digits appear equally per epoch."""
+    from torch.utils.data import WeightedRandomSampler
+    counts = np.zeros(n_classes, dtype=np.float32)
+    for _, label in samples:
+        counts[label] += 1
+    # Weight per class is inversely proportional to frequency
+    class_sample_weights = 1.0 / np.maximum(counts, 1.0)
+    sample_weights = [class_sample_weights[label] for _, label in samples]
+    sampler = WeightedRandomSampler(
+        weights=sample_weights,
+        num_samples=len(samples),
+        replacement=True,
+    )
+    return sampler
 
 
 def evaluate(model, loader, device):
@@ -104,8 +122,9 @@ def evaluate(model, loader, device):
 
 def train_character_classifier(epochs=15, batch_size=64, lr=3e-4):
     print(f"\n=======================================================")
-    print(f"--- Training Character Classifier (MobileNetV2) ---")
+    print(f"--- Training Character Classifier (MobileNetV2 Balanced) ---")
     print(f"Device: {DEVICE}")
+    print(f"Dataset Splits: {SPLITS_DIR}")
     print(f"Epochs: {epochs}, Batch Size: {batch_size}, LR: {lr}")
     print(f"=======================================================\n")
 
@@ -116,11 +135,13 @@ def train_character_classifier(epochs=15, batch_size=64, lr=3e-4):
     class_to_idx = {v: int(k) for k, v in idx_to_char.items()}
     print(f"Total Character Classes: {n_classes}")
 
-    # 2. Transforms (Input 64x64)
+    # 2. Transforms with Contrast & Sharpness Enhancement
     train_tf = transforms.Compose([
         transforms.Resize((64, 64)),
-        transforms.RandomAffine(degrees=5, translate=(0.04, 0.04)),
-        transforms.ColorJitter(brightness=0.2, contrast=0.2),
+        transforms.RandomAffine(degrees=6, translate=(0.04, 0.04)),
+        transforms.ColorJitter(brightness=0.3, contrast=0.3),
+        transforms.RandomAdjustSharpness(sharpness_factor=2.0, p=0.5),
+        transforms.RandomAutocontrast(p=0.4),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
@@ -137,7 +158,8 @@ def train_character_classifier(epochs=15, batch_size=64, lr=3e-4):
 
     print(f"Loaded: Train = {len(train_ds)} samples, Valid = {len(val_ds)} samples")
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, drop_last=True, num_workers=0)
+    sampler = make_balanced_sampler(train_ds.samples, n_classes)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, sampler=sampler, drop_last=True, num_workers=0)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=0)
 
     # 4. Model Architecture: MobileNetV2 with 50 outputs
