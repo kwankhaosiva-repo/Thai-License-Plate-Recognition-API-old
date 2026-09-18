@@ -1710,14 +1710,10 @@ class LPRPipelineService:
                     # Filter out tiny slivers and edge border artifacts
                     if bw < 8 or bh < 10:
                         continue
-                    if bx1 <= 2 and bw < 12:
+                    # Filter out tiny slivers touching outer image boundaries (1-2px border noise)
+                    if bx1 <= 1 and bw < 8:
                         continue
-                    if bx2 >= crop_w - 2 and bw < 12:
-                        continue
-                    # Filter out thin outer frame border lines (e.g. black frame detected as 'ฉ')
-                    if bx1 <= 10 and (bh / max(1, bw)) >= 1.8 and bw < 18:
-                        continue
-                    if bx2 >= crop_w - 10 and (bh / max(1, bw)) >= 1.8 and bw < 18:
+                    if bx2 >= crop_w - 1 and bw < 8:
                         continue
                     raw_boxes.append((bx1, by1, bx2, by2, bconf))
 
@@ -1836,10 +1832,18 @@ class LPRPipelineService:
                         })
                 t_m3_char_cls = int((time.time() - t_ccls_start) * 1000)
 
-                # Positional gating for Thai private car plate prefix:
-                # If there are 5+ boxes and box 1 is a Thai consonant while box 0 is a digit:
-                # A 2-character prefix before the gap can NEVER be [Digit, Consonant].
-                if len(char_boxes_detail) >= 5 and re.match(r"[\u0E01-\u0E2E]", char_boxes_detail[1]["char"]) and char_boxes_detail[0]["char"].isdigit():
+                # Positional gating for Thai 2-character prefix confusion (e.g. '8ว 7697' -> 'ผว 7697'):
+                # In Thailand, a 2-character prefix before digits can NEVER be [Digit, Consonant].
+                # CRITICAL: This ONLY applies if box 2 is a DIGIT (i.e. prefix has only 2 characters).
+                # If box 2 is a CONSONANT, this is a standard NCC plate (e.g. '3ขณ 6325', '1ฒผ 130', '1ฒษ 407')
+                # where box 0 is a 100% genuine series number (1-9) that MUST NEVER be overwritten!
+                if (
+                    len(char_boxes_detail) >= 5
+                    and char_boxes_detail[0]["char"].isdigit()
+                    and re.match(r"[\u0E01-\u0E2E]", char_boxes_detail[1]["char"])
+                    and not re.match(r"[\u0E01-\u0E2E]", char_boxes_detail[2]["char"])  # Box 2 MUST NOT be a consonant!
+                    and char_boxes_detail[0]["char"] in ("0", "8", "6")  # Only round digits that confuse with ผ/ฉ
+                ):
                     b0_box = char_boxes_detail[0]["box"]
                     b0_patch = char_crop[max(0, b0_box[1]):min(char_crop.shape[0], b0_box[3]), max(0, b0_box[0]):min(char_crop.shape[1], b0_box[2])]
                     winner, _, _, _ = analyze_character_stroke(b0_patch, "ผ", "ฉ")
@@ -1854,7 +1858,8 @@ class LPRPipelineService:
                     c0, c1, c2 = chars_predicted[0], chars_predicted[1], chars_predicted[2]
                     thai_c = r"[\u0E01-\u0E2E]"
                     if re.match(thai_c, c0) and re.match(thai_c, c1) and re.match(thai_c, c2):
-                        if char_boxes_detail[0]["box"][0] <= 20:
+                        bw0 = char_boxes_detail[0]["box"][2] - char_boxes_detail[0]["box"][0]
+                        if char_boxes_detail[0]["box"][0] <= 10 and bw0 < 16:
                             char_boxes_detail.pop(0)
                             chars_predicted.pop(0)
 
