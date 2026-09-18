@@ -249,7 +249,27 @@ def analyze_character_stroke(patch_bgr: np.ndarray, c1: str, c2: str) -> tuple[s
     gray = cv2.cvtColor(patch_bgr, cv2.COLOR_BGR2GRAY) if len(patch_bgr.shape) == 3 else patch_bgr
     # Invert binary threshold so foreground text stroke is 255
     _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    pts = np.argwhere(thresh > 0)
+
+    # Filter thin frame edge noise strips (1-3 px touching image borders)
+    nb_blobs, labels_blobs, stats, _ = cv2.connectedComponentsWithStats(thresh)
+    char_mask = np.zeros_like(thresh)
+    for i in range(1, nb_blobs):
+        area = stats[i, cv2.CC_STAT_AREA]
+        h_b = stats[i, cv2.CC_STAT_HEIGHT]
+        w_b = stats[i, cv2.CC_STAT_WIDTH]
+        y_b = stats[i, cv2.CC_STAT_TOP]
+        x_b = stats[i, cv2.CC_STAT_LEFT]
+        # Ignore thin border lines from plate frames
+        if (y_b <= 1 and h_b <= 3) or (y_b + h_b >= thresh.shape[0] - 1 and h_b <= 3):
+            continue
+        if (x_b <= 1 and w_b <= 3) or (x_b + w_b >= thresh.shape[1] - 1 and w_b <= 3):
+            continue
+        if area >= 30:
+            char_mask[labels_blobs == i] = 255
+
+    pts = np.argwhere(char_mask > 0)
+    if len(pts) == 0:
+        pts = np.argwhere(thresh > 0)
     if len(pts) == 0:
         return c1, c2, 0.5, "No text strokes found"
 
@@ -288,6 +308,25 @@ def analyze_character_stroke(patch_bgr: np.ndarray, c1: str, c2: str) -> tuple[s
             return "ป", "บ", apex_rel_x, f"Upper-right tail confirmed (apex_x={apex_rel_x:.2f} >= 0.70)"
         else:
             return "บ", "ป", apex_rel_x, f"Flat shoulder without tail (apex_x={apex_rel_x:.2f} < 0.70)"
+
+    elif candidates == {"ฬ", "ผ"} or "ฬ" in candidates:
+        # Genuine ฬ has an ascending diagonal tail extending at upper-right: apex_rel_x >= 0.72
+        # ผ has apex in center notch or vertical uprights: apex_rel_x < 0.72
+        if apex_rel_x >= 0.72:
+            return "ฬ", "ผ", apex_rel_x, f"Upper-right tail confirmed (apex_x={apex_rel_x:.2f} >= 0.72)"
+        else:
+            return "ผ", "ฬ", apex_rel_x, f"Center notch/uprights without right tail (apex_x={apex_rel_x:.2f} < 0.72)"
+
+    elif candidates == {"ฉ", "ผ"}:
+        # Genuine ฉ has a continuous curved upper roof covering the top-middle region
+        # ผ has an open top valley between the vertical uprights
+        if 0.50 <= apex_rel_x <= 0.68:
+            return "ผ", "ฉ", apex_rel_x, f"Center notch valley confirmed (apex_x={apex_rel_x:.2f})"
+        else:
+            return "ฉ", "ผ", apex_rel_x, f"Upper roof structure confirmed (apex_x={apex_rel_x:.2f})"
+
+    return c1, c2, apex_rel_x, "Default / unhandled pair"
+
 
 LAO_PROVINCE_THAI_MAP = {
     "ນະຄອນຫຼວງວຽງຈັນ": "กำแพงนคร / นครเวียงจันทร์",
@@ -339,20 +378,9 @@ def recover_character_boxes(detected_boxes, crop_w, crop_h, is_lao=False):
     y2 = max(b[3] for b in detected_boxes)
     max_chars = 7 if not is_lao else 6
 
-    # 0. Split merged / conjoined character boxes (e.g. '7' and '0' merged into one box by nano detector)
-    split_boxes = []
-    for b in detected_boxes:
-        bw_b = b[2] - b[0]
-        bh_b = b[3] - b[1]
-        # Single characters have aspect ratio bw/bh ~ 0.35 - 0.55.
-        # If bw/bh >= 0.72 or bw >= int(med_w * 1.65), it is two merged characters!
-        if (bw_b / max(1, bh_b) >= 0.72 or bw_b >= int(med_w * 1.65)) and bw_b >= 42:
-            mid_x = (b[0] + b[2]) // 2
-            split_boxes.append((b[0], b[1], mid_x, b[3], b[4]))
-            split_boxes.append((mid_x, b[1], b[2], b[3], b[4]))
-        else:
-            split_boxes.append(b)
-    boxes = split_boxes
+    # In Thai plates, do not split wide characters (e.g. ฌ, ณ, อ, ฮ) into fake halves.
+    # Single Thai characters naturally have aspect ratio ~0.75-0.85. Slicing them creates bogus twin characters (e.g. ฌ -> ต+น, อ -> 5+1).
+    boxes = list(detected_boxes)
 
     # 1. Leading gap recovery:
     # If the leftmost box starts at > 13% of width and there is room for a character (>= 22px)
@@ -362,22 +390,25 @@ def recover_character_boxes(detected_boxes, crop_w, crop_h, is_lao=False):
         inferred_x2 = max(inferred_x1 + 16, first_x1 - 3)
         boxes.insert(0, (inferred_x1, y1, inferred_x2, y2, 0.60))
 
-    # 2. Internal gap recovery (recovering missing characters between detected boxes, e.g. dropped '1' or dropped char):
-    sorted_boxes = sorted(boxes, key=lambda b: b[0])
-    filled_boxes = [sorted_boxes[0]]
-    for i in range(1, len(sorted_boxes)):
-        prev_b = filled_boxes[-1]
-        cur_b = sorted_boxes[i]
-        gap = cur_b[0] - prev_b[2]
-        if gap >= int(med_w * 1.35) and len(filled_boxes) < max_chars:
-            num_missing = min(2, int(round(gap / float(med_w + 4))))
-            step = gap / float(num_missing + 1)
-            for m_i in range(1, num_missing + 1):
-                ix1 = int(prev_b[2] + m_i * step - med_w / 2.0)
-                ix2 = ix1 + med_w
-                filled_boxes.append((ix1, y1, ix2, y2, 0.50))
-        filled_boxes.append(cur_b)
-    boxes = sorted(filled_boxes, key=lambda b: b[0])
+    # 2. Internal gap recovery: only for Lao plates (Lao plates have uniform character spacing without middle group gap)
+    # In Thai plates, there is an intentional gap between consonants (e.g. กข) and digits (e.g. 1234).
+    # Recovering internal gaps on Thai plates injects hallucinated boxes into the empty separator space.
+    if is_lao:
+        sorted_boxes = sorted(boxes, key=lambda b: b[0])
+        filled_boxes = [sorted_boxes[0]]
+        for i in range(1, len(sorted_boxes)):
+            prev_b = filled_boxes[-1]
+            cur_b = sorted_boxes[i]
+            gap = cur_b[0] - prev_b[2]
+            if gap >= int(med_w * 1.35) and len(filled_boxes) < max_chars:
+                num_missing = min(2, int(round(gap / float(med_w + 4))))
+                step = gap / float(num_missing + 1)
+                for m_i in range(1, num_missing + 1):
+                    ix1 = int(prev_b[2] + m_i * step - med_w / 2.0)
+                    ix2 = ix1 + med_w
+                    filled_boxes.append((ix1, y1, ix2, y2, 0.50))
+            filled_boxes.append(cur_b)
+        boxes = sorted(filled_boxes, key=lambda b: b[0])
 
     # 3. Trailing gap recovery (recovering shadowed digits at right edge):
     last_x2 = boxes[-1][2]
@@ -430,6 +461,11 @@ def has_invalid_thai_consonant_placement(text: str) -> bool:
             consonant_started = True
         elif is_dig and consonant_started:
             consonant_ended = True
+
+    # 4. Standard private car plates cannot have 1 digit + 1 consonant + 4 digits (e.g. 8ว7687)
+    # Private plates require either CC (2 consonants) or NCC (1 digit + 2 consonants).
+    if re.match(rf"^\d{thai_consonants}\d{{4}}$", clean):
+        return True
 
     return False
 
@@ -1503,8 +1539,17 @@ class LPRPipelineService:
                     if ("plate" in c_name or "char" in c_name) and (c_conf > char_conf):
                         # Characters must not be purely at the bottom edge
                         if by1 < int(rh * 0.65):
-                            char_crop = comp_crop
-                            char_box_coords = (bx1, by1, bx2, by2)
+                            bw_char = bx2 - bx1
+                            bh_char = by2 - by1
+                            # Safety margin padding to prevent clipping boundary characters (e.g. '1' at right edge)
+                            pad_cx = min(16, max(4, int(bw_char * 0.05)))
+                            pad_cy = min(8, max(2, int(bh_char * 0.06)))
+                            cx1 = max(0, bx1 - pad_cx)
+                            cx2 = min(rw, bx2 + pad_cx)
+                            cy1 = max(0, by1 - pad_cy)
+                            cy2 = min(int(rh * 0.72), by2 + pad_cy)
+                            char_crop = rectified_plate[cy1:cy2, cx1:cx2]
+                            char_box_coords = (cx1, cy1, cx2, cy2)
                             char_conf = c_conf
                     elif "prov" in c_name and (c_conf > prov_conf):
                         # Thai Province text is strictly located in the lower half (y > 0.45*rh)
@@ -1618,21 +1663,21 @@ class LPRPipelineService:
             # 3A-1: Thai Character Box Detection & Individual Classification
             if self.char_box_model is not None and self.char_classifier is not None and char_crop is not None:
                 t_bdet_start = time.time()
-                # Contrast enhancement & unsharp sharpening to separate blurry adjacent characters (e.g. 7 and 0)
+                # Contrast enhancement (CLAHE) to help separate blurry adjacent characters.
+                # Note: Unsharp masking removed — it caused domain mismatch with box detector
+                # training data, resulting in duplicate boxes on complex Thai chars (e.g. ณ, ฌ).
                 try:
                     char_gray = cv2.cvtColor(char_crop, cv2.COLOR_BGR2GRAY)
                     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4))
                     cl_gray = clahe.apply(char_gray)
-                    blurred = cv2.GaussianBlur(cl_gray, (0, 0), 2.0)
-                    sharp_gray = cv2.addWeighted(cl_gray, 1.5, blurred, -0.5, 0)
-                    det_char_input = cv2.cvtColor(sharp_gray, cv2.COLOR_GRAY2BGR)
+                    det_char_input = cv2.cvtColor(cl_gray, cv2.COLOR_GRAY2BGR)
                 except Exception:
                     det_char_input = char_crop
 
                 try:
-                    box_res = self.char_box_model(det_char_input, conf=0.20, verbose=False, device=self.device)[0]
+                    box_res = self.char_box_model(det_char_input, conf=0.10, verbose=False, device=self.device)[0]
                 except Exception:
-                    box_res = self.char_box_model(det_char_input, conf=0.20, verbose=False)[0]
+                    box_res = self.char_box_model(det_char_input, conf=0.10, verbose=False)[0]
                 raw_boxes = []
                 crop_w = char_crop.shape[1]
                 for b in box_res.boxes:
@@ -1649,10 +1694,23 @@ class LPRPipelineService:
                         continue
                     raw_boxes.append((bx1, by1, bx2, by2, bconf))
 
-                # Horizontal NMS / Deduplication (suppress duplicate detections of the same character)
-                raw_boxes.sort(key=lambda x: x[4], reverse=True)
-                kept_boxes = []
+                # 1. Filter out merged composite boxes that subsume smaller individual character boxes
+                non_merged_boxes = []
                 for b in raw_boxes:
+                    bx1, by1, bx2, by2, bconf = b
+                    bw = bx2 - bx1
+                    subsumed = [
+                        o for o in raw_boxes
+                        if o != b and o[0] >= bx1 - 6 and o[2] <= bx2 + 6 and (o[2] - o[0]) < 0.75 * bw
+                    ]
+                    if len(subsumed) >= 2 or (len(subsumed) == 1 and bw > 55):
+                        continue
+                    non_merged_boxes.append(b)
+
+                # 2. Horizontal NMS / Deduplication (suppress duplicate detections of the same character)
+                non_merged_boxes.sort(key=lambda x: x[4], reverse=True)
+                kept_boxes = []
+                for b in non_merged_boxes:
                     bx1, by1, bx2, by2, bconf = b
                     bw = bx2 - bx1
                     overlap = False
@@ -1679,22 +1737,34 @@ class LPRPipelineService:
                     single_crop = char_crop[max(0, by1) : min(char_crop.shape[0], by2), max(0, bx1) : min(char_crop.shape[1], bx2)]
                     if single_crop.shape[0] < 4 or single_crop.shape[1] < 4:
                         continue
+
+                    # Contrast enhancement matching CTC OCR preprocessing
+                    pil_sc = Image.fromarray(cv2.cvtColor(single_crop, cv2.COLOR_BGR2RGB))
+                    pil_sc = ImageOps.autocontrast(pil_sc, cutoff=2)
+                    single_crop_enhanced = cv2.cvtColor(np.array(pil_sc), cv2.COLOR_RGB2BGR)
+
                     # Pad to square (64x64) with neutral background
-                    sh, sw = single_crop.shape[:2]
+                    sh, sw = single_crop_enhanced.shape[:2]
                     smax = max(sh, sw)
-                    corners = np.array([single_crop[0, 0], single_crop[0, -1], single_crop[-1, 0], single_crop[-1, -1]])
+                    corners = np.array([single_crop_enhanced[0, 0], single_crop_enhanced[0, -1], single_crop_enhanced[-1, 0], single_crop_enhanced[-1, -1]])
                     bg_col = np.median(corners, axis=0).astype(np.uint8)
                     padded_c = np.full((smax, smax, 3), bg_col, dtype=np.uint8)
-                    padded_c[(smax - sh) // 2 : (smax - sh) // 2 + sh, (smax - sw) // 2 : (smax - sw) // 2 + sw] = single_crop
+                    padded_c[(smax - sh) // 2 : (smax - sh) // 2 + sh, (smax - sw) // 2 : (smax - sw) // 2 + sw] = single_crop_enhanced
 
                     pil_char = Image.fromarray(cv2.cvtColor(padded_c, cv2.COLOR_BGR2RGB))
                     ts_c = self.tf_char(pil_char).unsqueeze(0).to(self.device)
                     with torch.no_grad():
                         out_c = self.char_classifier(ts_c)
                         probs_c = F.softmax(out_c, dim=1).squeeze(0)
-                        top_p, top_i = torch.topk(probs_c, k=1)
-                        sym = self.int_to_char_class.get(top_i.item(), "?")
-                        char_p = float(top_p.item())
+                        top_p, top_i = torch.topk(probs_c, k=min(2, probs_c.shape[0]))
+                        sym = self.int_to_char_class.get(top_i[0].item(), "?")
+                        char_p = float(top_p[0].item())
+
+                        # Stroke disambiguation for ฬ vs ผ (genuine ฬ requires upper-right tail, apex >= 0.72)
+                        if sym == "ฬ" or (sym in ("ฉ", "ศ") and char_p < 0.60):
+                            winner, alt, apex_x, reason = analyze_character_stroke(single_crop, sym, "ผ")
+                            sym = winner
+
                         chars_predicted.append(sym)
                         char_boxes_detail.append({
                             "char": sym,
@@ -1703,6 +1773,17 @@ class LPRPipelineService:
                         })
                     cv2.rectangle(char_box_overlay, (bx1, by1), (bx2, by2), (0, 255, 0), 2)
                 t_m3_char_cls = int((time.time() - t_ccls_start) * 1000)
+
+                # Positional gating for Thai private car plate prefix:
+                # If there are 5+ boxes and box 1 is a Thai consonant while box 0 is a digit:
+                # A 2-character prefix before the gap can NEVER be [Digit, Consonant].
+                if len(char_boxes_detail) >= 5 and re.match(r"[\u0E01-\u0E2E]", char_boxes_detail[1]["char"]) and char_boxes_detail[0]["char"].isdigit():
+                    b0_box = char_boxes_detail[0]["box"]
+                    b0_patch = char_crop[max(0, b0_box[1]):min(char_crop.shape[0], b0_box[3]), max(0, b0_box[0]):min(char_crop.shape[1], b0_box[2])]
+                    winner, _, _, _ = analyze_character_stroke(b0_patch, "ผ", "ฉ")
+                    char_boxes_detail[0]["char"] = winner
+                    if len(chars_predicted) > 0:
+                        chars_predicted[0] = winner
 
                 # Render Thai and numeric characters with PIL TrueType font
                 if char_box_overlay is not None and len(char_boxes_detail) > 0:
@@ -1831,9 +1912,10 @@ class LPRPipelineService:
 
             # Check if this plate is a Thai commercial transport (truck / bus):
             # Formats are strictly NN-NNNN (e.g. 70-1737) with ZERO consonants allowed in registration number.
-            box_starts_truck_digits = bool(re.match(r"^\d{2}", clean_box))
-            ctc_starts_truck_digits = bool(re.match(r"^\d{2}", clean_ctc))
-            is_likely_truck = box_starts_truck_digits or ctc_starts_truck_digits or bool(re.match(r"^\d{2}-\d{4}$", fmt_ctc))
+            box_has_high_conf_consonants = any(re.match(r"[\u0E01-\u0E2E]", b["char"]) and b["prob"] >= 70.0 for b in char_boxes_detail)
+            box_starts_truck_digits = bool(re.match(r"^\d{2}", clean_box)) and not box_has_high_conf_consonants
+            ctc_starts_truck_digits = bool(re.match(r"^\d{2}", clean_ctc)) and not box_has_high_conf_consonants
+            is_likely_truck = not box_has_high_conf_consonants and (box_starts_truck_digits or ctc_starts_truck_digits or bool(re.match(r"^\d{2}-\d{4}$", fmt_ctc)))
 
             # Immediate Priority 0: If Box prediction has impossible Thai consonant placement
             # (e.g. 70ษย7ม where hyphen '-' was misclassified as 'ษ' and digit '1' as 'ย')
@@ -1854,33 +1936,19 @@ class LPRPipelineService:
             # 1. Primary Reconciliation: Prioritize Method C Sequence-Aligned Fusion
             if not formatted_plate_text:
                 if fused_aligned and is_valid_plate(fused_aligned) and not has_invalid_thai_consonant_placement(fused_aligned):
-                    clean_fused = fused_aligned.replace(" ", "").replace("-", "")
-                    if len(clean_fused) >= max(len(clean_box), len(clean_ctc)):
-                        formatted_plate_text = fused_aligned
-                        if fused_note:
-                            char_box_note = fused_note
-                    elif valid_box and len(clean_box) >= len(clean_ctc):
-                        formatted_plate_text = fmt_box
-                    elif valid_ctc and len(clean_ctc) > len(clean_box):
-                        formatted_plate_text = fused_aligned if len(clean_fused) == len(clean_ctc) else fmt_ctc
-                        if fused_note and formatted_plate_text == fused_aligned:
-                            char_box_note = fused_note
-                    else:
-                        formatted_plate_text = fused_aligned
+                    formatted_plate_text = fused_aligned
+                    if fused_note:
+                        char_box_note = fused_note
                 elif valid_box and valid_ctc:
-                    if len(clean_ctc) > len(clean_box):
+                    box_num_digits = sum(1 for ch in clean_box if ch.isdigit())
+                    ctc_num_digits = sum(1 for ch in clean_ctc if ch.isdigit())
+                    if ctc_num_digits > box_num_digits and box_num_digits < 4:
                         # CTC recognized full 4-digit plate (e.g. ผว 7697) while box detector dropped digits (ฉว 76)
                         formatted_plate_text = fmt_ctc
-                    elif len(clean_box) > len(clean_ctc):
-                        # Box detector localized extra character (e.g. leading digit) that CTC missed
+                    elif len(clean_box) >= len(clean_ctc):
                         formatted_plate_text = fmt_box
                     else:
-                        # Same length: if stroke analysis disambiguated confusion twins (e.g. ผ vs ฉ/ศ),
-                        # prioritize the stroke-disambiguated candidate!
-                        if is_ambiguous and any(ac["primary"] in clean_ctc for ac in alt_candidates):
-                            formatted_plate_text = fmt_ctc
-                        else:
-                            formatted_plate_text = fmt_box
+                        formatted_plate_text = fmt_box if not box_has_invalid_consonants else fmt_ctc
                 elif valid_box and not valid_ctc:
                     formatted_plate_text = fmt_box
                 elif valid_ctc and not valid_box:

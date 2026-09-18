@@ -12,13 +12,22 @@ LAO_PLATE_CONSONANTS = r"[ກຂຄຈຍດຕທນບຜພມຣລວສຫ
 LAO_CONSONANTS = LAO_PLATE_CONSONANTS
 DIGIT = r"\d"
 
+# SEP = optional separator: single space, hyphen, or nothing (covers real-world OCR variations)
+SEP = r"[\s-]?"
+
 # Regex Patterns
-PATTERN_NCC_NNNN = re.compile(rf"^{DIGIT}{THAI_CONSONANTS}{{2}}\s?{DIGIT}{{1,4}}$") # e.g., 1กข 1234 or 1กข1234
-PATTERN_CC_NNNN  = re.compile(rf"^{THAI_CONSONANTS}{{2}}\s?{DIGIT}{{1,4}}$")        # e.g., กข 1234 or ฮร 9960
-PATTERN_C_NNNN   = re.compile(rf"^{THAI_CONSONANTS}[\s-]?{DIGIT}{{1,4}}$")             # e.g., ก 1234 or ส-5887
-PATTERN_NC_NNNN  = re.compile(rf"^{DIGIT}{THAI_CONSONANTS}\s*[-]?\s*{DIGIT}{{1,4}}$")    # e.g., 5ศ - 7856 or 5ศ 7856 (Trailer/Machinery/Special)
-PATTERN_NN_NNNN  = re.compile(rf"^{DIGIT}{{2}}-{DIGIT}{{4}}$")                      # e.g., 82-6990 (truck / trailer)
-PATTERN_NNNNN    = re.compile(rf"^{DIGIT}{{4,6}}$")                                 # e.g., 12345 (police / official)
+# NCC NNNN: 1 digit + 2 Thai consonants + optional sep + 1-4 digits (new private series, e.g. 1กข 1234, 1กข-1234)
+PATTERN_NCC_NNNN = re.compile(rf"^{DIGIT}{THAI_CONSONANTS}{{2}}{SEP}{DIGIT}{{1,4}}$")
+# CC NNNN: 2 Thai consonants + optional sep + 1-4 digits (standard private, e.g. กข 1234, กข-1234)
+PATTERN_CC_NNNN  = re.compile(rf"^{THAI_CONSONANTS}{{2}}{SEP}{DIGIT}{{1,4}}$")
+# C NNNN: 1 Thai consonant + optional sep + 1-4 digits (antique/motorcycle, e.g. ณ 4100, ณ-4100)
+PATTERN_C_NNNN   = re.compile(rf"^{THAI_CONSONANTS}{SEP}{DIGIT}{{1,4}}$")
+# NC NNNN: 1 digit + 1 Thai consonant + optional sep + 1-4 digits (trailer/machinery, e.g. 5ศ-7856)
+PATTERN_NC_NNNN  = re.compile(rf"^{DIGIT}{THAI_CONSONANTS}\s*[-]?\s*{DIGIT}{{1,4}}$")
+# NN-NNNN: 2 digits + optional sep + 4 digits (truck/transport, e.g. 82-6990, 82 6990, 826990)
+PATTERN_NN_NNNN  = re.compile(rf"^{DIGIT}{{2}}{SEP}{DIGIT}{{4}}$")
+# NNNNN: 4-6 all-digit plates (police/official/government, e.g. 1234, 12345, 123456)
+PATTERN_NNNNN    = re.compile(rf"^{DIGIT}{{4,6}}$")
 
 # Lao Standard Regex: Strictly 2 valid Lao consonants in front followed by 1 to 4 digits (e.g., ກກ 0083, ກວ 8607)
 PATTERN_LAO_STANDARD = re.compile(rf"^({LAO_PLATE_CONSONANTS}{{2}})\s*({DIGIT}{{1,4}})$")
@@ -82,58 +91,61 @@ def is_valid_plate(upload_text: str, country: str = "Thai") -> bool:
 
 def format_thai_plate(text: str) -> str:
     """Standardizes Thai plate text into canonical format with proper spacing:
-    - NCC NNNN (1-4 digits)
-    - CC NNNN (1-4 digits)
-    - C NNNN / C-NNNN (1-4 digits)
-    - NN-NNNN (1-4 digits)
-    - NNNNN (1-6 digits)
+    - NCC NNNN  (1 digit + 2 consonants + space + 1-4 digits)
+    - NCC-NNNN  (1 digit + 2 consonants + hyphen + 1-4 digits) — preserves hyphen
+    - CC NNNN   (2 consonants + space + 1-4 digits)
+    - CC-NNNN   (2 consonants + hyphen + 1-4 digits) — preserves hyphen
+    - C NNNN / C-NNNN  (1 consonant + 1-4 digits)
+    - NC NNNN / NC-NNNN (1 digit + 1 consonant + 1-4 digits)
+    - NN-NNNN   (2 digits + hyphen + 4 digits) — normalizes to hyphen form
+    - NNNNN     (4-6 digits only)
     """
     s = text.strip()
-    clean = s.replace(" ", "")
+    # bare = all separators removed, used for pattern matching
+    bare = re.sub(r"[\s-]", "", s)
+    # detect if original had a hyphen (to preserve style for letter-plates)
+    has_hyphen = "-" in s
 
-    # 1. Pattern: NCC NNNN (1 digit, 2 Thai consonants, 1-4 digits)
-    m = PATTERN_NCC_NNNN.match(clean)
-    if m:
-        m_grp = re.match(rf"^({DIGIT}{THAI_CONSONANTS}{{2}})({DIGIT}{{1,4}})$", clean)
-        if m_grp:
-            return f"{m_grp.group(1)} {m_grp.group(2)}"
+    # 1. Pattern: NCC-?NNNN (1 digit, 2 Thai consonants, optional sep, 1-4 digits)
+    m_grp = re.match(rf"^({DIGIT}{THAI_CONSONANTS}{{2}})({DIGIT}{{1,4}})$", bare)
+    if m_grp:
+        sep = "-" if has_hyphen else " "
+        return f"{m_grp.group(1)}{sep}{m_grp.group(2)}"
 
-    # 2. Pattern: CC NNNN (2 Thai consonants, 1-4 digits)
-    m = PATTERN_CC_NNNN.match(clean)
-    if m:
-        m_grp = re.match(rf"^({THAI_CONSONANTS}{{2}})({DIGIT}{{1,4}})$", clean)
-        if m_grp:
-            return f"{m_grp.group(1)} {m_grp.group(2)}"
+    # 2. Pattern: CC-?NNNN (2 Thai consonants, optional sep, 1-4 digits)
+    m_grp = re.match(rf"^({THAI_CONSONANTS}{{2}})({DIGIT}{{1,4}})$", bare)
+    if m_grp:
+        sep = "-" if has_hyphen else " "
+        return f"{m_grp.group(1)}{sep}{m_grp.group(2)}"
 
-    # 3. Pattern: C NNNN or C-NNNN (1 Thai consonant, 1-4 digits)
-    m = PATTERN_C_NNNN.match(s)
-    if m:
-        sep = "-" if "-" in s else " "
-        m_grp = re.match(rf"^({THAI_CONSONANTS})[\s-]?({DIGIT}{{1,4}})$", s)
-        if m_grp:
-            return f"{m_grp.group(1)}{sep}{m_grp.group(2)}"
+    # 3. Pattern: C-?NNNN (1 Thai consonant, optional sep, 1-4 digits)
+    m_grp = re.match(rf"^({THAI_CONSONANTS})({DIGIT}{{1,4}})$", bare)
+    if m_grp:
+        sep = "-" if has_hyphen else " "
+        return f"{m_grp.group(1)}{sep}{m_grp.group(2)}"
 
-    # 3.5. Pattern: NC NNNN or NC-NNNN (1 digit, 1 Thai consonant, 1-4 digits, e.g. 5ศ - 7856)
-    m = PATTERN_NC_NNNN.match(clean)
-    if m:
-        sep = " - " if "-" in s else " "
-        m_grp = re.match(rf"^({DIGIT}{THAI_CONSONANTS})[\s-]?({DIGIT}{{1,4}})$", clean)
-        if m_grp:
-            return f"{m_grp.group(1)}{sep}{m_grp.group(2)}"
+    # 4. Pattern: NC-?NNNN (1 digit, 1 Thai consonant, optional sep, 1-4 digits)
+    m_grp = re.match(rf"^({DIGIT}{THAI_CONSONANTS})({DIGIT}{{1,4}})$", bare)
+    if m_grp:
+        sep = " - " if has_hyphen else " "
+        return f"{m_grp.group(1)}{sep}{m_grp.group(2)}"
 
-    # 4. Pattern: NN-NNNN (Commercial trucks with or without hyphen)
-    m = PATTERN_NN_NNNN.match(clean)
-    if m:
-        m_grp = re.match(rf"^({DIGIT}{{2}})-?({DIGIT}{{1,4}})$", clean)
-        if m_grp:
+    # 5. Pattern: NN-NNNN (2 digits + 4 digits — always canonical with hyphen)
+    #    Only format as NN-NNNN if the original had a separator, OR it's exactly 6 digits
+    #    AND starts with a known DLT commercial prefix (70-99). Pure 4-6 digit govt plates go to step 6.
+    m_grp = re.match(rf"^({DIGIT}{{2}})({DIGIT}{{4}})$", bare)
+    if m_grp:
+        # If original already had a hyphen/space separator → definitely a truck plate
+        if has_hyphen or " " in s:
             return f"{m_grp.group(1)}-{m_grp.group(2)}"
-    elif re.match(r"^\d{6}$", clean):
-        return f"{clean[:2]}-{clean[2:]}"
+        # If 6 raw digits with no sep: only treat as NN-NNNN if DLT commercial prefix (70-99)
+        if re.match(r"^[7-9]\d", bare):
+            return f"{m_grp.group(1)}-{m_grp.group(2)}"
+        # Otherwise fall through to NNNNN (govt/police)
 
-    # 5. Pattern: NNNNN (Police / government all digits)
-    m = PATTERN_NNNNN.match(clean)
-    if m:
-        return clean
+    # 6. Pattern: NNNNN (4-6 digits — police/government, return bare digits)
+    if PATTERN_NNNNN.match(bare):
+        return bare
 
     return s
 
