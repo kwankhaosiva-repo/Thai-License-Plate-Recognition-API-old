@@ -1,6 +1,6 @@
-gcloud projects create simai-lpr-ocr-project
+gcloud projects create lpr-car-plate
 
-gcloud config set project simai-lpr-ocr-project
+gcloud config set project lpr-car-plate
 
 gcloud services enable artifactregistry.googleapis.com
 
@@ -9,29 +9,26 @@ gcloud services enable run.googleapis.com
 gcloud artifacts repositories create lpr-repo `
     --repository-format=docker `
     --location=asia-southeast1 `
-    --project=simai-lpr-ocr-project
+    --project=lpr-car-plate
 
 gcloud auth configure-docker asia-southeast1-docker.pkg.dev
 
-docker build -t asia-southeast1-docker.pkg.dev/[PROJECT_ID]/[REPO_NAME]/[IMAGE_NAME] .
+# Step 1: Build amd64 image และ push ไป Artifact Registry ในทีเดียว
+docker buildx build --platform linux/amd64 \
+  -t asia-southeast1-docker.pkg.dev/lpr-car-plate/lpr-repo/thai-lpr-api \
+  --push .
 
-# 1. Build and tag image (using optimized Dockerfile with PyTorch CPU wheels)
-docker build -t asia-southeast1-docker.pkg.dev/simai-lpr-ocr-project/lpr-repo/thai-lpr-api .
-
-# 2. Push image to Google Artifact Registry
-docker push asia-southeast1-docker.pkg.dev/simai-lpr-ocr-project/lpr-repo/thai-lpr-api
-
-# 3. Deploy to Cloud Run (Near-Zero Cost & Serverless CPU)
-gcloud run deploy thai-lpr-api `
-  --image asia-southeast1-docker.pkg.dev/simai-lpr-ocr-project/lpr-repo/thai-lpr-api `
-  --region asia-southeast1 `
-  --platform managed `
-  --allow-unauthenticated `
-  --cpu 2 `
-  --memory 2Gi `
-  --concurrency 8 `
-  --timeout 60s `
-  --min-instances 0 `
-  --max-instances 1 `
-  --cpu-throttling `
+# Step 2: Deploy image นั้นขึ้น Cloud Run
+gcloud run deploy thai-lpr-api \
+  --image asia-southeast1-docker.pkg.dev/lpr-car-plate/lpr-repo/thai-lpr-api \
+  --region asia-southeast1 \
+  --platform managed \
+  --allow-unauthenticated \
+  --cpu 2 \
+  --memory 2Gi \
+  --concurrency 8 \
+  --timeout 60s \
+  --min-instances 0 \
+  --max-instances 1 \
+  --cpu-throttling \
   --port 8080
