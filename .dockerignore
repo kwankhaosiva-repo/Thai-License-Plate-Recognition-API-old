@@ -47,6 +47,9 @@ weights/last.pt
 weights/best_epoch_*.pt
 weights/*obb*
 weights/*rtdetr*
-weights/*rfdetr*
+weights/component_detector_rfdetr*
+weights/plate_detector_*rfdetr*
+weights/character_box_detector_rfdetr_small*
+weights/LibreRFDETR*
 weights/province_model.pth
 weights/province_model_resnet34_grayscale_thai.pth

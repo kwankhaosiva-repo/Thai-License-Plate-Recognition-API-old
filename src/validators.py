@@ -49,7 +49,7 @@ class PlateLabelValidator(BaseModel):
             # Series 70-99 are strictly DLT commercial transport trucks/buses requiring NN-NNNN (6 digits).
             # A 5-digit string starting with 70-99 is an incomplete truck plate missing a digit, NOT an official plate.
             clean_num = v_stripped.replace("-", "").replace(" ", "")
-            if len(clean_num) == 5 and re.match(r"^[7-9]\d", clean_num):
+            if len(clean_num) == 5 and re.match(r"^[1-9]\d", clean_num):
                 is_num = None
         
         if not (is_ncc or is_cc or is_c or is_nc or is_nn or is_num):
@@ -130,20 +130,14 @@ def format_thai_plate(text: str) -> str:
         sep = " - " if has_hyphen else " "
         return f"{m_grp.group(1)}{sep}{m_grp.group(2)}"
 
-    # 5. Pattern: NN-NNNN (2 digits + 4 digits — always canonical with hyphen)
-    #    Only format as NN-NNNN if the original had a separator, OR it's exactly 6 digits
-    #    AND starts with a known DLT commercial prefix (70-99). Pure 4-6 digit govt plates go to step 6.
+    # 5. Pattern: NN-NNNN (2 digits + 4 digits — commercial transport, always canonical with hyphen)
+    #    In Thailand, all 6-digit pure numeric plates (categories 10-99 under the Land Transport Act)
+    #    are commercial trucks/buses formatted with a hyphen between prefix and registration digits.
     m_grp = re.match(rf"^({DIGIT}{{2}})({DIGIT}{{4}})$", bare)
     if m_grp:
-        # If original already had a hyphen/space separator → definitely a truck plate
-        if has_hyphen or " " in s:
-            return f"{m_grp.group(1)}-{m_grp.group(2)}"
-        # If 6 raw digits with no sep: only treat as NN-NNNN if DLT commercial prefix (70-99)
-        if re.match(r"^[7-9]\d", bare):
-            return f"{m_grp.group(1)}-{m_grp.group(2)}"
-        # Otherwise fall through to NNNNN (govt/police)
+        return f"{m_grp.group(1)}-{m_grp.group(2)}"
 
-    # 6. Pattern: NNNNN (4-6 digits — police/government, return bare digits)
+    # 6. Pattern: NNNNN (4-5 digits — police/government, return bare digits)
     if PATTERN_NNNNN.match(bare):
         return bare
 

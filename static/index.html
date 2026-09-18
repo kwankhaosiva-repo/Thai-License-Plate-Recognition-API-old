@@ -132,6 +132,55 @@
             <input type="file" id="fileInput" multiple accept="image/*,video/*" style="display: none;">
           </div>
 
+          <!-- Real-Time Video Stream Simulation Player (Appears when video is uploaded) -->
+          <div id="videoStreamPlayerWrapper" class="video-stream-player-wrapper" style="display: none;">
+            <div class="stream-player-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <div class="stream-player-title" style="display: flex; align-items: center; gap: 6px;">
+                <span class="live-dot" style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #10b981; animation: pulse-live 1.5s infinite;"></span>
+                <span style="font-weight: 600; font-size: 0.85rem; color: var(--text-primary);">RTSP Stream Mock</span>
+                <span class="pill-stream-mode" style="background: rgba(0, 240, 255, 0.15); color: #00f0ff; border: 1px solid rgba(0, 240, 255, 0.3); font-size: 0.7rem; padding: 2px 6px; border-radius: 4px;">Motion Gated</span>
+              </div>
+              <div style="display: flex; gap: 6px; align-items: center;">
+                <span class="pill" id="streamFpsBadge" style="font-size: 0.7rem;">-- FPS</span>
+                <span class="pill" id="streamMotionStatusBadge" style="font-size: 0.72rem; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3);">Gate Idle (0ms)</span>
+              </div>
+            </div>
+            
+            <div class="stream-container" style="position: relative; overflow: hidden; border-radius: 8px; background: #070a0f; border: 1px solid var(--border-glass);">
+              <img id="videoStreamViewer" class="stream-image" src="" alt="Real-Time Video Stream Feed" style="width: 100%; display: block; border-radius: 8px;">
+            </div>
+
+            <!-- Stream Simulation Controls -->
+            <div class="stream-player-controls" style="display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap;">
+              <button type="button" class="btn-secondary" id="btnRestartVideoStream" style="padding: 6px 12px; font-size: 0.75rem; display: flex; align-items: center; gap: 4px;">
+                <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                Restart / Loop
+              </button>
+              <button type="button" class="btn-secondary" id="btnRunBatchVideo" style="padding: 6px 12px; font-size: 0.75rem; display: flex; align-items: center; gap: 4px;">
+                <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h7"/></svg>
+                Batch Scan All Frames
+              </button>
+              <button type="button" class="btn-secondary" id="btnCloseVideoStream" style="padding: 6px 12px; font-size: 0.75rem; color: var(--accent-red); border-color: rgba(239, 68, 68, 0.3); display: flex; align-items: center; gap: 4px;">
+                <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12"/></svg>
+                Close Stream
+              </button>
+            </div>
+
+            <!-- Model 1 Stream Sensitivity & False Positive Rejection Control -->
+            <div class="stream-settings-bar" style="display: flex; align-items: center; justify-content: space-between; background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-glass); border-radius: 8px; padding: 7px 12px; margin-top: 8px; flex-wrap: wrap; gap: 8px;">
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <span style="font-size: 0.74rem; color: var(--text-secondary); font-weight: 500;">Model 1 Plate Threshold:</span>
+                <span id="streamConfVal" style="font-size: 0.78rem; font-weight: 700; color: var(--accent-cyan);">65%</span>
+                <span style="font-size: 0.68rem; color: var(--text-muted);">(Rejects empty road/barrier textures)</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px; flex: 1; min-width: 200px; max-width: 320px;">
+                <span style="font-size: 0.68rem; color: var(--text-muted);">40%</span>
+                <input type="range" id="streamConfSlider" min="40" max="85" value="65" step="5" style="flex: 1; accent-color: var(--accent-cyan); cursor: pointer;">
+                <span style="font-size: 0.68rem; color: var(--text-muted);">85%</span>
+              </div>
+            </div>
+          </div>
+
           <!-- Sample Plates Quick Test Row -->
           <div class="sample-plates-row" style="margin-top: 12px; display: flex; gap: 8px; align-items: center; justify-content: center; flex-wrap: wrap;">
             <span style="font-size: 0.8rem; color: var(--text-muted); font-weight: 500;">Quick Test Samples:</span>
