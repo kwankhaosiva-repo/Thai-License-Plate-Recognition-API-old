@@ -44,8 +44,8 @@
 | **Model 1.1 (Corner Regressor)** | **MobileNetV3-Small Keypoint Regressor**<br>(~3.2 ms CPU, 4 MB) | • **YOLOv11-OBB** (Oriented Box)<br>• **RF-DETR-OBB** (Oriented Box)<br>• **Polygon Segmentation** | **ทำไมไม่ใช้ OBB ตัวเดียวจบ?**<br>• OBB หรือ Polygon Segmentation ทำให้โมเดลใหญ่ขึ้น และตอน Export เป็น ONNX จะติดปัญหา **Rotated NMS custom operator (C++)** ทำให้รันบนภาษา C# (.NET) ได้ยากมาก<br>• **2-Stage ดีกว่า:** เอา AABB BBox ดึง Crop หยาบๆ แล้วส่งให้ MobileNetV3 ทำนายพิกัด 4 มุมภายใน **3.2 ms** จากนั้นใช้ OpenCV `warpPerspective` หมุนป้ายตรงเป๊ะ 100% รันข้ามแพลตฟอร์มได้ทันที |
 | **Model 1.5 (Country Classifier)** | **MobileNetV3-Small**<br>(~1.5 ms CPU, 3.8 MB) | • ResNet18<br>• Rule-based Color Check | แยกป้ายไทย vs ลาวได้แม่นยำ **99.9%** ภายในเวลาแค่ 1.5 ms ก่อนเลือกเส้นทาง Pipeline ถัดไป |
 | **Model 2 (Component Detector)** | **D-FINE-Nano**<br>(~18 ms CPU, 15 MB) | • RF-DETR-Small (~55 ms)<br>• PicoDet-S (~10 ms) | ทำหน้าที่แยกพื้นที่ระหว่าง `plate_char` (แถวตัวหนังสือ) และ `province` (แถวจังหวัดด้านล่าง) D-FINE-Nano ตัดขอบแบ่งโซนได้คมชัด ไม่กินพื้นที่ทับซ้อนกัน |
-| **Model 3A (Char Localization)** | **D-FINE-Nano (Box)**<br>(~16 ms CPU, 15 MB) | • Connected Component Analysis (Contours)<br>• Projection Profile | แยก Bounding Box ตัวอักษรทีละตัวได้สมบูรณ์แม้ตัวหนังสือจะชิดกันหรือมีรอยขีดข่วน พร้อมอัลกอริทึม Spatial Gap Recovery อุดช่องว่างกล่องที่หลุด |
-| **Model 3A (Text Recognition)** | **Hybrid Method A+C Dual-Engine**<br>• MobileNetV2 (Box Cls)<br>• ResNet18-BiLSTM-CTC<br>• Spatial Gap Gating + DLT Syntax Guard | • Tesseract OCR<br>• EasyOCR<br>• Single OCR without Box<br>• Blind Sequence Alignment | **ทำไมต้อง Method A+C Unified Fusion?**<br>• ถ้าใช้ OCR เดี่ยวๆ เวลาเจอแสงสะท้อนหรือป้ายเอียงจะอ่านหลุด<br>• ถ้าใช้ Box เดี่ยวๆ ตัวอักษรจางกล่องจะตีกรอบไม่ติด<br>• **Method A+C Fusion:** ใช้ Sequence Matching ผสานความแม่นยำ 99.4% ของ Box เข้ากับ CTC โดยมี **Spatial Gap Gating** ตรวจสอบพื้นที่ว่างจริงบนภาพก่อนเติม (ป้องกันการเติมน็อตหรือกรอบป้ายเป็นเลขนำหน้าผิดๆ เช่น `กย 588` กลายเป็น `5กย 4588`) และมี **Syntax Guard** ป้องกันการหลอนพยัญชนะในป้ายรถบรรทุก (`70ษย7ม` $\to$ `70-1737`) |
+| **Model 3A (Char Localization)** | **D-FINE-Small (Box)**<br>(~35 ms CPU, 165 MB .pt / 40 MB ONNX) | • **D-FINE-Nano** (~16 ms, 15 MB)<br>• **RF-DETR-Small** (~84 ms, 122 MB)<br>• Connected Component Analysis | **ทำไมเลือก D-FINE-Small พร้อม Subsumed Box Filter?**<br>• D-FINE-Small มี Capacity สูงกว่า ตีกรอบตัวอักษรที่ชิดกันหรือจมอยู่ในเงามืดได้แม่นยำกว่า Nano อย่างเห็นได้ชัด<br>• **Subsumed Composite Box Filter:** แก้ปัญหาโมเดลจับตัวอักษร 2 ตัวติดกันเป็นกล่องกว้างอันเดียว ($w > 1.6 \times \text{median}$) โดยระบบจะตรวจจับและตัดกล่องรวมทิ้งเพื่อรักษาตัวอักษรเดี่ยว 2 ตัวที่ซ้อนอยู่ข้างในไว้ |
+| **Model 3A (Text Recognition)** | **Hybrid Method A+C Dual-Engine**<br>• MobileNetV2 (50-Class Balanced Cls, **99.58% Top-1**)<br>• ResNet18-BiLSTM-CTC<br>• Autocontrast Normalization<br>• Spatial Gap Gating + DLT Syntax Guard | • Tesseract OCR<br>• EasyOCR<br>• 12-Epoch Imbalanced Classifier<br>• Blind Sequence Alignment | **ทำไมต้อง Balanced 50-Class + Method A+C Unified Fusion?**<br>• **Balanced Dataset:** ทำ Augmentation ปรับสมดุลทุกคลาสเป็น $\ge 400$ ตัวอย่าง/คลาส (รวม 29,385 ภาพ) พร้อมใส่ Photometric Shadow Gradients แก้ปัญหาตัวอักษรหายาก (`ผ`, `ณ`, `ฬ`) โดนทายสับสนเป็นตัวเลขทึบอย่าง `8`<br>• **Autocontrast Normalization:** ดึง Contrast ขยาย Dynamic Range ตัวอักษรในเงามืดก่อนเข้า Classifier<br>• **Method A+C Fusion:** ผสานความแม่นยำระดับ **99.58% Top-1 (99.89% Top-3)** ของ Classifier เข้ากับ CTC โดยมี **DLT Syntax Guard** ดักจับ Format ป้ายส่วนบุคคลที่เป็นไปไม่ได้ (เช่น `\d[พยัญชนะ]\d{4}`) |
 | **Model 3B (Province Classifier)** | **ResNet34-Grayscale**<br>(~7.2 ms CPU, 81.5 MB, $80 \times 256$) | • ResNet18 Grayscale ($64 \times 256$, 44 MB)<br>• ResNet34 RGB<br>• MobileNetV2 RGB | **ทำไมอัปเกรดเป็น ResNet34 Grayscale ($80 \times 256$)?**<br>ชื่อจังหวัดไทยมีวรรณยุกต์และสระบน-ล่างสูง (เช่น อุ, อู, ไม้เอก, ไม้โท) ความละเอียดแนวตั้ง $80\text{ px}$ ช่วยเก็บรายละเอียดวรรณยุกต์ได้ครบถ้วน และ Backbone ResNet34 ให้ความแม่นยำสูงถึง **99.10% Val / 98.71% Test Top-1** ครบทั้ง 77 จังหวัด |
 
 ---
@@ -58,8 +58,8 @@
 | **Stage 1.1 (Corner Regressor)** | MobileNetV3-Small Head | $224 \times 224 \times 3$ | 4.0 MB | PyTorch (`torchvision`) | 8-D Regression (`[1, 8]`: $x_1, y_1 \dots x_4, y_4$) |
 | **Stage 1.5 (Country Cls)** | MobileNetV3-Small | $128 \times 128 \times 3$ | 3.8 MB | PyTorch (`torchvision`) | Binary Classification (`[1, 2]`) |
 | **Stage 2 (Component Detector)** | D-FINE-Nano | $320 \times 160 \times 3$ | 15.0 MB | PyTorch (D-FINE Engine) | Object Detection (`plate_char`, `province`) |
-| **Stage 3A (Char Box Detector)**| D-FINE-Nano | $160 \times 320 \times 3$ | 15.0 MB | PyTorch (D-FINE Engine) | Character Box Detection (`[1, 300, 4]`) |
-| **Stage 3A (Thai Char Classifier)**| MobileNetV2 | $64 \times 64 \times 3$ | 8.9 MB | PyTorch (`torchvision`) | 50-Class Softmax (`[1, 50]`) |
+| **Stage 3A (Char Box Detector)**| D-FINE-Small | $160 \times 320 \times 3$ | 165 MB (.pt) / 40 MB (ONNX) | PyTorch (D-FINE Engine) | Character Box Detection (`[1, 300, 4]`) |
+| **Stage 3A (Thai Char Classifier)**| MobileNetV2 | $64 \times 64 \times 3$ | 8.9 MB | PyTorch (`torchvision`) | 50-Class Softmax (`[1, 50]`) — **99.58% Val Top-1 / 99.89% Top-3** |
 | **Stage 3A (Thai Full OCR Engine)**| ResNet18 + BiLSTM + CTC | $32 \times 256 \times 3$ | 32.0 MB | PyTorch (Custom CTC Model) | CTC Sequence Logits (`[T, 1, 71]`) |
 | **Stage 3A (Lao Char Classifier)** | MobileNetV2 | $64 \times 64 \times 3$ | 8.8 MB | PyTorch (`torchvision`) | 34-Class Softmax (`[1, 34]`) |
 | **Stage 3B (Thai Province)** | ResNet34 (Grayscale) | $80 \times 256 \times 3$ | 81.5 MB | PyTorch (`torchvision`) | 77-Class Softmax (`[1, 77]`) — **99.10% Val Top-1** |
@@ -94,16 +94,20 @@
 - **สภาพแสงและความเอียงบนท้องถนน**: กล้อง CCTV มีมุมก้ม เงาสะท้อน แดดย้อน และสภาพฝุ่นเปรอะเปื้อน
 
 ### มาตรการ Augmentation ที่นำมาใช้:
-1. **Dynamic Affine Transformation**:
+1. **Character Dataset Balancing (แก้ปัญหาอักษรหายาก & ป้ายในเงามืด)**:
+   - **ปัญหา:** ตัวอักษรหายาก (`ผ`, `ณ`, `ฬ`, `ฮ`) เดิมมีเพียง ~60 ภาพ เทียบกับตัวเลขที่มี 1,500+ ภาพ และภาพเทรนเดิมสว่างขาว (Mean ~160) ขาดภาพมืดใต้กันชน (Mean ~49) ทำให้โมเดลเดาเป็น `8`
+   - **การแก้ไข:** ทำ Offline Balancing ปรับสมดุลครบทั้ง 50 คลาสให้มี $\ge 400$ ภาพ/คลาสในชุด Train (รวม 29,385 ภาพ) และ $\ge 30$ ภาพ/คลาสในชุด Valid (รวม 3,612 ภาพ)
+   - **Synthetic Photometric Shadow Gradients:** สุ่มใส่แถบเงาดำทแยงและแนวตั้ง ปรับความสว่างต่ำ $0.35 - 0.65$ และใส่ `RandomGrayscale(p=0.15)` ทำให้โมเดลเรียนรู้โครงสร้างลายเส้นแม้ภาพจะมืดสนิท จนได้ **Val Top-1: 99.58% / Top-3: 99.89%**
+2. **Dynamic Affine Transformation**:
    - สุ่มหมุนภาพ $\pm 4^\circ$ ถึง $\pm 8^\circ$ และขยับตำแหน่งแกน $X, Y$ ($2\% - 4\%$) เพื่อจำลองมุมมองกล้องติดรถ
-2. **Color & Photometric Jittering**:
+3. **Color & Photometric Jittering**:
    - ปรับแต่งความสว่าง (Brightness) และคอนทราสต์ (Contrast) สุ่มช่วง $0.8 - 1.2$
    - เพิ่ม `RandomAutocontrast(p=0.4)` เพื่อให้ตัวหนังสือบนป้ายเก่าหรือป้ายเลือนลางมีความคมชัดขึ้น
-3. **Loss-Level Class Weighting (Cost-Sensitive Learning)**:
-   - คำนวณน้ำหนัก Loss แบบผกผันกับความถี่ของข้อมูล:
+4. **Loss-Level Class Weighting (Cost-Sensitive Learning)**:
+   - คำนวณน้ำหนัก Loss แบบผกผันกับความถี่ของข้อมูลสำหรับ Province Classifier:
      $$\text{Weight}_c = \left( \frac{N_{\text{total}}}{C \times N_c} \right)^{0.5}$$
-   - ล็อกค่าให้อยู่ในช่วง $[0.2, 8.0]$ ทำให้จังหวัดที่มีภาพน้อย (เช่น 36 ภาพ) มีพลังในการปรับ Weight ของโมเดลเทียบเท่าจังหวัดใหญ่ โดยไม่จำเป็นต้อง Duplicate รูปจน Overfitting
-4. **Lao Consonant Synthesis**:
+   - ล็อกค่าให้อยู่ในช่วง $[0.2, 8.0]$ ทำให้จังหวัดที่มีภาพน้อยมีพลังในการปรับ Weight ของโมเดลเทียบเท่าจังหวัดใหญ่
+5. **Lao Consonant Synthesis**:
    - พยัญชนะลาวบางตัวที่พบน้อยบนป้าย เช่น `ຜ`, `ດ`, `ຕ`, `ພ` ถูกนำมาทำ Synthetic Tilt & Motion Blur จนได้ความแม่นยำแตะ **99.56%**
 
 ---
@@ -134,13 +138,19 @@
   1. หัวน็อตยึดป้าย หรือกรอบป้ายสะท้อนแสง CTC อาจหลอนมองเป็นตัวเลข เช่น ป้ายจริง `กย 588` โดนเติมกลายเป็น `5กย 4588`
   2. ป้ายรถบรรทุก (`70-1737`) ตัวตรวจจับมองขีดกลางเป็นกล่อง แล้ว Classifier ไม่มีคลาสขีดกลาง จึงเดาเป็นพยัญชนะไทย กลายเป็น `70ษย7ม` ซึ่งผิดกฎหมายอย่างสิ้นเชิง
 
-### ✅ ยุคที่ 6 (ปัจจุบัน): Method A+C Unified Spatial-Gated Sequence Alignment & DLT Syntax Guard
-- **ทางออกที่ชนะแบบบูรณาการ:**
-  1. **DLT Syntax Invariant Guard (`has_invalid_thai_consonant_placement`)**: ตรวจสอบโครงสร้างภาษาไทยตามกฎขนส่งทางบก พยัญชนะไทยต้องอยู่ตำแหน่ง 1–3 เท่านั้น และห้ามมีพยัญชนะตามหลังตัวเลข 2 หลัก (รถบรรทุก) หาก Box ผิดไวยากรณ์ ระบบจะปฏิเสธและสลับไปใช้ CTC OCR ทันที
-  2. **Spatial Gap Gating (Method A + C)**: ทุกการแทรกตัวอักษร (Insert) จาก CTC ต้องมี "ช่องว่างทางกายภาพจริง" บนภาพรองรับ:
-     - ป้องกันการเติมน็อตข้างหน้า หากตัวแรกชิดขอบซ้ายอยู่แล้ว
-     - อนุญาตให้เติมท้ายป้ายเมื่อมีที่ว่างขวาเหลือพอ (กู้เลข `7` ที่จางใน `ผว 7697` ได้สำเร็จ)
-     - อนุญาตให้เติมกลางคำเมื่อมีช่องว่างโบ๋ ($Gap \ge 0.48 \times Median\_W$) กู้เลข `1` ที่หลุดตรงกลางได้อย่างแม่นยำ
+### ❌ ยุคที่ 6: Classifier ขาดสมดุล (12 Epochs Imbalanced) และถูก Merged Box กลืน
+- **ปัญหา:**
+  1. ตัวอักษรพบน้อย (`ผ`, `ณ`, `ฬ`) โดนทายสับสนเป็นตัวเลขปิดทึบอย่าง `8` เมื่อเจอสภาพแสงมืดใต้กันชน
+  2. ตัวอักษรที่เขียนชิดกัน (เช่น `97`) Box Detector มักทำนายกล่องกว้าง 1 กล่องครอบ 2 ตัว ($w > 1.6 \times \text{median}$) พอทำ Standard NMS กล่องกว้างที่มี Confidence สูงจะไปกลืนกล่องตัวเลขเดี่ยว 2 ตัวข้างในทิ้ง ทำให้ตัวอักษรขาดหาย
+  3. ป้ายอักษรเดี่ยวโบราณ เช่น `ณ 4100` โดน CTC หลอนเป็นเลข 6 ตัว (`74-0001`) แล้วระบบเลือกลำดับยาวกว่าไปทับ
+
+### ✅ ยุคที่ 7 (สถาปัตยกรรม Production ปัจจุบัน): Production-Grade 50-Class Balanced Engine + Subsumed Box Filter
+- **ทางออกที่ชนะและเสถียรที่สุด:**
+  1. **Balanced 50-Class Dataset & 35-Epoch Cosine Training**: ปรับสมดุลทุกคลาสเป็น $\ge 400$ ภาพ (29,385 ภาพ) พร้อม Photometric Shadow Augmentation ได้ความแม่นยำ **99.58% Val Top-1 / 99.89% Top-3**
+  2. **Subsumed Composite Box Filter**: ตรวจสอบกล่องที่กว้างผิดปกติและครอบกล่องย่อย 2 กล่องไว้ข้างใน โดยระบบจะตัดกล่องรวมทิ้งเพื่อรักษาตัวอักษรเดี่ยวทั้ง 2 ตัวไว้
+  3. **Autocontrast Normalization**: ขยาย Dynamic Range ของ Crop ตัวอักษรที่มีเงาทอดทึบก่อนส่งเข้า Classifier
+  4. **DLT Syntax Placement Guard (`has_invalid_thai_consonant_placement`)**: ล็อคกฎไวยากรณ์ป้ายรถยนต์ส่วนบุคคล ห้ามมีพยัญชนะตามหลังตัวเลข 2 หลัก หรือขึ้นต้นด้วยตัวเลขเดี่ยวแล้วตามด้วยพยัญชนะ (`\d[พยัญชนะ]\d{4}`)
+  5. **Protected Sequence Reconciliation**: ปกป้องป้ายพยัญชนะไทยแท้ เช่น `ณ 4100` หรือ `ผว 7697` ไม่ให้ถูกภาพหลอนป้ายรถบรรทุกสวมรอยทับ
 
 ---
 

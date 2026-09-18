@@ -42,12 +42,12 @@ flowchart TD
 
     S1_WARP --> S15["Stage 1.5: Country / Layout Classifier\n(MobileNetV3-Small / Thai vs Lao / 99.9% Acc)"]
 
-    S15 -->|"🇹🇭 Thai Layout\n(Chars Top / Prov Bottom)"| S2_TH["Stage 2: Thai Component Detector\n(RF-DETR-Small: 'plate_char' & 'province')"]
+    S15 -->|"🇹🇭 Thai Layout\n(Chars Top / Prov Bottom)"| S2_TH["Stage 2: Thai Component Detector\n(D-FINE-Nano / RF-DETR: 'plate_char' & 'province')"]
     S15 -->|"🇱🇦 Lao Layout\n(Prov Top / Chars Bottom)"| S2_LA["Stage 2: Lao Component Extractor\n(Flip-and-Detect Workflow: cv2.flip(0) -> RF-DETR)"]
 
     subgraph STAGE3_TH["Stage 3: Thailand Recognition Pipeline"]
-        S2_TH -->|"plate_char crop"| TH_CHAR_BOX["Model 3A (Box): RF-DETR Char Box Detector\n(Localizes each individual character)"]
-        TH_CHAR_BOX --> TH_CHAR_CLS["Model 3A (Cls): 70-Class Character Classifier\n(Thai Letters ก-ฮ + Digits 0-9)"]
+        S2_TH -->|"plate_char crop"| TH_CHAR_BOX["Model 3A (Box): D-FINE-Small Char Box Detector\n(Localizes each individual character + Subsumed Box Filter)"]
+        TH_CHAR_BOX --> TH_CHAR_CLS["Model 3A (Cls): 50-Class Balanced Character Classifier\n(MobileNetV2: 40 Thai Letters + 10 Digits / 99.58% Val Top-1)"]
         S2_TH -->|"plate_char crop"| TH_OCR["Model 3A (OCR): ResNet18 + BiLSTM + CTC\n(Full Sequence OCR Engine)"]
         TH_CHAR_CLS & TH_OCR --> TH_FUSION["Smart Consonant-Digit Fusion &\nStroke Morphology Disambiguation (ศ vs ผ, ช vs ข)"]
         S2_TH -->|"province crop"| TH_PROV["Model 3B: Thai Province Classifier\n(Grayscale ResNet34: 77 Provincial Classes)"]
@@ -56,7 +56,7 @@ flowchart TD
     subgraph STAGE3_LA["Stage 3: Laos Recognition Pipeline"]
         S2_LA -->|"plate_char crop"| LA_CHAR_BOX["Model 3A: RF-DETR Char Box Detector\n(Localizes character bounding boxes)"]
         LA_CHAR_BOX --> LA_GAP["Spatial Gap Recovery\n(Recovers faint/occluded characters geometrically)"]
-        LA_GAP --> LA_CHAR_CLS["Model 3A: Balanced Lao Character Classifier\n(MobileNetV2: 30 Classes / 99.56% Accuracy)"]
+        LA_GAP --> LA_CHAR_CLS["Model 3A: Balanced Lao Character Classifier\n(MobileNetV2: 34 Classes / 99.56% Accuracy)"]
         S2_LA -->|"province crop"| LA_PROV["Model 3B: Lao Province Classifier\n(Grayscale ResNet18: 18 Provincial Classes)"]
     end
 
@@ -147,8 +147,8 @@ All Model 1 candidates have been trained and benchmarked on identical test sets 
 | **Stage 1.1 (Corner Regressor)**| `plate_corner_regressor_opset18.onnx` | MobileNetV3 Keypoint Regressor | $224 \times 224$ | `[1, 8]` (4 physical corners: $x_1, y_1 \dots x_4, y_4$) | **BSD-3** | ✅ Active (`~3.2ms CPU`) |
 | **Stage 1.5 (Country Cls)** | `country_classifier.pth` | MobileNetV3-Small | $128 \times 128$ | `[1, 2]` (0: Thai, 1: Laos) | **BSD-3** | ✅ Active (`~1.5ms CPU`) |
 | **Stage 2 (Component Detector)**| `component_detector_dfine_nano.pt` | D-FINE-Nano | $320 \times 160$ | `[1, 300, 4]` (`plate_char`, `province`) | **MIT** | ✅ Active (`~18ms CPU`) |
-| **Stage 3A (Char Box Detector)**| `character_box_detector_dfine_nano.pt`| D-FINE-Nano | $160 \times 320$ | `[1, 300, 4]` (Individual character boxes) | **MIT** | ✅ Active (`~16ms CPU`) |
-| **Stage 3A (Thai Char Cls)** | `character_classifier.pth` | MobileNetV2 (50 Classes) | $64 \times 64$ | `[1, 50]` (Thai consonants & digits) | **BSD-3** | ✅ Active (`~1.8ms CPU`) |
+| **Stage 3A (Char Box Detector)**| `character_box_detector_dfine_small.pt` / `character_box_detector_dfine_nano.pt` | D-FINE-Small / D-FINE-Nano | $160 \times 320$ | `[1, 300, 4]` (Individual character boxes + Subsumed Filter) | **MIT** | ✅ Active (`~35ms CPU`) |
+| **Stage 3A (Thai Char Cls)** | `character_classifier.pth` | MobileNetV2 (50 Classes Balanced) | $64 \times 64$ | `[1, 50]` (Thai consonants & digits) | **BSD-3** | ✅ Active (`99.58% Val Top-1 / 99.89% Top-3`) |
 | **Stage 3A (Thai OCR CTC)** | `ocr_model.pth` | ResNet18 + BiLSTM + CTC | $32 \times 256$ | `[T, B, 71]` (CTC sequence logits) | **Apache-2.0** | ✅ Active (`~8.5ms CPU`) |
 | **Stage 3A (Lao Char Cls)** | `character_classifier_lao.pth` / `.onnx`| MobileNetV2 (34 Classes) | $64 \times 64$ | `[1, 34]` (Lao consonants & digits) | **BSD-3** | ✅ Active (`~1.8ms CPU`) |
 | **Stage 3B (Thai Province)** | `province_model_resnet34_grayscale_thai.pth` | Grayscale ResNet34 | $80 \times 256$ | `[1, 77]` (77 Thai Provinces) | **BSD-3** | ✅ Active (`99.10% Val / 98.71% Test Top-1`) |
@@ -179,8 +179,9 @@ class Config:
     MODEL_2_FILENAME = "component_detector_dfine_nano.pt"
 
     # --- Model 3A: Character Box Detector ---
-    #   "character_box_detector_dfine_nano.pt" <- D-FINE Nano (⚡ recommended: MIT, precise localization)
-    MODEL_3A_FILENAME = "character_box_detector_dfine_nano.pt"
+    #   "character_box_detector_dfine_small.pt" <- D-FINE Small (⚡ recommended: MIT, precise localization)
+    #   "character_box_detector_dfine_nano.pt"  <- D-FINE Nano (⚡ lightweight)
+    MODEL_3A_FILENAME = "character_box_detector_dfine_small.pt"
 
     # --- Model 3A: OCR Engine (ResNet-CRNN + CTC) ---
     OCR_FILENAME = "ocr_model.pth"
@@ -277,6 +278,18 @@ python src/train_rfdetr_nano_lao_plate.py  --epochs 30 --export-onnx  # Lao: Lao
 > - All RF-DETR-Nano models train natively on Apple Silicon GPU (`device="mps"`) or CUDA.
 > - Pretrained foundation weights (`rf-detr-nano.pth`) are stored in `~/.roboflow/models/` with MD5 checksum verification.
 > - Fine-tuned checkpoints are safely saved to `weights/` without overwriting existing Small or Base weights.
+
+### 🔤 Balanced Character Classifier Training Suite (MobileNetV2)
+
+Train the 50-class character classifier on an offline-balanced dataset with synthetic photometric shadow augmentations:
+
+```bash
+# 1. Offline Dataset Balancing & Augmentation (Equalize to >= 400 samples/class)
+python src/balance_and_augment_split_dataset.py
+
+# 2. Train 50-Class MobileNetV2 with Cosine Annealing (35 Epochs -> 99.58% Val Top-1)
+python src/train_character_classifier.py --epochs 35 --batch-size 64
+```
 
 ---
 
