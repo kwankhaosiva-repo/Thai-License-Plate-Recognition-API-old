@@ -23,6 +23,10 @@
     isStreaming: false,
     streamPollTimer: null,
     lastUploadedFiles: null, // retained for debug re-upload when toggle is turned ON after upload
+    currentVideoFile: null,
+    videoStreamSource: null,
+    videoStreamTimer: null,
+    streamConfM1: 0.65,
   };
 
 
@@ -38,6 +42,15 @@
   const uploadCountPill = document.getElementById('uploadCountPill');
   const batchGalleryWrapper = document.getElementById('batchGalleryWrapper');
   const batchGallery = document.getElementById('batchGallery');
+
+  // Video Stream Simulation Elements
+  const videoStreamPlayerWrapper = document.getElementById('videoStreamPlayerWrapper');
+  const videoStreamViewer = document.getElementById('videoStreamViewer');
+  const streamFpsBadge = document.getElementById('streamFpsBadge');
+  const streamMotionStatusBadge = document.getElementById('streamMotionStatusBadge');
+  const btnRestartVideoStream = document.getElementById('btnRestartVideoStream');
+  const btnRunBatchVideo = document.getElementById('btnRunBatchVideo');
+  const btnCloseVideoStream = document.getElementById('btnCloseVideoStream');
 
   // RTSP Elements
   const rtspInput = document.getElementById('rtspInput');
@@ -113,6 +126,7 @@
     setupDebugToggle();
     setupDropzone();
     setupRTSPStream();
+    setupVideoStreamControls();
     fetchModelTags();
     // Sync debug state from checkbox on page load (in case browser restores checked state)
     if (debugToggle) {
@@ -182,6 +196,7 @@
       tabUpload.classList.remove('active');
       uploadPanel.style.display = 'none';
       livePanel.style.display = 'block';
+      stopVideoStreamSimulation(true);
     });
   }
 
@@ -275,6 +290,7 @@
 
   // Upload Images (Batch or Single)
   async function uploadImageFiles(files) {
+    stopVideoStreamSimulation(false);
     uploadCountPill.textContent = `${files.length} file${files.length > 1 ? 's' : ''}`;
     metaStatus.textContent = 'Processing...';
     metaStatus.style.color = 'var(--accent-amber)';
@@ -314,10 +330,83 @@
     }
   }
 
-  // Upload Video File
+  // --- Video Real-Time RTSP Stream Simulation ---
   async function uploadVideoFile(videoFile) {
+    state.currentVideoFile = videoFile;
     uploadCountPill.textContent = '1 video';
-    metaStatus.textContent = 'Processing Video...';
+    metaStatus.textContent = 'Initializing Real-Time Stream...';
+    metaStatus.style.color = 'var(--accent-cyan)';
+
+    const formData = new FormData();
+    formData.append('file', videoFile);
+
+    try {
+      const resp = await fetch('/api/stream/upload_video', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!resp.ok) throw new Error(`Server returned HTTP ${resp.status}`);
+      const data = await resp.json();
+
+      state.videoStreamSource = data.stream_source;
+
+      // Switch Dropzone to Live Video Stream Player
+      if (dropzone) dropzone.style.display = 'none';
+      if (batchGalleryWrapper) batchGalleryWrapper.style.display = 'none';
+      if (videoStreamPlayerWrapper) videoStreamPlayerWrapper.style.display = 'block';
+
+      if (streamFpsBadge && data.metadata) {
+        streamFpsBadge.textContent = `${data.metadata.fps} FPS (${data.metadata.duration_sec}s)`;
+      }
+
+      if (videoStreamViewer) {
+        videoStreamViewer.src = `/api/stream/mjpeg?source=${encodeURIComponent(data.stream_source)}&loop=true&debug=${state.isDebug ? 'true' : 'false'}&conf_m1=${state.streamConfM1}&t=${Date.now()}`;
+      }
+
+      metaStatus.textContent = 'RTSP Stream Mock Active';
+      metaStatus.style.color = 'var(--accent-green)';
+
+      // High-frequency polling to continuously update the 4-Stage visual breakdown cards on the right
+      if (state.videoStreamTimer) clearInterval(state.videoStreamTimer);
+      state.videoStreamTimer = setInterval(async () => {
+        try {
+          const detResp = await fetch('/api/stream/latest');
+          if (detResp.ok) {
+            const det = await detResp.json();
+            if (det && det.detected) {
+              renderPipelineResult(det);
+              if (streamMotionStatusBadge) {
+                streamMotionStatusBadge.textContent = '⚡ Car Active (Inferencing)';
+                streamMotionStatusBadge.style.color = 'var(--accent-cyan)';
+                streamMotionStatusBadge.style.background = 'rgba(0, 240, 255, 0.15)';
+                streamMotionStatusBadge.style.borderColor = 'rgba(0, 240, 255, 0.35)';
+              }
+            } else if (streamMotionStatusBadge) {
+              streamMotionStatusBadge.textContent = '🟢 Gate Idle (0ms)';
+              streamMotionStatusBadge.style.color = '#34d399';
+              streamMotionStatusBadge.style.background = 'rgba(16, 185, 129, 0.15)';
+              streamMotionStatusBadge.style.borderColor = 'rgba(16, 185, 129, 0.3)';
+            }
+          }
+        } catch (e) {
+          // ignore transient poll errors
+        }
+      }, 350);
+
+    } catch (err) {
+      console.error('[Video Stream Error]', err);
+      metaStatus.textContent = 'Stream Init Failed';
+      metaStatus.style.color = 'var(--accent-red)';
+      alert(`Could not start real-time video simulation: ${err.message}`);
+      stopVideoStreamSimulation(true);
+    }
+  }
+
+  // Fallback: Batch Scan All Video Frames (Static extraction)
+  async function runBatchVideoExtraction(videoFile) {
+    uploadCountPill.textContent = '1 video';
+    metaStatus.textContent = 'Scanning All Frames...';
     metaStatus.style.color = 'var(--accent-amber)';
 
     const formData = new FormData();
@@ -346,14 +435,70 @@
       if (state.batchResults.length > 0) {
         renderPipelineResult(state.batchResults[0]);
       } else {
-        metaStatus.textContent = 'No plates detected in video';
+        metaStatus.textContent = 'No plates detected in batch scan';
         metaStatus.style.color = 'var(--accent-red)';
       }
     } catch (err) {
-      console.error('[Video Error]', err);
-      metaStatus.textContent = 'Video Error';
+      console.error('[Batch Video Error]', err);
+      metaStatus.textContent = 'Batch Scan Error';
       metaStatus.style.color = 'var(--accent-red)';
-      alert(`Video processing failed: ${err.message}`);
+      alert(`Batch video extraction failed: ${err.message}`);
+    }
+  }
+
+  function stopVideoStreamSimulation(resetDropzone = true) {
+    if (state.videoStreamTimer) {
+      clearInterval(state.videoStreamTimer);
+      state.videoStreamTimer = null;
+    }
+    if (videoStreamViewer) {
+      videoStreamViewer.src = '';
+    }
+    if (videoStreamPlayerWrapper) {
+      videoStreamPlayerWrapper.style.display = 'none';
+    }
+    if (resetDropzone && dropzone) {
+      dropzone.style.display = 'block';
+      uploadCountPill.textContent = '0 files';
+      metaStatus.textContent = 'Ready';
+      metaStatus.style.color = 'var(--accent-green)';
+    }
+    state.videoStreamSource = null;
+  }
+
+  function setupVideoStreamControls() {
+    if (btnRestartVideoStream) {
+      btnRestartVideoStream.addEventListener('click', () => {
+        if (!state.videoStreamSource || !videoStreamViewer) return;
+        videoStreamViewer.src = `/api/stream/mjpeg?source=${encodeURIComponent(state.videoStreamSource)}&loop=true&debug=${state.isDebug ? 'true' : 'false'}&conf_m1=${state.streamConfM1}&t=${Date.now()}`;
+      });
+    }
+
+    const streamConfSlider = document.getElementById('streamConfSlider');
+    const streamConfVal = document.getElementById('streamConfVal');
+    if (streamConfSlider && streamConfVal) {
+      streamConfSlider.addEventListener('input', (e) => {
+        const val = e.target.value;
+        streamConfVal.textContent = `${val}%`;
+        state.streamConfM1 = (parseFloat(val) / 100).toFixed(2);
+      });
+      streamConfSlider.addEventListener('change', () => {
+        if (!state.videoStreamSource || !videoStreamViewer) return;
+        videoStreamViewer.src = `/api/stream/mjpeg?source=${encodeURIComponent(state.videoStreamSource)}&loop=true&debug=${state.isDebug ? 'true' : 'false'}&conf_m1=${state.streamConfM1}&t=${Date.now()}`;
+      });
+    }
+
+    if (btnRunBatchVideo) {
+      btnRunBatchVideo.addEventListener('click', () => {
+        if (!state.currentVideoFile) return;
+        runBatchVideoExtraction(state.currentVideoFile);
+      });
+    }
+
+    if (btnCloseVideoStream) {
+      btnCloseVideoStream.addEventListener('click', () => {
+        stopVideoStreamSimulation(true);
+      });
     }
   }
 

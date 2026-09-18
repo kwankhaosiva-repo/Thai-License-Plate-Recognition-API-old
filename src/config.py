@@ -68,6 +68,16 @@ class Config:
     # --- Model 3B: Lao Province Classifier ---
     MODEL_3B_LAO_FILENAME = "province_model_grayscale_lao.pth"
 
+    # --- Real-Time Stream Video Configuration ---
+    # Model 1 Plate Confidence Threshold for real-time video streams:
+    # Real-time streaming requires a stricter threshold (0.60 - 0.70) than static single-image uploads (0.35)
+    # to completely reject stationary background patterns, road textures, and empty walls.
+    STREAM_CONF_M1 = 0.65
+    STREAM_MIN_VEHICLE_AREA = 1800
+    STREAM_TARGET_SAMPLES = 2   # Initial lock-on (2 frames) to begin vehicle aggregation session
+    STREAM_SESSION_SEC = 5.0    # 5-second tracking & aggregation window: accumulates and averages frames of the same plate into 1 result
+    STREAM_COOLDOWN_SEC = 5.0   # 5-second debounce window to prevent duplicate records for the same passing vehicle
+
     # ============================================================
     # (No need to edit below unless you know what you're doing)
     # ============================================================

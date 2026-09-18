@@ -231,8 +231,8 @@ def determine_pattern_name(text: str, country: str = "Thai") -> str:
     if PATTERN_NN_NNNN.match(clean) or re.match(r"^\d{2}-\d{4}$", clean) or re.match(r"^\d{6}$", clean):
         return "NN-NNNN (Truck/Transport)"
     if PATTERN_NNNNN.match(clean):
-        # Disambiguate DLT commercial series (70-99) which are strictly 6-digit trucks/buses
-        if len(clean) == 5 and re.match(r"^[7-9]\d", clean):
+        # Disambiguate DLT commercial series (10-99) which are strictly 6-digit trucks/buses
+        if len(clean) == 5 and re.match(r"^[1-9]\d", clean):
             return "NN-NNNN (Truck/Transport, Incomplete 5/6)"
         return "NNNNN (Official/Govt)"
     return "Custom / Unstandardized"
@@ -642,9 +642,9 @@ def select_best_truck_6_digits(char_boxes_detail: list, crop_w: int, crop_h: int
 
         conf_score = sum(probs) / 6.0
 
-        # Prefix bonus: In Thailand, commercial trucks/buses strictly use 70-99 or 10-19
+        # Prefix bonus: In Thailand, commercial trucks/buses use categories 10-99 under Land Transport Act
         prefix_val = int(chars[0] + chars[1])
-        is_valid_truck_prefix = (70 <= prefix_val <= 99 or 10 <= prefix_val <= 19)
+        is_valid_truck_prefix = (10 <= prefix_val <= 99)
         prefix_bonus = 30.0 if is_valid_truck_prefix else -30.0
 
         # Baseline alignment penalty
@@ -1268,6 +1268,7 @@ class LPRPipelineService:
         debug: bool = False,
         conf_m1: float = 0.35,
         conf_m2: float = 0.25,
+        allow_low_conf_recovery: bool = True,
     ) -> Dict[str, Any]:
         """
         Executes the end-to-end multi-country recognition pipeline on an OpenCV BGR image:
@@ -1300,10 +1301,11 @@ class LPRPipelineService:
             res1 = self.model_plate(img_bgr, imgsz=m1_imgsz, conf=conf_m1, verbose=False)[0]
 
         # Low-light & high-sensitivity recovery:
-        # If no plate detected at default threshold, try lower confidence (conf=0.20)
-        # Use imgsz=640 for smaller images or RT-DETR to avoid interpolation artifacts
+        # Only attempted for static single-image uploads with low threshold (conf_m1 < 0.45).
+        # Disabled in real-time video streams to prevent ghost triggers on road/barrier textures.
+        allow_recovery = allow_low_conf_recovery and (conf_m1 < 0.45)
         sens_imgsz = 640 if (is_rtdetr_m1 or (w_orig <= 800 and h_orig <= 800)) else 1280
-        if len(res1.boxes) == 0:
+        if allow_recovery and len(res1.boxes) == 0:
             try:
                 res1_sens = self.model_plate(img_bgr, imgsz=sens_imgsz, conf=0.20, verbose=False, device=self.device)[0]
                 if len(res1_sens.boxes) > 0:
@@ -1312,7 +1314,7 @@ class LPRPipelineService:
                 pass
 
         # Always attempt CLAHE luminance enhancement if raw image returned 0 plate candidates
-        if len(res1.boxes) == 0:
+        if allow_recovery and len(res1.boxes) == 0:
             try:
                 lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
                 l, a, b = cv2.split(lab)
@@ -1332,6 +1334,7 @@ class LPRPipelineService:
         quad_corners = None
         poly_points = None
         plate_conf = 0.0
+        bx1, by1, bx2, by2 = 0, 0, w_orig, h_orig
 
         if len(res1.boxes) == 0:
             # Fallback ONLY for genuine pre-cropped edge-to-edge license plate images
@@ -1374,62 +1377,65 @@ class LPRPipelineService:
                     candidates.append([x1, y1, x2, y2, c_conf, idx])
 
             if not candidates:
-                confidences = res1.boxes.conf.cpu().numpy()
-                best_idx = int(np.argmax(confidences))
-                plate_conf = float(confidences[best_idx])
-                bx1, by1, bx2, by2 = res1.boxes.xyxy[best_idx].cpu().numpy().astype(int)
-            else:
-                # 1. Check for enclosing parent boxes:
-                # If Candidate A encloses Candidate B (e.g. area(A) > 1.35 * area(B) and B is inside A):
-                # Candidate A is the complete license plate, Candidate B is just a sub-slice (e.g. a row of characters)!
-                # Prefer the enclosing parent box A if conf(A) >= 0.25!
-                enclosing_map = {}
-                for i, c_i in enumerate(candidates):
-                    box_i = c_i[:4]
-                    area_i = (box_i[2] - box_i[0]) * (box_i[3] - box_i[1])
-                    for j, c_j in enumerate(candidates):
-                        if i == j:
-                            continue
-                        box_j = c_j[:4]
-                        area_j = (box_j[2] - box_j[0]) * (box_j[3] - box_j[1])
-                        # Intersection
-                        ix1 = max(box_i[0], box_j[0])
-                        iy1 = max(box_i[1], box_j[1])
-                        ix2 = min(box_i[2], box_j[2])
-                        iy2 = min(box_i[3], box_j[3])
-                        inter_area = max(0, ix2 - ix1) * max(0, iy2 - iy1)
-                        if inter_area / float(max(area_j, 1)) > 0.70 and area_i > 1.35 * area_j:
-                            if c_i[4] >= 0.25:
-                                enclosing_map[c_j[5]] = c_i[5]
+                return {
+                    "detected": False,
+                    "message": "No valid license plate candidates matching standard aspect ratio",
+                    "timing": {"m1_ms": t_m1, "country_ms": 0, "m2_ms": 0, "m3_ms": 0, "total_ms": int((time.time() - t_start) * 1000)},
+                    "raw_preview": mat_to_base64(preview_bgr),
+                    "debug": None,
+                }
 
-                # Filter out sub-slice candidates
-                filtered_candidates = [c for c in candidates if c[5] not in enclosing_map]
-                if not filtered_candidates:
-                    filtered_candidates = candidates
-                filtered_candidates.sort(key=lambda item: item[4], reverse=True)
-                best_c = filtered_candidates[0]
-                final_box = [best_c[0], best_c[1], best_c[2], best_c[3]]
-                plate_conf = best_c[4]
-                best_idx = best_c[5]
+            # 1. Check for enclosing parent boxes:
+            # If Candidate A encloses Candidate B (e.g. area(A) > 1.35 * area(B) and B is inside A):
+            # Candidate A is the complete license plate, Candidate B is just a sub-slice (e.g. a row of characters)!
+            # Prefer the enclosing parent box A if conf(A) >= 0.25!
+            enclosing_map = {}
+            for i, c_i in enumerate(candidates):
+                box_i = c_i[:4]
+                area_i = (box_i[2] - box_i[0]) * (box_i[3] - box_i[1])
+                for j, c_j in enumerate(candidates):
+                    if i == j:
+                        continue
+                    box_j = c_j[:4]
+                    area_j = (box_j[2] - box_j[0]) * (box_j[3] - box_j[1])
+                    # Intersection
+                    ix1 = max(box_i[0], box_j[0])
+                    iy1 = max(box_i[1], box_j[1])
+                    ix2 = min(box_i[2], box_j[2])
+                    iy2 = min(box_i[3], box_j[3])
+                    inter_area = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+                    if inter_area / float(max(area_j, 1)) > 0.70 and area_i > 1.35 * area_j:
+                        if c_i[4] >= 0.25:
+                            enclosing_map[c_j[5]] = c_i[5]
 
-                # Merge split or overlapping horizontal sub-boxes on the same plate (e.g. truck plates with wide hyphen or sub-boxes)
-                for other in filtered_candidates[1:]:
-                    y_overlap = max(0, min(final_box[3], other[3]) - max(final_box[1], other[1]))
-                    min_h = min(final_box[3] - final_box[1], other[3] - other[1])
-                    if y_overlap / float(max(min_h, 1)) > 0.4:
-                        x_overlap = max(0, min(final_box[2], other[2]) - max(final_box[0], other[0]))
-                        x_dist = max(0, max(final_box[0], other[0]) - min(final_box[2], other[2]))
-                        if x_overlap > 0 or x_dist < min_h * 1.0:
-                            final_box[0] = min(final_box[0], other[0])
-                            final_box[1] = min(final_box[1], other[1])
-                            final_box[2] = max(final_box[2], other[2])
-                            final_box[3] = max(final_box[3], other[3])
-                            plate_conf = max(plate_conf, other[4])
-                            # If the other candidate is wider (more complete plate), prefer its mask index
-                            if (other[2] - other[0]) > (best_c[2] - best_c[0]):
-                                best_idx = other[5]
+            # Filter out sub-slice candidates
+            filtered_candidates = [c for c in candidates if c[5] not in enclosing_map]
+            if not filtered_candidates:
+                filtered_candidates = candidates
+            filtered_candidates.sort(key=lambda item: item[4], reverse=True)
+            best_c = filtered_candidates[0]
+            final_box = [best_c[0], best_c[1], best_c[2], best_c[3]]
+            plate_conf = best_c[4]
+            best_idx = best_c[5]
 
-                bx1, by1, bx2, by2 = final_box
+            # Merge split or overlapping horizontal sub-boxes on the same plate (e.g. truck plates with wide hyphen or sub-boxes)
+            for other in filtered_candidates[1:]:
+                y_overlap = max(0, min(final_box[3], other[3]) - max(final_box[1], other[1]))
+                min_h = min(final_box[3] - final_box[1], other[3] - other[1])
+                if y_overlap / float(max(min_h, 1)) > 0.4:
+                    x_overlap = max(0, min(final_box[2], other[2]) - max(final_box[0], other[0]))
+                    x_dist = max(0, max(final_box[0], other[0]) - min(final_box[2], other[2]))
+                    if x_overlap > 0 or x_dist < min_h * 1.0:
+                        final_box[0] = min(final_box[0], other[0])
+                        final_box[1] = min(final_box[1], other[1])
+                        final_box[2] = max(final_box[2], other[2])
+                        final_box[3] = max(final_box[3], other[3])
+                        plate_conf = max(plate_conf, other[4])
+                        # If the other candidate is wider (more complete plate), prefer its mask index
+                        if (other[2] - other[0]) > (best_c[2] - best_c[0]):
+                            best_idx = other[5]
+
+            bx1, by1, bx2, by2 = final_box
 
             bx1, by1 = max(0, bx1), max(0, by1)
             bx2, by2 = min(w_orig, bx2), min(h_orig, by2)
@@ -1501,6 +1507,19 @@ class LPRPipelineService:
 
         rh, rw = rectified_plate.shape[:2]
 
+        # Texture & Contrast check: Real plates have high-contrast embossed/printed text on a reflective plate.
+        # A completely blank white/grey surface (empty wall, kerb, barrier) has near-zero standard deviation (std < 11.0).
+        gray_plate = cv2.cvtColor(rectified_plate, cv2.COLOR_BGR2GRAY)
+        plate_std = float(np.std(gray_plate))
+        if plate_std < 11.0:
+            return {
+                "detected": False,
+                "message": "Candidate patch lacks contrast / texture (empty background / wall)",
+                "timing": {"m1_ms": t_m1, "country_ms": 0, "m2_ms": 0, "m3_ms": 0, "total_ms": int((time.time() - t_start) * 1000)},
+                "raw_preview": mat_to_base64(preview_bgr),
+                "debug": None,
+            }
+
         # --- Stage 1.5: Country Classifier (Thai vs Laos) ---
         tc_start = time.time()
         country_name, country_conf = self.classify_country(rectified_plate)
@@ -1541,15 +1560,18 @@ class LPRPipelineService:
                         if by1 < int(rh * 0.65):
                             bw_char = bx2 - bx1
                             bh_char = by2 - by1
-                            # Safety margin padding to prevent clipping boundary characters (e.g. '1' at right edge)
-                            pad_cx = min(16, max(4, int(bw_char * 0.05)))
-                            pad_cy = min(8, max(2, int(bh_char * 0.06)))
-                            cx1 = max(0, bx1 - pad_cx)
-                            cx2 = min(rw, bx2 + pad_cx)
-                            cy1 = max(0, by1 - pad_cy)
-                            cy2 = min(int(rh * 0.72), by2 + pad_cy)
+                            # Natural, tight padding: avoids capturing outer plate frame borders or province text
+                            pad_cx = min(8, max(2, int(bw_char * 0.03)))
+                            pad_cy = min(6, max(2, int(bh_char * 0.04)))
+
+                            # Inset from outer plate frame borders to reject black frame strips
+                            cx1 = max(int(rw * 0.03), bx1 - pad_cx)
+                            cx2 = min(int(rw * 0.97), bx2 + pad_cx)
+                            cy1 = max(int(rh * 0.02), by1 - pad_cy)
+                            cy2 = min(int(rh * 0.68), by2 + pad_cy)
                             char_crop = rectified_plate[cy1:cy2, cx1:cx2]
-                            char_box_coords = (cx1, cy1, cx2, cy2)
+                            # Use genuine raw detection box for overlay (never stretched visually):
+                            char_box_coords = (bx1, by1, bx2, by2)
                             char_conf = c_conf
                     elif "prov" in c_name and (c_conf > prov_conf):
                         # Thai Province text is strictly located in the lower half (y > 0.45*rh)
@@ -1558,8 +1580,8 @@ class LPRPipelineService:
                             bw = bx2 - bx1
                             bh_box = by2 - by1
                             # Modest, symmetric padding to maintain natural text centering
-                            pad_x = min(12, max(4, int(bw * 0.06)))
-                            pad_y = min(6, max(3, int(bh_box * 0.08)))
+                            pad_x = min(14, max(6, int(bw * 0.08)))
+                            pad_y = min(8, max(4, int(bh_box * 0.10)))
 
                             px1 = max(0, bx1 - pad_x)
                             px2 = min(rw, bx2 + pad_x)
@@ -1571,8 +1593,8 @@ class LPRPipelineService:
                             prov_conf = c_conf
 
             if char_crop is None:
-                char_crop = rectified_plate[0 : int(rh * 0.68), 0:rw]
-                char_box_coords = (0, 0, rw, int(rh * 0.68))
+                char_crop = rectified_plate[0 : int(rh * 0.75), 0:rw]
+                char_box_coords = (0, 0, rw, int(rh * 0.75))
                 char_conf = 0.50
             if prov_crop is None:
                 prov_crop = rectified_plate[int(rh * 0.60) : int(rh * 0.98), int(rw * 0.12) : int(rw * 0.88)]
@@ -1692,35 +1714,76 @@ class LPRPipelineService:
                         continue
                     if bx2 >= crop_w - 2 and bw < 12:
                         continue
+                    # Filter out thin outer frame border lines (e.g. black frame detected as 'ฉ')
+                    if bx1 <= 10 and (bh / max(1, bw)) >= 1.8 and bw < 18:
+                        continue
+                    if bx2 >= crop_w - 10 and (bh / max(1, bw)) >= 1.8 and bw < 18:
+                        continue
                     raw_boxes.append((bx1, by1, bx2, by2, bconf))
 
-                # 1. Filter out merged composite boxes that subsume smaller individual character boxes
-                non_merged_boxes = []
+                # 1. Filter out merged composite boxes and sub-stroke fragments
+                # A: Suppress sub-stroke boxes that are fully inside a larger normal character box
+                valid_boxes = []
                 for b in raw_boxes:
                     bx1, by1, bx2, by2, bconf = b
                     bw = bx2 - bx1
+                    # If this box is a narrow sub-stroke inside another wider box, suppress it!
+                    is_substroke = False
+                    for other in raw_boxes:
+                        if other == b:
+                            continue
+                        ox1, oy1, ox2, oy2, oconf = other
+                        ow = ox2 - ox1
+                        # If 'other' encloses 'b' horizontally and 'other' is substantially wider
+                        if bx1 >= ox1 - 3 and bx2 <= ox2 + 3 and bw < 0.70 * ow:
+                            is_substroke = True
+                            break
+                    if not is_substroke:
+                        valid_boxes.append(b)
+
+                # B: Filter out giant composite boxes that subsume multiple individual character boxes
+                non_merged_boxes = []
+                for b in valid_boxes:
+                    bx1, by1, bx2, by2, bconf = b
+                    bw = bx2 - bx1
                     subsumed = [
-                        o for o in raw_boxes
+                        o for o in valid_boxes
                         if o != b and o[0] >= bx1 - 6 and o[2] <= bx2 + 6 and (o[2] - o[0]) < 0.75 * bw
                     ]
-                    if len(subsumed) >= 2 or (len(subsumed) == 1 and bw > 55):
+                    if len(subsumed) >= 2 or (len(subsumed) == 1 and bw > 52):
                         continue
                     non_merged_boxes.append(b)
 
-                # 2. Horizontal NMS / Deduplication (suppress duplicate detections of the same character)
+                # 2. Horizontal NMS / Deduplication & Merge Adjacent Split Halves
                 non_merged_boxes.sort(key=lambda x: x[4], reverse=True)
                 kept_boxes = []
                 for b in non_merged_boxes:
                     bx1, by1, bx2, by2, bconf = b
                     bw = bx2 - bx1
+                    b_cx = (bx1 + bx2) / 2.0
                     overlap = False
-                    for kb in kept_boxes:
-                        kx1, ky1, kx2, ky2, _ = kb
+                    for idx_k, kb in enumerate(kept_boxes):
+                        kx1, ky1, kx2, ky2, kconf = kb
                         kw = kx2 - kx1
+                        k_cx = (kx1 + kx2) / 2.0
                         inter_x = max(0, min(bx2, kx2) - max(bx1, kx1))
                         min_w = min(bw, kw)
-                        if min_w > 0 and (inter_x / min_w) > 0.45:
+                        center_dist = abs(b_cx - k_cx)
+
+                        # If boxes heavily overlap OR their centers are too close (< 18px):
+                        # In Thai license plates, distinct characters are at least 24-38px apart center-to-center.
+                        # Centers < 18px means one character was split into two adjacent fragments (e.g. left body and right stem of 'ศ')!
+                        if (min_w > 0 and (inter_x / min_w) > 0.40) or (center_dist < 18.0 and (bw < 20 or kw < 20)):
                             overlap = True
+                            # Merge into the wider bounding box to cover the whole character
+                            merged_b = (
+                                min(bx1, kx1),
+                                min(by1, ky1),
+                                max(bx2, kx2),
+                                max(by2, ky2),
+                                max(bconf, kconf),
+                            )
+                            kept_boxes[idx_k] = merged_b
                             break
                     if not overlap:
                         kept_boxes.append(b)
@@ -1771,7 +1834,6 @@ class LPRPipelineService:
                             "prob": round(char_p * 100, 1),
                             "box": [bx1, by1, bx2, by2],
                         })
-                    cv2.rectangle(char_box_overlay, (bx1, by1), (bx2, by2), (0, 255, 0), 2)
                 t_m3_char_cls = int((time.time() - t_ccls_start) * 1000)
 
                 # Positional gating for Thai private car plate prefix:
@@ -1785,8 +1847,53 @@ class LPRPipelineService:
                     if len(chars_predicted) > 0:
                         chars_predicted[0] = winner
 
-                # Render Thai and numeric characters with PIL TrueType font
+                # Syntax invariant: Thai license plates NEVER have 3 consecutive consonants (e.g. 'ฉญฌ 3296').
+                # Valid patterns are CC (2 consonants), NCC (1 digit + 2 consonants), or C (1 consonant).
+                # If 3 consonants appear, the leftmost character touching the border is an outer frame artifact:
+                if len(char_boxes_detail) >= 4 and len(chars_predicted) >= 4:
+                    c0, c1, c2 = chars_predicted[0], chars_predicted[1], chars_predicted[2]
+                    thai_c = r"[\u0E01-\u0E2E]"
+                    if re.match(thai_c, c0) and re.match(thai_c, c1) and re.match(thai_c, c2):
+                        if char_boxes_detail[0]["box"][0] <= 20:
+                            char_boxes_detail.pop(0)
+                            chars_predicted.pop(0)
+
+                # Suppress split-stroke artifact digit sandwiched between two Thai consonants (e.g. ['ศ', '1', 'ฎ']):
+                # Under DLT syntax, a Thai plate NEVER has a digit sandwiched between two consonants.
+                # If any digit appears between two consonants, it is an artifact of a split character stroke.
+                k = 0
+                while k < len(char_boxes_detail) - 2 and len(chars_predicted) >= 3:
+                    c0 = chars_predicted[k]
+                    c1 = chars_predicted[k + 1]
+                    c2 = chars_predicted[k + 2]
+                    if re.match(r"[\u0E01-\u0E2E]", c0) and c1.isdigit() and re.match(r"[\u0E01-\u0E2E]", c2):
+                        b0 = char_boxes_detail[k]["box"]
+                        b1 = char_boxes_detail[k + 1]["box"]
+                        b2 = char_boxes_detail[k + 2]["box"]
+                        # Merge the split stroke into whichever adjacent consonant it is closer to:
+                        d_prev = abs(b1[0] - b0[2])
+                        d_next = abs(b2[0] - b1[2])
+                        if d_prev <= d_next:
+                            char_boxes_detail[k]["box"][0] = min(b0[0], b1[0])
+                            char_boxes_detail[k]["box"][1] = min(b0[1], b1[1])
+                            char_boxes_detail[k]["box"][2] = max(b0[2], b1[2])
+                            char_boxes_detail[k]["box"][3] = max(b0[3], b1[3])
+                        else:
+                            char_boxes_detail[k + 2]["box"][0] = min(b1[0], b2[0])
+                            char_boxes_detail[k + 2]["box"][1] = min(b1[1], b2[1])
+                            char_boxes_detail[k + 2]["box"][2] = max(b1[2], b2[2])
+                            char_boxes_detail[k + 2]["box"][3] = max(b1[3], b2[3])
+                        char_boxes_detail.pop(k + 1)
+                        chars_predicted.pop(k + 1)
+                        continue
+                    k += 1
+
+                # Render Thai and numeric characters with bounding boxes on char_box_overlay
                 if char_box_overlay is not None and len(char_boxes_detail) > 0:
+                    for item in char_boxes_detail:
+                        cbx1, cby1, cbx2, cby2 = item["box"]
+                        cv2.rectangle(char_box_overlay, (cbx1, cby1), (cbx2, cby2), (0, 255, 0), 2)
+
                     pil_overlay = Image.fromarray(cv2.cvtColor(char_box_overlay, cv2.COLOR_BGR2RGB))
                     draw_c = ImageDraw.Draw(pil_overlay)
                     f_size = max(13, min(20, int(char_box_overlay.shape[0] * 0.28)))
@@ -1999,7 +2106,7 @@ class LPRPipelineService:
             )
 
             clean_fmt = formatted_plate_text.replace("-", "").replace(" ", "")
-            is_truncated_truck = is_truck_candidate and len(clean_fmt) == 5 and bool(re.match(r"^[7-9]\d", clean_fmt))
+            is_truncated_truck = is_truck_candidate and len(clean_fmt) == 5 and bool(re.match(r"^[1-9]\d", clean_fmt))
 
             if is_truck_candidate and (not is_valid_plate(formatted_plate_text) or len(clean_fmt) > 6 or is_truncated_truck):
                 best_truck_text = select_best_truck_6_digits(char_boxes_detail, crop_w, char_crop.shape[0])
@@ -2007,6 +2114,9 @@ class LPRPipelineService:
                     formatted_plate_text = best_truck_text
                 elif valid_ctc or re.match(r"^\d{2}-\d{4}$", fmt_ctc) or re.match(r"^\d{6}$", clean_ctc):
                     formatted_plate_text = fmt_ctc
+
+            # Ensure finalized plate text adheres to canonical formatting (e.g. NN-NNNN with hyphen)
+            formatted_plate_text = format_thai_plate(formatted_plate_text)
 
             # Build alternative formatted plate text if ambiguity exists
             if len(alt_candidates) > 0:
@@ -2021,6 +2131,11 @@ class LPRPipelineService:
                         alt_raw_list.append(alt_map.get(c_idx, c))
                         c_idx += 1
                 formatted_alt_plate_text = format_thai_plate("".join(alt_raw_list))
+
+            # Canonical hyphen enforcement for truck/transport plates:
+            clean_digits = formatted_plate_text.replace("-", "").replace(" ", "")
+            if len(clean_digits) == 6 and clean_digits.isdigit():
+                formatted_plate_text = f"{clean_digits[:2]}-{clean_digits[2:]}"
 
             is_valid = is_valid_plate(formatted_plate_text)
             pattern_name = determine_pattern_name(formatted_plate_text, country="Thai")
@@ -2403,6 +2518,8 @@ class LPRPipelineService:
             "alternative_plate_text": formatted_alt_plate_text,
             "alternative_candidates": alt_candidates,
             "is_ambiguous": is_ambiguous,
+            "plate_box": [int(bx1), int(by1), int(bx2), int(by2)],
+            "plate_corners": quad_corners.tolist() if quad_corners is not None else None,
             "char_box_text": char_box_text,
             "char_boxes": char_boxes_detail,
             "char_box_status": char_box_status,
@@ -2820,26 +2937,123 @@ async def detect_video_endpoint(
     }
 
 
+STREAM_UPLOAD_DIR = PROJECT_ROOT / "output" / "stream_uploads"
+STREAM_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+
+@app.post("/api/stream/upload_video")
+async def upload_video_for_stream(
+    file: UploadFile = File(...),
+    conf_m1: float = Form(0.65),
+):
+    """
+    Saves an uploaded video file to streamable storage and initializes real-time RTSP simulation.
+    """
+    import uuid
+    import urllib.parse
+
+    suffix = Path(file.filename or "video.mp4").suffix or ".mp4"
+    stream_id = f"stream_{uuid.uuid4().hex[:8]}"
+    safe_name = re.sub(r"[^\w\.-]", "_", Path(file.filename or "video.mp4").name)
+    out_path = STREAM_UPLOAD_DIR / f"{stream_id}_{safe_name}"
+
+    content = await file.read()
+    with open(out_path, "wb") as f:
+        f.write(content)
+
+    cap = cv2.VideoCapture(str(out_path))
+    if not cap.isOpened():
+        if out_path.exists():
+            out_path.unlink()
+        raise HTTPException(status_code=400, detail="Could not decode uploaded video file")
+
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+    duration_sec = round(total_frames / max(fps, 1.0), 2)
+    cap.release()
+
+    return {
+        "status": "success",
+        "stream_id": stream_id,
+        "filename": file.filename,
+        "stream_source": str(out_path),
+        "stream_url": f"/api/stream/mjpeg?source={urllib.parse.quote(str(out_path))}&loop=true&conf_m1={conf_m1}",
+        "metadata": {
+            "fps": round(fps, 1),
+            "total_frames": total_frames,
+            "duration_sec": duration_sec,
+            "resolution": f"{w}x{h}",
+        },
+    }
+
+
 class RTSPLPRProcessor:
     """
     Industrial-Grade Rain-Proof Motion Gated LPR Stream Processor:
     1. Rain & Noise Filtering: Heavy 15x15 Gaussian Blur + Downscaled Background Subtraction (MOG2)
     2. Morphological Opening (5x5) to eliminate high-frequency rain streaks & splashing
-    3. Vehicle-Sized Blob Thresholding: Gates heavy AI inference (skips stationary/empty frames)
-    4. Multi-Frame Rolling Buffer (3-5 frames) when vehicle passes
-    5. Majority Voting on plate text & province + Confidence Score Averaging
-    6. Debounce Cooldown (prevents duplicate reads of same passing car)
+    3. Vehicle-Sized Blob Thresholding: Gates heavy AI inference (skips stationary/empty frames, 0ms latency)
+    4. 5-Second Vehicle Tracking & Session Aggregation:
+       - Associates all detections belonging to the same passing vehicle ("bring to the same plate")
+       - Accumulates multi-frame readings across a continuous 5.0-second tracking duration
+       - Averages character votes, province classification, and confidences into 1 consolidated result ("avg result to 1")
+       - Saves exactly 1 clean record to history per vehicle event
+    5. Strict Content Verification: Discards empty backgrounds, walls, and hallucinated noise
     """
-    def __init__(self, pipeline_service, min_vehicle_area: int = 4000, cooldown_sec: float = 2.0, target_samples: int = 3):
+    def __init__(
+        self,
+        pipeline_service,
+        min_vehicle_area: int = 1800,
+        cooldown_sec: float = 5.0,
+        session_duration_sec: float = 5.0,
+        target_samples: int = 2,
+        conf_m1: float = 0.65,
+    ):
         self.pipeline = pipeline_service
         self.min_vehicle_area = min_vehicle_area
         self.cooldown_sec = cooldown_sec
+        self.session_duration_sec = session_duration_sec
         self.target_samples = target_samples
+        self.conf_m1 = conf_m1
         self.last_emit_time = 0.0
-        self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(history=300, varThreshold=25, detectShadows=False)
-        self.frame_buffer: List[Dict[str, Any]] = []
+        self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(history=200, varThreshold=25, detectShadows=False)
+        self.session_buffer: List[Dict[str, Any]] = []
+        self.session_start_time = 0.0
+        self.session_anchor_plate: Optional[str] = None
+        self.session_saved = False
         self.last_consolidated: Optional[Dict[str, Any]] = None
         self.frame_idx = 0
+
+    def reset(self):
+        self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(history=200, varThreshold=25, detectShadows=False)
+        self.session_buffer.clear()
+        self.session_start_time = 0.0
+        self.session_anchor_plate = None
+        self.session_saved = False
+        self.last_consolidated = None
+        self.frame_idx = 0
+        self.last_emit_time = 0.0
+
+    def _is_same_plate(self, text_a: str, text_b: str) -> bool:
+        if not text_a or not text_b:
+            return True
+        c_a = text_a.strip().replace(" ", "").replace("-", "")
+        c_b = text_b.strip().replace(" ", "").replace("-", "")
+        if c_a == c_b:
+            return True
+        # Matching registration digits (e.g. '3296' in both 'ญณ 3296' and 'ฉญฌ 3296')
+        d_a = "".join(ch for ch in c_a if ch.isdigit())
+        d_b = "".join(ch for ch in c_b if ch.isdigit())
+        if d_a and d_b and (d_a == d_b or (len(d_a) >= 3 and d_a in d_b) or (len(d_b) >= 3 and d_b in d_a)):
+            return True
+        # Small edit distance (<= 2 differences due to camera motion/lighting)
+        try:
+            import editdistance
+            return editdistance.eval(c_a, c_b) <= 2
+        except Exception:
+            return False
 
     def detect_vehicle_motion(self, frame: np.ndarray) -> bool:
         """
@@ -2861,7 +3075,7 @@ class RTSPLPRProcessor:
 
         contours, _ = cv2.findContours(clean_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         scale_factor = (640.0 * 360.0) / float(max(w * h, 1))
-        target_area = self.min_vehicle_area * scale_factor
+        target_area = max(400, int(self.min_vehicle_area * scale_factor))
 
         for cnt in contours:
             if cv2.contourArea(cnt) >= target_area:
@@ -2870,46 +3084,106 @@ class RTSPLPRProcessor:
 
     def process_stream_frame(self, frame: np.ndarray, debug: bool = False):
         """
-        Processes a stream frame with motion gating and 3-5 frame confidence aggregation.
+        Processes a stream frame with 5-second session tracking and confidence averaging into 1 result.
         Returns: (result_dict, is_confirmed_event, has_motion)
         """
         now = time.time()
         has_motion = self.detect_vehicle_motion(frame)
 
-        # Within cooldown: keep displaying confirmed vehicle detection
-        if (now - self.last_emit_time) < self.cooldown_sec and self.last_consolidated:
-            return self.last_consolidated, False, has_motion
+        # Check if the active 5-second session has expired:
+        if self.session_start_time > 0 and (now - self.session_start_time) > self.session_duration_sec:
+            self.session_buffer.clear()
+            self.session_start_time = 0.0
+            self.session_anchor_plate = None
+            self.session_saved = False
 
-        # No vehicle motion: skip heavy neural networks, save compute resources
+        # Within cooldown: keep displaying confirmed vehicle detection if road is idle
+        if self.last_consolidated and (now - self.last_emit_time) < self.cooldown_sec:
+            if not has_motion:
+                return self.last_consolidated, False, False
+
+        # No vehicle motion: skip neural inference
         if not has_motion:
-            if len(self.frame_buffer) > 0 and (now - self.last_emit_time) > 1.0:
-                self.frame_buffer.clear()
+            if (now - self.last_emit_time) > self.cooldown_sec:
+                return None, False, False
             return self.last_consolidated, False, False
 
-        # Vehicle motion detected: run LPR pipeline on this frame
+        # Vehicle motion detected: run LPR pipeline with strict stream threshold
+        current_res = None
         if self.pipeline is not None:
-            res = self.pipeline.process_image(frame, debug=debug)
+            res = self.pipeline.process_image(
+                frame,
+                debug=debug,
+                conf_m1=self.conf_m1,
+                allow_low_conf_recovery=False,
+            )
             if res.get("detected"):
-                self.frame_buffer.append(res)
+                p_text = res.get("plate_text", "").replace(" ", "").replace("-", "")
+                p_conf = res.get("confidence", {}).get("plate_detection", 0.0)
+                char_cnt = len(res.get("char_boxes", []))
+                is_valid = res.get("is_valid", False)
 
-        # When buffer accumulates 3 to 5 frames, consolidate via majority voting & confidence averaging
-        if len(self.frame_buffer) >= self.target_samples:
-            consolidated = self.aggregate_buffer(self.frame_buffer)
-            if consolidated:
-                self.last_consolidated = consolidated
-                self.last_emit_time = now
-                if self.pipeline is not None:
-                    self.pipeline.latest_stream_detection = consolidated
-            self.frame_buffer.clear()
-            return consolidated, True, True
+                is_genuine_plate = (
+                    p_conf >= self.conf_m1
+                    and len(p_text) >= 2
+                    and (char_cnt >= 2 or is_valid)
+                )
 
-        preview_res = self.frame_buffer[-1] if self.frame_buffer else self.last_consolidated
+                if is_genuine_plate:
+                    current_res = res
+                    raw_plate = res.get("plate_text", "")
+
+                    # Determine if this belongs to the active 5-second vehicle session ("bring to the same plate")
+                    in_active_window = (self.session_start_time > 0) and ((now - self.session_start_time) <= self.session_duration_sec)
+                    is_same_car = in_active_window and self._is_same_plate(raw_plate, self.session_anchor_plate or "")
+
+                    if is_same_car:
+                        self.session_buffer.append(res)
+                    else:
+                        # New passing vehicle: start a fresh 5-second session
+                        self.session_start_time = now
+                        self.session_anchor_plate = raw_plate
+                        self.session_buffer = [res]
+                        self.session_saved = False
+
+                    # Consolidate and average across all captures within the 5-second window into 1 result
+                    if len(self.session_buffer) >= self.target_samples:
+                        consolidated = self.aggregate_buffer(self.session_buffer)
+                        if consolidated:
+                            consolidated["session_duration"] = f"{round(min(self.session_duration_sec, now - self.session_start_time), 1)}s / 5.0s"
+                            self.last_consolidated = consolidated
+                            self.last_emit_time = now
+                            if self.pipeline is not None:
+                                self.pipeline.latest_stream_detection = consolidated
+
+                            # Save exactly 1 clean entry to history for this vehicle session
+                            if not self.session_saved and consolidated.get("is_valid"):
+                                try:
+                                    save_recognition(consolidated)
+                                    self.session_saved = True
+                                except Exception:
+                                    pass
+
+                            return consolidated, True, True
+                    else:
+                        if self.pipeline is not None:
+                            self.pipeline.latest_stream_detection = res
+                        return res, False, True
+
+        preview_res = current_res or (self.session_buffer[-1] if self.session_buffer else self.last_consolidated)
         return preview_res, False, True
 
     def aggregate_buffer(self, buffer: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """
-        Multi-frame majority voting and confidence averaging over 3-5 samples.
+        Consolidates and averages multi-frame captures within the 5-second window into 1 unified result:
+        1. Majority voting on full plate text and individual character sequences.
+        2. Majority voting on province classification.
+        3. Mean confidence score averaging across all captures in the session.
+        4. Selection of cleanest high-resolution crop for UI presentation.
         """
+        if not buffer:
+            return None
+
         valid = [r for r in buffer if r.get("detected") and r.get("is_valid")]
         if not valid:
             valid = [r for r in buffer if r.get("detected")]
@@ -2918,9 +3192,7 @@ class RTSPLPRProcessor:
 
         # 1. Majority vote on plate text
         plate_texts = [r["plate_text"] for r in valid if r.get("plate_text")]
-        if not plate_texts:
-            return valid[0]
-        vote_plate = Counter(plate_texts).most_common(1)[0][0]
+        vote_plate = Counter(plate_texts).most_common(1)[0][0] if plate_texts else valid[0].get("plate_text", "")
 
         # 2. Filter items matching voted plate text
         matched = [r for r in valid if r.get("plate_text") == vote_plate]
@@ -2931,42 +3203,77 @@ class RTSPLPRProcessor:
         prov_names = [r.get("province") for r in matched if r.get("province")]
         vote_prov = Counter(prov_names).most_common(1)[0][0] if prov_names else matched[0].get("province", "")
 
-        # 4. Confidence score averaging across 3-5 captures
-        avg_plate_conf = float(np.mean([r["confidence"]["plate_detection"] for r in matched if "confidence" in r]))
-        avg_prov_conf = float(np.mean([r["confidence"]["province_classification"] for r in matched if "confidence" in r]))
+        # 4. Confidence score averaging across all samples in the 5-second duration
+        all_plate_confs = [r["confidence"]["plate_detection"] for r in matched if "confidence" in r and "plate_detection" in r["confidence"]]
+        all_prov_confs = [r["confidence"]["province_classification"] for r in matched if "confidence" in r and "province_classification" in r["confidence"]]
+        avg_plate_conf = float(np.mean(all_plate_confs)) if all_plate_confs else matched[0].get("confidence", {}).get("plate_detection", 0.0)
+        avg_prov_conf = float(np.mean(all_prov_confs)) if all_prov_confs else matched[0].get("confidence", {}).get("province_classification", 0.0)
 
-        consolidated = matched[0].copy()
+        # 5. Base consolidated output on sample with highest plate detection confidence
+        matched_sorted = sorted(matched, key=lambda x: x.get("confidence", {}).get("plate_detection", 0.0), reverse=True)
+        consolidated = matched_sorted[0].copy()
         consolidated["plate_text"] = vote_plate
         consolidated["province"] = vote_prov
         if "confidence" in consolidated:
             consolidated["confidence"]["plate_detection"] = round(avg_plate_conf, 3)
             consolidated["confidence"]["province_classification"] = round(avg_prov_conf, 3)
-        consolidated["aggregated_samples"] = len(matched)
+        consolidated["aggregated_samples"] = len(buffer)
+        consolidated["matched_samples"] = len(matched)
+        consolidated["session_consolidated_as_one"] = True
         return consolidated
 
 
-def mjpeg_stream_generator(source: str, debug: bool = False):
+def mjpeg_stream_generator(
+    source: str,
+    debug: bool = False,
+    loop: bool = True,
+    conf_m1: float = 0.65,
+):
     cam_source = int(source) if source.isdigit() else source
     cap = cv2.VideoCapture(cam_source)
     if not cap.isOpened():
         print(f"[RTSP Stream] Failed to connect to source: {source}")
         return
 
-    processor = RTSPLPRProcessor(pipeline_service) if pipeline_service else None
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    if not fps or fps < 1.0 or fps > 120.0:
+        fps = 25.0
+    frame_delay = 1.0 / fps
+
+    stream_m1 = conf_m1 if (conf_m1 and conf_m1 >= 0.20) else getattr(cfg, "STREAM_CONF_M1", 0.65)
+    processor = RTSPLPRProcessor(
+        pipeline_service,
+        min_vehicle_area=getattr(cfg, "STREAM_MIN_VEHICLE_AREA", 1800),
+        cooldown_sec=getattr(cfg, "STREAM_COOLDOWN_SEC", 5.0),
+        session_duration_sec=getattr(cfg, "STREAM_SESSION_SEC", 5.0),
+        target_samples=getattr(cfg, "STREAM_TARGET_SAMPLES", 2),
+        conf_m1=stream_m1,
+    ) if pipeline_service else None
+
     cached_text = ""
     cached_prov = ""
     cached_country = "THAI"
     cached_conf = 0.0
     cached_samples = 1
+    cached_box = None
     has_vehicle_motion = False
 
     try:
         while True:
+            t0 = time.time()
             ret, frame = cap.read()
             if not ret:
-                time.sleep(0.04)
-                continue
+                # Video file reached EOF: rewind if loop enabled
+                if loop and isinstance(cam_source, str) and os.path.exists(cam_source):
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    if processor:
+                        processor.reset()
+                    continue
+                else:
+                    time.sleep(0.04)
+                    break
 
+            res = None
             if processor is not None:
                 res, is_confirmed, has_vehicle_motion = processor.process_stream_frame(frame, debug=debug)
                 if res and res.get("detected"):
@@ -2975,41 +3282,69 @@ def mjpeg_stream_generator(source: str, debug: bool = False):
                     cached_country = f"{res.get('country_flag', '')} {res.get('country', '')}"
                     cached_conf = res.get("confidence", {}).get("plate_detection", 0.0)
                     cached_samples = res.get("aggregated_samples", 1)
+                    cached_box = res.get("plate_box")
+                elif not has_vehicle_motion and (time.time() - processor.last_emit_time) > processor.cooldown_sec:
+                    cached_text = ""
+                    cached_prov = ""
+                    cached_conf = 0.0
+                    cached_box = None
 
-            # Draw sleek industrial HUD overlay
-            cv2.rectangle(frame, (10, 10), (430, 110), (8, 12, 20), -1)
-            cv2.rectangle(frame, (10, 10), (430, 110), (0, 240, 255) if has_vehicle_motion else (50, 60, 80), 1)
+            # 1. Draw sleek bounding box and tracking HUD on detected plate
+            if has_vehicle_motion and cached_box:
+                x1, y1, x2, y2 = cached_box
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 240, 255), 2)
+                label = f"{cached_text} ({int(cached_conf * 100)}%)" if cached_text else "Plate Detected"
+                (lw, lh), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 1)
+                cv2.rectangle(frame, (x1, max(0, y1 - lh - 6)), (x1 + lw + 8, y1), (8, 12, 20), -1)
+                cv2.rectangle(frame, (x1, max(0, y1 - lh - 6)), (x1 + lw + 8, y1), (0, 240, 255), 1)
+                cv2.putText(frame, label, (x1 + 4, max(lh + 2, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 240, 255), 1)
 
-            motion_badge = "[MOTION DETECTED]" if has_vehicle_motion else "[GATE IDLE / RAIN-FILTERED]"
+            # 2. Draw industrial HUD status overlay
+            cv2.rectangle(frame, (10, 10), (490, 120), (8, 12, 20), -1)
+            cv2.rectangle(frame, (10, 10), (490, 120), (0, 240, 255) if has_vehicle_motion else (45, 55, 75), 1)
+
+            motion_badge = "[5s VEHICLE SESSION - ACTIVE]" if has_vehicle_motion else "[GATE IDLE / STATIC ROAD (0ms)]"
             badge_color = (0, 240, 255) if has_vehicle_motion else (140, 150, 160)
-            cv2.putText(frame, f"LPR LIVE {motion_badge}", (20, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.45, badge_color, 1)
+            cv2.putText(frame, f"LPR REAL-TIME {motion_badge}", (20, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.42, badge_color, 1)
 
             disp_plate = f"PLATE: {cached_text} ({cached_country})" if cached_text else "AWAITING VEHICLE MOTION"
             cv2.putText(frame, disp_plate, (20, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2 if cached_text else 1)
 
             if cached_prov:
-                disp_prov = f"PROV:  {cached_prov} (Voted {cached_samples} Frames | Conf {int(cached_conf * 100)}%)"
+                disp_prov = f"PROV:  {cached_prov} | 5s AVG ({cached_samples} frames -> 1 result)"
             else:
-                disp_prov = "STATUS: MONITORING LANE (RAIN FILTER ON)"
+                disp_prov = f"STATUS: MONITORING LANE (M1 THRESHOLD: {int(stream_m1 * 100)}%)"
             cv2.putText(frame, disp_prov, (20, 84), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (16, 185, 129) if cached_prov else (100, 120, 140), 1)
 
-            ret, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
-            if not ret:
+            latency_txt = f"LATENCY: {res.get('timing', {}).get('total_ms', 0)}ms" if (has_vehicle_motion and res) else "LATENCY: 0ms (GATE IDLE)"
+            cv2.putText(frame, latency_txt, (20, 106), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 240, 255) if has_vehicle_motion else (80, 180, 120), 1)
+
+            ret_enc, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+            if not ret_enc:
                 continue
 
             yield (
                 b"--frame\r\n"
                 b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
             )
-            time.sleep(0.03)
+
+            # Natural real-time playback pacing matching original video FPS
+            t_elapsed = time.time() - t0
+            sleep_time = max(0.005, frame_delay - t_elapsed)
+            time.sleep(sleep_time)
     finally:
         cap.release()
 
 
 @app.get("/api/stream/mjpeg")
-def stream_mjpeg_endpoint(source: str = Query("0"), debug: bool = Query(False)):
+def stream_mjpeg_endpoint(
+    source: str = Query("0"),
+    debug: bool = Query(False),
+    loop: bool = Query(True),
+    conf_m1: float = Query(0.65, ge=0.20, le=0.95),
+):
     return StreamingResponse(
-        mjpeg_stream_generator(source, debug),
+        mjpeg_stream_generator(source, debug=debug, loop=loop, conf_m1=conf_m1),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )
 
