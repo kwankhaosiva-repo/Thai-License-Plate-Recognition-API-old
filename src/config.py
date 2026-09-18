@@ -42,7 +42,7 @@ class Config:
     #   "character_box_detector_rfdetr_small.pt"← RF-DETR-Small
     #   "character_box_detector_rfdetr.pt"      ← RF-DETR-Base
     #   "character_box_detector_rtdetr.pt"      ← RT-DETR-L (older)
-    MODEL_3A_FILENAME = "character_box_detector_dfine_small.pt"
+    MODEL_3A_FILENAME = "character_box_detector_rfdetr.pt"
 
     # --- Model 3A: Character Classifier (MobileNetV2) ---
     #   "character_classifier.pth" ← MobileNetV2 (50 Thai character & digit classes)
