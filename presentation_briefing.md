@@ -44,9 +44,9 @@
 | **Model 1.1 (Corner Regressor)** | **MobileNetV3-Small Keypoint Regressor**<br>(~3.2 ms CPU, 4 MB) | • **YOLOv11-OBB** (Oriented Box)<br>• **RF-DETR-OBB** (Oriented Box)<br>• **Polygon Segmentation** | **ทำไมไม่ใช้ OBB ตัวเดียวจบ?**<br>• OBB หรือ Polygon Segmentation ทำให้โมเดลใหญ่ขึ้น และตอน Export เป็น ONNX จะติดปัญหา **Rotated NMS custom operator (C++)** ทำให้รันบนภาษา C# (.NET) ได้ยากมาก<br>• **2-Stage ดีกว่า:** เอา AABB BBox ดึง Crop หยาบๆ แล้วส่งให้ MobileNetV3 ทำนายพิกัด 4 มุมภายใน **3.2 ms** จากนั้นใช้ OpenCV `warpPerspective` หมุนป้ายตรงเป๊ะ 100% รันข้ามแพลตฟอร์มได้ทันที |
 | **Model 1.5 (Country Classifier)** | **MobileNetV3-Small**<br>(~1.5 ms CPU, 3.8 MB) | • ResNet18<br>• Rule-based Color Check | แยกป้ายไทย vs ลาวได้แม่นยำ **99.9%** ภายในเวลาแค่ 1.5 ms ก่อนเลือกเส้นทาง Pipeline ถัดไป |
 | **Model 2 (Component Detector)** | **D-FINE-Nano**<br>(~18 ms CPU, 15 MB) | • RF-DETR-Small (~55 ms)<br>• PicoDet-S (~10 ms) | ทำหน้าที่แยกพื้นที่ระหว่าง `plate_char` (แถวตัวหนังสือ) และ `province` (แถวจังหวัดด้านล่าง) D-FINE-Nano ตัดขอบแบ่งโซนได้คมชัด ไม่กินพื้นที่ทับซ้อนกัน |
-| **Model 3A (Char Localization)** | **D-FINE-Small (Box)**<br>(~35 ms CPU, 165 MB .pt / 40 MB ONNX) | • **D-FINE-Nano** (~16 ms, 15 MB)<br>• **RF-DETR-Small** (~84 ms, 122 MB)<br>• Connected Component Analysis | **ทำไมเลือก D-FINE-Small พร้อม Subsumed Box Filter?**<br>• D-FINE-Small มี Capacity สูงกว่า ตีกรอบตัวอักษรที่ชิดกันหรือจมอยู่ในเงามืดได้แม่นยำกว่า Nano อย่างเห็นได้ชัด<br>• **Subsumed Composite Box Filter:** แก้ปัญหาโมเดลจับตัวอักษร 2 ตัวติดกันเป็นกล่องกว้างอันเดียว ($w > 1.6 \times \text{median}$) โดยระบบจะตรวจจับและตัดกล่องรวมทิ้งเพื่อรักษาตัวอักษรเดี่ยว 2 ตัวที่ซ้อนอยู่ข้างในไว้ |
+| **Stage 3A (Char Localization)** | **RF-DETR-Base (Box)**<br>(~45 ms CPU, 122 MB .pt) | • **D-FINE-Small** (~35 ms, 165 MB)<br>• **D-FINE-Nano** (~16 ms, 15 MB)<br>• Connected Component Analysis | **ทำไมเลือก RF-DETR-Base?**<br>• ใช้ Multi-scale Deformable Attention ในการสแกนพื้นที่ตัวอักษรโดยตรงโดยไม่มีปัญหา Anchor Box Bias<br>• สามารถตรวจจับขอบเขตตัวอักษรที่ชิดกัน หรือตัวอักษรที่มีสระ/วรรณยุกต์ซ้อน และป้ายที่มีสกรูยึดเจาะทะลุได้อย่างคมชัดและแม่นยำสูงสุด |
 | **Model 3A (Text Recognition)** | **Hybrid Method A+C Dual-Engine**<br>• MobileNetV2 (50-Class Balanced Cls, **99.58% Top-1**)<br>• ResNet18-BiLSTM-CTC<br>• Autocontrast Normalization<br>• Spatial Gap Gating + DLT Syntax Guard | • Tesseract OCR<br>• EasyOCR<br>• 12-Epoch Imbalanced Classifier<br>• Blind Sequence Alignment | **ทำไมต้อง Balanced 50-Class + Method A+C Unified Fusion?**<br>• **Balanced Dataset:** ทำ Augmentation ปรับสมดุลทุกคลาสเป็น $\ge 400$ ตัวอย่าง/คลาส (รวม 29,385 ภาพ) พร้อมใส่ Photometric Shadow Gradients แก้ปัญหาตัวอักษรหายาก (`ผ`, `ณ`, `ฬ`) โดนทายสับสนเป็นตัวเลขทึบอย่าง `8`<br>• **Autocontrast Normalization:** ดึง Contrast ขยาย Dynamic Range ตัวอักษรในเงามืดก่อนเข้า Classifier<br>• **Method A+C Fusion:** ผสานความแม่นยำระดับ **99.58% Top-1 (99.89% Top-3)** ของ Classifier เข้ากับ CTC โดยมี **DLT Syntax Guard** ดักจับ Format ป้ายส่วนบุคคลที่เป็นไปไม่ได้ (เช่น `\d[พยัญชนะ]\d{4}`) |
-| **Model 3B (Province Classifier)** | **ResNet34-Grayscale**<br>(~7.2 ms CPU, 81.5 MB, $80 \times 256$) | • ResNet18 Grayscale ($64 \times 256$, 44 MB)<br>• ResNet34 RGB<br>• MobileNetV2 RGB | **ทำไมอัปเกรดเป็น ResNet34 Grayscale ($80 \times 256$)?**<br>ชื่อจังหวัดไทยมีวรรณยุกต์และสระบน-ล่างสูง (เช่น อุ, อู, ไม้เอก, ไม้โท) ความละเอียดแนวตั้ง $80\text{ px}$ ช่วยเก็บรายละเอียดวรรณยุกต์ได้ครบถ้วน และ Backbone ResNet34 ให้ความแม่นยำสูงถึง **99.10% Val / 98.71% Test Top-1** ครบทั้ง 77 จังหวัด |
+| **Model 3B (Province Classifier)** | **ResNet18-Grayscale**<br>(~5.0 ms CPU, 42.9 MB, $64 \times 256$) | • ResNet34 Grayscale ($80 \times 256$, 81.5 MB)<br>• ResNet34 RGB<br>• MobileNetV2 RGB | **ทำไมเลือก ResNet18 Grayscale ($64 \times 256$)?**<br>• ขนาดไฟล์เล็กลงเกือบ 50% (เหลือเพียง 42.9 MB) และประมวลผลเร็วมากบน CPU (~5 ms) เหมาะสำหรับการทำ Containerization บน Cloud Run<br>• ให้ความแม่นยำสูงถึง **99.20% Val Top-1** ครบทั้ง 77 จังหวัด และทนทานต่อสภาพแสงสะท้อน แดดย้อน หรือเงามืด |
 
 ---
 
@@ -58,12 +58,12 @@
 | **Stage 1.1 (Corner Regressor)** | MobileNetV3-Small Head | $224 \times 224 \times 3$ | 4.0 MB | PyTorch (`torchvision`) | 8-D Regression (`[1, 8]`: $x_1, y_1 \dots x_4, y_4$) |
 | **Stage 1.5 (Country Cls)** | MobileNetV3-Small | $128 \times 128 \times 3$ | 3.8 MB | PyTorch (`torchvision`) | Binary Classification (`[1, 2]`) |
 | **Stage 2 (Component Detector)** | D-FINE-Nano | $320 \times 160 \times 3$ | 15.0 MB | PyTorch (D-FINE Engine) | Object Detection (`plate_char`, `province`) |
-| **Stage 3A (Char Box Detector)**| D-FINE-Small | $160 \times 320 \times 3$ | 165 MB (.pt) / 40 MB (ONNX) | PyTorch (D-FINE Engine) | Character Box Detection (`[1, 300, 4]`) |
-| **Stage 3A (Thai Char Classifier)**| MobileNetV2 | $64 \times 64 \times 3$ | 8.9 MB | PyTorch (`torchvision`) | 50-Class Softmax (`[1, 50]`) — **99.58% Val Top-1 / 99.89% Top-3** |
-| **Stage 3A (Thai Full OCR Engine)**| ResNet18 + BiLSTM + CTC | $32 \times 256 \times 3$ | 32.0 MB | PyTorch (Custom CTC Model) | CTC Sequence Logits (`[T, 1, 71]`) |
-| **Stage 3A (Lao Char Classifier)** | MobileNetV2 | $64 \times 64 \times 3$ | 8.8 MB | PyTorch (`torchvision`) | 34-Class Softmax (`[1, 34]`) |
-| **Stage 3B (Thai Province)** | ResNet34 (Grayscale) | $80 \times 256 \times 3$ | 81.5 MB | PyTorch (`torchvision`) | 77-Class Softmax (`[1, 77]`) — **99.10% Val Top-1** |
-| **Stage 3B (Lao Province)** | ResNet18 (Grayscale) | $64 \times 256 \times 3$ | 44.0 MB | PyTorch (`torchvision`) | 18-Class Softmax (`[1, 18]`) — **99.20% Val Top-1** |
+| **Stage 3A (Char Box Detector)**| RF-DETR-Base | $160 \times 320 \times 3$ | 121.8 MB | PyTorch (RF-DETR Transformer) | Character Box Detection (`[1, 300, 4]`) |
+| **Stage 3A (Thai Char Classifier)**| MobileNetV2 | $64 \times 64 \times 3$ | 9.0 MB | PyTorch (`torchvision`) | 50-Class Softmax (`[1, 50]`) — **99.58% Val Top-1 / 99.89% Top-3** |
+| **Stage 3A (Thai Full OCR Engine)**| ResNet18 + BiLSTM + CTC | $32 \times 256 \times 3$ | 54.8 MB | PyTorch (Custom CTC Model) | CTC Sequence Logits (`[T, 1, 71]`) |
+| **Stage 3A (Lao Char Classifier)** | MobileNetV2 | $64 \times 64 \times 3$ | 8.9 MB | PyTorch (`torchvision`) | 34-Class Softmax (`[1, 34]`) |
+| **Stage 3B (Thai Province)** | ResNet18 (Grayscale) | $64 \times 256 \times 3$ | 42.9 MB | PyTorch (`torchvision`) | 77-Class Softmax (`[1, 77]`) — **99.20% Val Top-1** |
+| **Stage 3B (Lao Province)** | ResNet18 (Grayscale) | $64 \times 256 \times 3$ | 42.7 MB | PyTorch (`torchvision`) | 18-Class Softmax (`[1, 18]`) — **99.20% Val Top-1** |
 
 ---
 
@@ -154,12 +154,38 @@
 
 ---
 
-## 6. สรุปความพร้อมในการนำไปใช้งานจริง (Production Readiness)
-- ✅ **API & Interactive Dashboard**: มี Web UI Dashboard สวยงามแสดงผลแบบ Step-by-step ทุก Stage (Latency, Bounding Boxes, Probability Bar Chart)
+## 6. ระบบ Real-Time Stream & Dynamic 5-Second Vehicle Session Aggregator
+- **Rain & Noise-Proof Motion Gating (0 ms Idle Latency):**
+  - สตรีมวิดีโอผ่านการกรองแบบ Gaussian Blur ($15 \times 15$) + Background Subtraction (MOG2) + Morphological Opening ($5 \times 5$)
+  - ช่วยตัดปัญหาเม็ดฝน แสงแดดสะท้อน หรือเงาเคลื่อนไหว เมื่อถนนว่างจะข้ามการรันโมเดล AI ทั้งหมดทันที ทำให้กิน CPU เป็น **0 ms**
+- **Dynamic 5-Second Vehicle Tracking & Multi-Frame Consolidation:**
+  - รถ 1 คันที่ขับผ่านกล้องจะถูกบันทึกเฟรมต่อเนื่องภายในหน้าต่างเวลา 5.0 วินาที
+  - ระบบทำ **Majority Voting** อักษรและจังหวัด พร้อมเฉลี่ยค่า **Mean Confidence** จากหลายมุมมอง คัดเลือก Crop ภาพที่ชัดที่สุด
+  - บันทึกลงฐานข้อมูลเพียง **1 Record ที่แม่นยำที่สุดต่อรถ 1 คัน** หมดปัญหาประวัติซ้ำซ้อน
+- **High-Precision Thresholding (`conf_m1 = 0.80`):**
+  - ตั้งค่า Threshold ของ Model 1 สำหรับโหมดวิดีโอและสตรีมไว้ที่ `0.80` เพื่อป้องกัน False Alarm จากขอบทางหรือกันชน
+  - เพิ่มความถี่ในการตรวจจับ (`STREAM_FRAME_SKIP = 2`, `STREAM_TARGET_SAMPLES = 1`) ทำให้จับป้ายทะเบียนได้ตั้งแต่เฟรมแรกที่เห็นชัดเจน
+
+---
+
+## 7. สถาปัตยกรรม Dual Cloud Storage (Google Cloud Firestore + BigQuery)
+- **Dual Cloud Pattern:**
+  - **Cloud Firestore (`lpr-db`)**: เก็บประวัติแบบ Document Store รวมรูปภาพป้ายทะเบียนแบบ Base64 สำหรับดึงดูบนหน้าเว็บแบบ Real-time
+  - **Cloud BigQuery (`lpr_query.lpr_history`)**: เก็บตารางข้อมูลสำหรับประมวลผล Big Data และวิเคราะห์สถิติต่าง ๆ
+- **Zero-Latency Async Worker:**
+  - การบันทึกข้อมูลขึ้น Cloud ทำงานผ่าน `ThreadPoolExecutor` แยกเป็น Background Worker ไม่ดึงหน่วงรอบประมวลผลของกล้องสด (Latency คงเดิม)
+- **Native Cloud Run Auto-Detection:**
+  - ระบบตรวจจับตัวแปรระบบ `K_SERVICE` บน GCP Cloud Run โดยอัตโนมัติ สั่งซ่อนการเชื่อมต่อ SQLite ภายใน Container และสลับไปดึงข้อมูลจาก Cloud Firestore โดยตรง 100%
+
+---
+
+## 8. สรุปความพร้อมในการนำไปใช้งานจริง (Production Readiness)
+- ✅ **API & Interactive Dashboard**: มี Web UI Dashboard สวยงามแสดงผลแบบ Step-by-step ทุก Stage (Latency, Bounding Boxes, Probability Bar Chart) พร้อม Modal แสดงสถาปัตยกรรมโมเดลและระบบสลับประวัติ Local/Cloud
 - ✅ **Commercially Compliant**: ปราศจากลิขสิทธิ์ AGPL หรือเงื่อนไขที่ห้ามใช้เชิงพาณิชย์
 - ✅ **Full C# (.NET) Integration**: พร้อมโค้ดตัวอย่าง `Microsoft.ML.OnnxRuntime` + `OpenCvSharp4` นำไปใส่ในโปรเจกต์ Desktop หรือ Server ของลูกค้าได้ทันที
+- ✅ **GCP Cloud Native**: พร้อม Dockerfile และ `.dockerignore` ที่ลดขนาดลงกว่า 1.2 GB รองรับการ Deploy บน Cloud Run ได้ทันที
 - ✅ **Tested Accuracy**: 
   - Plate Localization: **~99.2% mAP**
   - Character Recognition: **~98.5% Sequence Accuracy** (ด้วย Method A+C Spatial Fusion)
-  - Province Classification: **99.10% Val Top-1 / 99.65% Val Top-5** (ResNet34-Grayscale)
+  - Province Classification: **99.20% Val Top-1** (ResNet18-Grayscale, 42.9 MB)
   - Average End-to-End Latency: **~75–95 ms บน CPU ทั่วไป**
