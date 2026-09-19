@@ -47,22 +47,14 @@
 
     <div class="header-controls">
       <div class="status-pills">
-        <div class="pill">
+        <button id="modelsPillBtn" class="pill pill-clickable" title="Click to view loaded model architectures">
           <span class="dot"></span>
-          <span>Engine Active</span>
-        </div>
-        <div class="pill">
-          <span style="color: var(--accent-cyan);">Models: 4/4 Loaded</span>
-        </div>
+          <span style="color: var(--accent-cyan); font-weight: 600;">Models: 4/4 Loaded</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="opacity: 0.7; margin-left: 2px;">
+            <path d="M7 10l5 5 5-5z"/>
+          </svg>
+        </button>
       </div>
-
-      <!-- Lao Crops Validation Button -->
-      <a href="/output/lao_character_verification/report.html" target="_blank" class="verification-btn" title="Inspect Lao Character Crops Dataset (34 Classes)">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-8 14H7v-2h4v2zm0-4H7v-2h4v2zm0-4H7V7h4v2zm6 8h-4v-2h4v2zm0-4h-4v-2h4v2zm0-4h-4V7h4v2z"/>
-        </svg>
-        <span>🇱🇦 Lao Crops Report</span>
-      </a>
 
       <!-- Debug Toggle Switch -->
       <div class="debug-toggle-wrapper">
@@ -170,13 +162,13 @@
             <div class="stream-settings-bar" style="display: flex; align-items: center; justify-content: space-between; background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-glass); border-radius: 8px; padding: 7px 12px; margin-top: 8px; flex-wrap: wrap; gap: 8px;">
               <div style="display: flex; align-items: center; gap: 6px;">
                 <span style="font-size: 0.74rem; color: var(--text-secondary); font-weight: 500;">Model 1 Plate Threshold:</span>
-                <span id="streamConfVal" style="font-size: 0.78rem; font-weight: 700; color: var(--accent-cyan);">65%</span>
+                <span id="streamConfVal" style="font-size: 0.78rem; font-weight: 700; color: var(--accent-cyan);">80%</span>
                 <span style="font-size: 0.68rem; color: var(--text-muted);">(Rejects empty road/barrier textures)</span>
               </div>
               <div style="display: flex; align-items: center; gap: 8px; flex: 1; min-width: 200px; max-width: 320px;">
                 <span style="font-size: 0.68rem; color: var(--text-muted);">40%</span>
-                <input type="range" id="streamConfSlider" min="40" max="85" value="65" step="5" style="flex: 1; accent-color: var(--accent-cyan); cursor: pointer;">
-                <span style="font-size: 0.68rem; color: var(--text-muted);">85%</span>
+                <input type="range" id="streamConfSlider" min="40" max="95" value="80" step="5" style="flex: 1; accent-color: var(--accent-cyan); cursor: pointer;">
+                <span style="font-size: 0.68rem; color: var(--text-muted);">95%</span>
               </div>
             </div>
           </div>
@@ -466,11 +458,143 @@
 
     </div>
 
-  </main>
+  <!-- Models Architecture Modal -->
+  <div id="modelsModal" class="auth-modal-overlay" style="display: none;">
+    <div class="models-modal-card">
+      <div class="auth-modal-header" style="text-align: left; display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
+        <div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span class="dot" style="width: 8px; height: 8px; border-radius: 50%; background: var(--accent-green); box-shadow: 0 0 8px var(--accent-green);"></span>
+            <h3 style="margin: 0; font-size: 1.15rem; color: #f8fafc;">Active AI Model Pipeline</h3>
+          </div>
+          <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px;">4-Stage Deep Learning Pipeline for Multi-Country License Plate Recognition</div>
+        </div>
+        <button id="closeModelsModalBtn" class="auth-modal-close" style="position: static; padding: 2px 6px;">&times;</button>
+      </div>
+
+      <div class="models-list" id="modelsModalList">
+        <!-- Stage 1: Plate Detection -->
+        <div class="stage-pipeline-card">
+          <div class="stage-card-top">
+            <span class="stage-tag stage-1">STAGE 1</span>
+            <div class="stage-heading">
+              <span class="stage-title">License Plate Detection & Rectification</span>
+              <span class="stage-subtitle">Quad perspective warp & rotated bounding box localization</span>
+            </div>
+            <span class="stage-status-badge"><span class="pulse-dot"></span> ACTIVE</span>
+          </div>
+          <div class="stage-model-binding">
+            <span class="binding-label">➔ Model:</span>
+            <code class="model-code-pill" id="mInfo1">plate_detector_dfine_nano.pt</code>
+            <span class="model-arch-badge" id="mArch1">D-FINE Nano (MIT)</span>
+          </div>
+        </div>
+
+        <!-- Stage 1.5: Country Identification -->
+        <div class="stage-pipeline-card">
+          <div class="stage-card-top">
+            <span class="stage-tag stage-15">STAGE 1.5</span>
+            <div class="stage-heading">
+              <span class="stage-title">Country Standard Classifier</span>
+              <span class="stage-subtitle">Dual-country routing: 🇹🇭 Thailand vs 🇱🇦 Laos PDR plates</span>
+            </div>
+            <span class="stage-status-badge"><span class="pulse-dot"></span> ACTIVE</span>
+          </div>
+          <div class="stage-model-binding">
+            <span class="binding-label">➔ Model:</span>
+            <code class="model-code-pill" id="mInfo15">country_classifier.pth</code>
+            <span class="model-arch-badge" id="mArch15">MobileNetV3-Small</span>
+          </div>
+        </div>
+
+        <!-- Stage 2: Layout Component Detection -->
+        <div class="stage-pipeline-card">
+          <div class="stage-card-top">
+            <span class="stage-tag stage-2">STAGE 2</span>
+            <div class="stage-heading">
+              <span class="stage-title">Layout Component Localization</span>
+              <span class="stage-subtitle">Adaptive layout segmentation: Character Plate area & Province banner</span>
+            </div>
+            <span class="stage-status-badge"><span class="pulse-dot"></span> ACTIVE</span>
+          </div>
+          <div class="stage-model-binding">
+            <span class="binding-label">➔ Model:</span>
+            <code class="model-code-pill" id="mInfo2">component_detector_dfine_nano.pt</code>
+            <span class="model-arch-badge" id="mArch2">D-FINE Nano (MIT)</span>
+          </div>
+        </div>
+
+        <!-- Stage 3: Character Recognition Engine -->
+        <div class="stage-pipeline-card">
+          <div class="stage-card-top">
+            <span class="stage-tag stage-3">STAGE 3</span>
+            <div class="stage-heading">
+              <span class="stage-title">Character Recognition (Dual-Engine OCR)</span>
+              <span class="stage-subtitle">Individual character BBox localization + Multi-class Classification + CTC Fallback</span>
+            </div>
+            <span class="stage-status-badge"><span class="pulse-dot"></span> ACTIVE</span>
+          </div>
+          <div class="stage-submodels-grid">
+            <div class="stage-submodel-row">
+              <span class="submodel-type">➔ Char BBox:</span>
+              <code class="model-code-pill" id="mInfo3a">character_box_detector_rfdetr.pt</code>
+              <span class="model-arch-badge" id="mArch3a">RF-DETR Base</span>
+            </div>
+            <div class="stage-submodel-row">
+              <span class="submodel-type">➔ 🇹🇭 Thai Cls:</span>
+              <code class="model-code-pill" id="mInfo3aCls">character_classifier.pth</code>
+              <span class="model-arch-badge" id="mArch3aCls">MobileNetV2 (50 Consonants/Digits)</span>
+            </div>
+            <div class="stage-submodel-row">
+              <span class="submodel-type">➔ 🇱🇦 Lao Cls:</span>
+              <code class="model-code-pill" id="mInfo3aLaoCls">character_classifier_lao.pth</code>
+              <span class="model-arch-badge" id="mArch3aLaoCls">MobileNetV2 (34 Lao Classes)</span>
+            </div>
+            <div class="stage-submodel-row">
+              <span class="submodel-type">➔ CTC Engine:</span>
+              <code class="model-code-pill" id="mInfo3aOcr">ocr_model.pth</code>
+              <span class="model-arch-badge" id="mArch3aOcr">ResNetCRNN CTC Sequence</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Stage 4: Province Classification -->
+        <div class="stage-pipeline-card">
+          <div class="stage-card-top">
+            <span class="stage-tag stage-4">STAGE 4</span>
+            <div class="stage-heading">
+              <span class="stage-title">Province Classification</span>
+              <span class="stage-subtitle">Multi-country province routing: 77 Thai Provinces + 18 Lao Provinces</span>
+            </div>
+            <span class="stage-status-badge"><span class="pulse-dot"></span> ACTIVE</span>
+          </div>
+          <div class="stage-submodels-grid">
+            <div class="stage-submodel-row">
+              <span class="submodel-type">➔ 🇹🇭 Thailand:</span>
+              <code class="model-code-pill" id="mInfo3b">province_model_grayscale_thai.pth</code>
+              <span class="model-arch-badge" id="mArch3b">ResNet18 (77 Provinces)</span>
+            </div>
+            <div class="stage-submodel-row">
+              <span class="submodel-type">➔ 🇱🇦 Laos:</span>
+              <code class="model-code-pill" id="mInfo3bLao">province_model_grayscale_lao.pth</code>
+              <span class="model-arch-badge" id="mArch3bLao">ResNet18 (18 Provinces)</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 1.2rem; padding-top: 1rem; border-top: 1px solid rgba(255, 255, 255, 0.08);">
+        <div id="mDeviceTag" style="font-family: var(--font-mono); font-size: 0.78rem; color: var(--accent-cyan);">
+          ⚡ Device: CPU (OMP Multi-threaded)
+        </div>
+        <button id="modalDismissBtn" class="btn-secondary" style="padding: 6px 16px; font-size: 0.82rem;">Close</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Client-side Application Scripts -->
   <script src="/static/js/auth.js?v=1"></script>
-  <script src="/static/js/app.js?v=5"></script>
+  <script src="/static/js/app.js?v=7"></script>
 </body>
 </html>
 

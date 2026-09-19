@@ -12,16 +12,22 @@ import base64
 import csv
 import io
 import json
+import logging
+import re
 import sqlite3
 import threading
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+TZ_BANGKOK = timezone(timedelta(hours=7), name="Asia/Bangkok")
+
 import cv2
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
@@ -66,9 +72,17 @@ def init_db():
                         raw_image TEXT DEFAULT ''
                     )
                 """)
-                # Migration: add raw_image column if older DB schema exists
+                # Migration: add raw_image, user_id, user_email columns if older DB schema exists
                 try:
                     conn.execute("ALTER TABLE recognition_history ADD COLUMN raw_image TEXT DEFAULT ''")
+                except Exception:
+                    pass
+                try:
+                    conn.execute("ALTER TABLE recognition_history ADD COLUMN user_id TEXT DEFAULT 'guest'")
+                except Exception:
+                    pass
+                try:
+                    conn.execute("ALTER TABLE recognition_history ADD COLUMN user_email TEXT DEFAULT ''")
                 except Exception:
                     pass
 
@@ -76,6 +90,7 @@ def init_db():
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_country ON recognition_history(country)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_plate ON recognition_history(plate_text)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_is_valid ON recognition_history(is_valid)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_user_id ON recognition_history(user_id)")
         finally:
             conn.close()
 
@@ -113,29 +128,56 @@ def image_to_base64_full(image_bgr: Optional[np.ndarray], max_dim: int = 960, qu
         return ""
 
 
+_recent_saves_lock = threading.Lock()
+_recent_saves: Dict[str, float] = {}
+
+
 def save_recognition(
     data: Dict[str, Any],
     thumbnail_bgr: Optional[np.ndarray] = None,
     raw_bgr: Optional[np.ndarray] = None,
+    user: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
-    Saves a recognized plate result to the history database.
-    Robustly maps timing, confidence, crops, and full-resolution images.
+    Saves a recognized plate result to the history database and syncs to Google Cloud (Firestore & BigQuery).
+    Robustly maps timing, confidence, crops, full-resolution images, and authenticated user identity.
     Returns the unique record_id.
     """
+    plate_text = str(data.get("plate_text") or "").strip()
+    clean_key = re.sub(r"[\s-]", "", plate_text).strip()
+    dedup_window_sec = float(data.get("dedup_window_sec", 5.0))
+
+    # 5-Second Deduplication Guard:
+    # Groups real-time video stream frames of the same vehicle together into 1 record.
+    # Suppresses duplicate database writes of the same plate text within 5.0 seconds.
+    if clean_key and dedup_window_sec > 0:
+        with _recent_saves_lock:
+            now_ts = time.time()
+            # Clean up old keys (> 60s)
+            expired = [k for k, t in _recent_saves.items() if (now_ts - t) > 60.0]
+            for k in expired:
+                del _recent_saves[k]
+
+            last_saved = _recent_saves.get(clean_key, 0.0)
+            if (now_ts - last_saved) < dedup_window_sec:
+                logger.info(f"[History Dedup] Skipped duplicate save for '{plate_text}' within {dedup_window_sec}s window")
+                return ""
+            _recent_saves[clean_key] = now_ts
+
     record_id = f"lpr_{int(time.time())}_{uuid.uuid4().hex[:6]}"
-    now_dt = datetime.now()
+    now_dt = datetime.now(TZ_BANGKOK)
     timestamp_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
     created_at = time.time()
 
-    plate_text = str(data.get("plate_text") or "").strip()
     country = str(data.get("country") or "Thai").strip()
     province = str(data.get("province") or "").strip()
 
     # Robust province probability extraction (percentage 0-100)
+    conf_val = data.get("confidence")
+    prov_conf = conf_val.get("province_classification") if isinstance(conf_val, dict) else 0.0
     prov_prob_raw = (
         data.get("province_prob")
-        or (data.get("confidence") or {}).get("province_classification")
+        or prov_conf
         or 0.0
     )
     try:
@@ -182,6 +224,11 @@ def save_recognition(
     elif "crops" in data and data["crops"].get("raw"):
         raw_b64 = data["crops"]["raw"]
 
+    # Resolve authenticated user identity
+    user_info = user or data.get("user") or {}
+    user_id = str(user_info.get("uid") or user_info.get("user_id") or "guest")
+    user_email = str(user_info.get("email") or user_info.get("user_email") or "")
+
     with _lock:
         conn = get_db_connection()
         try:
@@ -192,18 +239,46 @@ def save_recognition(
                         record_id, timestamp, created_at, plate_text, country,
                         province, province_prob, pattern, is_valid,
                         char_box_text, ctc_text, char_box_status, char_box_note,
-                        total_latency_ms, model_latencies, thumbnail, raw_image
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        total_latency_ms, model_latencies, thumbnail, raw_image,
+                        user_id, user_email
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         record_id, timestamp_str, created_at, plate_text, country,
                         province, province_prob, pattern, is_valid,
                         char_box_text, ctc_text, char_box_status, char_box_note,
                         total_latency_ms, model_latencies, thumbnail_b64, raw_b64,
+                        user_id, user_email,
                     ),
+                )
+                # Automatic Rolling Cap (FIFO):
+                # Enforces a 3,000-record limit so the database file never swells indefinitely in container RAM/disk
+                conn.execute(
+                    """
+                    DELETE FROM recognition_history
+                    WHERE id IN (
+                        SELECT id FROM recognition_history
+                        ORDER BY id DESC
+                        LIMIT -1 OFFSET 3000
+                    )
+                    """
                 )
         finally:
             conn.close()
+
+    # Asynchronous Google Cloud Platform Sync (Firestore 'lpr-db' & BigQuery 'lpr_query.lpr_history')
+    try:
+        from src.cloud_storage_manager import cloud_storage_manager
+        cloud_payload = dict(data)
+        cloud_payload["record_id"] = record_id
+        cloud_payload["timestamp"] = now_dt.isoformat()
+        cloud_payload["thumbnail"] = thumbnail_b64
+        cloud_payload["total_latency_ms"] = total_latency_ms
+        cloud_payload["province_prob"] = province_prob
+        cloud_payload["pattern"] = pattern
+        cloud_storage_manager.sync_recognition(cloud_payload, user_profile=user_info)
+    except Exception as e:
+        logger.warning(f"[CloudSync Dispatch Error] {e}")
 
     return record_id
 
@@ -408,6 +483,8 @@ def clear_history(older_than_days: Optional[int] = None) -> int:
                     cur = conn.execute("DELETE FROM recognition_history WHERE timestamp < ?", (cutoff,))
                 else:
                     cur = conn.execute("DELETE FROM recognition_history")
+                with _recent_saves_lock:
+                    _recent_saves.clear()
                 return cur.rowcount
         finally:
             conn.close()

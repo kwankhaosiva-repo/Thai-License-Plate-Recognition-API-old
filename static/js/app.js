@@ -26,7 +26,7 @@
     currentVideoFile: null,
     videoStreamSource: null,
     videoStreamTimer: null,
-    streamConfM1: 0.65,
+    streamConfM1: 0.80,
   };
 
 
@@ -127,6 +127,7 @@
     setupDropzone();
     setupRTSPStream();
     setupVideoStreamControls();
+    setupModelsModal();
     fetchModelTags();
     // Sync debug state from checkbox on page load (in case browser restores checked state)
     if (debugToggle) {
@@ -197,6 +198,82 @@
       uploadPanel.style.display = 'none';
       livePanel.style.display = 'block';
       stopVideoStreamSimulation(true);
+    });
+  }
+
+  // --- Models Architecture Modal ---
+  function setupModelsModal() {
+    const modelsPillBtn = document.getElementById('modelsPillBtn');
+    const modelsModal = document.getElementById('modelsModal');
+    const closeBtn = document.getElementById('closeModelsModalBtn');
+    const dismissBtn = document.getElementById('modalDismissBtn');
+
+    if (!modelsPillBtn || !modelsModal) return;
+
+    async function openModal() {
+      modelsModal.style.display = 'flex';
+      try {
+        const resp = await fetch('/api/health');
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data.models) {
+            const m = data.models;
+            const tags = data.model_tags || {};
+
+            const parseModel = (raw) => {
+              if (!raw) return { file: '-', tag: '' };
+              const parts = raw.split(' (');
+              const file = parts[0].trim();
+              const tag = parts.length > 1 ? parts[1].replace(')', '').trim() : '';
+              return { file, tag };
+            };
+
+            const setField = (infoId, archId, rawVal, fallbackTag) => {
+              const infoEl = document.getElementById(infoId);
+              const archEl = document.getElementById(archId);
+              const parsed = parseModel(rawVal);
+              if (infoEl && parsed.file) infoEl.textContent = parsed.file;
+              if (archEl) archEl.textContent = fallbackTag || parsed.tag || 'Neural Engine';
+            };
+
+            setField('mInfo1', 'mArch1', m.model_1, tags.model_1 || 'D-FINE Nano (MIT)');
+            setField('mInfo15', 'mArch15', m.model_1_5, tags.model_1_5 || 'MobileNetV3-Small');
+            setField('mInfo2', 'mArch2', m.model_2, tags.model_2 || 'D-FINE Nano (MIT)');
+            setField('mInfo3a', 'mArch3a', m.model_3a_thai_char_box, tags.char_box || 'RF-DETR Base');
+            setField('mInfo3aCls', 'mArch3aCls', m.model_3a_thai_char_classifier, tags.char_class_thai || 'MobileNetV2 (50 Classes)');
+            setField('mInfo3aLaoCls', 'mArch3aLaoCls', m.model_3a_lao_char_classifier, tags.char_class_lao || 'MobileNetV2 (34 Classes)');
+            setField('mInfo3aOcr', 'mArch3aOcr', m.model_3a_thai_ctc, tags.ocr_ctc || 'ResNetCRNN CTC');
+            setField('mInfo3b', 'mArch3b', m.model_3b_thai, tags.prov_thai || 'ResNet18-Grayscale (77 Provinces)');
+            setField('mInfo3bLao', 'mArch3bLao', m.model_3b_lao, tags.prov_lao || 'ResNet18-Grayscale (18 Provinces)');
+          }
+          if (data.device) {
+            const devEl = document.getElementById('mDeviceTag');
+            if (devEl) devEl.textContent = `⚡ Execution Device: ${data.device.toUpperCase()}`;
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to refresh models info:', err);
+      }
+    }
+
+    function closeModal() {
+      modelsModal.style.display = 'none';
+    }
+
+    modelsPillBtn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (dismissBtn) dismissBtn.addEventListener('click', closeModal);
+
+    modelsModal.addEventListener('click', (e) => {
+      if (e.target === modelsModal) {
+        closeModal();
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && modelsModal.style.display === 'flex') {
+        closeModal();
+      }
     });
   }
 
@@ -412,7 +489,8 @@
     const formData = new FormData();
     formData.append('file', videoFile);
     formData.append('debug', state.isDebug ? 'true' : 'false');
-    formData.append('sample_rate', '5');
+    formData.append('sample_rate', '2');
+    formData.append('conf_m1', '0.80');
 
     try {
       const resp = await fetch('/api/detect/video', {

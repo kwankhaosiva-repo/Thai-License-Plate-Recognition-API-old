@@ -25,3 +25,8 @@ requests
 tqdm
 scikit-learn
 pydantic
+
+# --- Google Cloud Platform ---
+google-cloud-firestore==2.31.0
+google-cloud-bigquery==3.45.2
+
