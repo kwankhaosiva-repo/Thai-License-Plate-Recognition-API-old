@@ -6,6 +6,7 @@
 .venv
 env/
 venv/
+.freebuff
 __pycache__/
 *.py[cod]
 *.so
@@ -16,7 +17,8 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Datasets & Training Runs (Exclude entirely from Docker build context)
+# Root models & dataset artifacts
+*.pt
 datasets/
 yolo_datasets/
 crops_all/
@@ -39,7 +41,7 @@ RESUME.docx
 rules.txt
 
 # Weights: Exclude bulky experimental & unused model checkpoints
-# (Preserves active production weights: D-FINE nano/small, MobileNetV2, ResNetCRNN OCR, ResNet18 province)
+# Saves ~1.2GB for lightning-fast Cloud Run cold-starts & lean container push
 weights/*.lock
 weights/*.download*
 weights/*backup*
@@ -50,7 +52,21 @@ weights/*rtdetr*
 weights/component_detector_rfdetr*
 weights/plate_detector_*rfdetr*
 weights/character_box_detector_rfdetr_small*
-weights/LibreRFDETR*
+weights/plate_detector_lao_rfdetr*
+weights/Libre*
+weights/*dfine_small*
+weights/*picodet*
+weights/plate_polygon_detector*
+weights/plate_quad_detector*
+weights/character_box_detector.pt
+weights/component_detector.pt
+weights/plate_character_detector.pt
+weights/province_detector_yolo_*
+weights/digit_classifier.pth
+weights/libre_yolov9_t.onnx
 weights/province_model.pth
+weights/province_model_lao.pth
 weights/province_model_resnet34_grayscale_thai.pth
+
+# Security: Never bake private service account keys into image
 lpr-car-plate-e4c1f71338f3.json

@@ -19,6 +19,7 @@ The entire pipeline is built with **100% commercially permissive architectures (
 - [Model 1 Benchmark & Selection Guide](#-model-1-candidate-benchmark--selection-guide)
 - [Full Model Catalog](#-complete-production-model-catalog)
 - [Configuration Guide (`src/config.py`)](#-configuration-guide)
+- [Google Cloud Platform Integration (Firestore & BigQuery)](#-google-cloud-platform-integration-firestore--bigquery)
 - [Training Pipeline](#-unified-candidate-training-pipeline)
 - [Benchmarking Suite](#-automated-benchmarking-suite)
 - [Cross-Platform C# (.NET) Integration](#-cross-platform-c-deployment-net)
@@ -46,11 +47,11 @@ flowchart TD
     S15 -->|"🇱🇦 Lao Layout\n(Prov Top / Chars Bottom)"| S2_LA["Stage 2: Lao Component Extractor\n(Flip-and-Detect Workflow: cv2.flip(0) -> RF-DETR)"]
 
     subgraph STAGE3_TH["Stage 3: Thailand Recognition Pipeline"]
-        S2_TH -->|"plate_char crop"| TH_CHAR_BOX["Model 3A (Box): D-FINE-Small Char Box Detector\n(Localizes each individual character + Subsumed Box Filter)"]
+        S2_TH -->|"plate_char crop"| TH_CHAR_BOX["Model 3A (Box): RF-DETR-Base Char Box Detector\n(Localizes each character with Deformable Attention & Zero Anchor Bias)"]
         TH_CHAR_BOX --> TH_CHAR_CLS["Model 3A (Cls): 50-Class Balanced Character Classifier\n(MobileNetV2: 40 Thai Letters + 10 Digits / 99.58% Val Top-1)"]
         S2_TH -->|"plate_char crop"| TH_OCR["Model 3A (OCR): ResNet18 + BiLSTM + CTC\n(Full Sequence OCR Engine)"]
         TH_CHAR_CLS & TH_OCR --> TH_FUSION["Smart Consonant-Digit Fusion &\nStroke Morphology Disambiguation (ศ vs ผ, ช vs ข)"]
-        S2_TH -->|"province crop"| TH_PROV["Model 3B: Thai Province Classifier\n(Grayscale ResNet34: 77 Provincial Classes)"]
+        S2_TH -->|"province crop"| TH_PROV["Model 3B: Thai Province Classifier\n(Grayscale ResNet18: 77 Provincial Classes / 43 MB)"]
     end
 
     subgraph STAGE3_LA["Stage 3: Laos Recognition Pipeline"]
@@ -114,6 +115,23 @@ flowchart LR
      - Reclaims faint trailing characters (e.g. dropped '7' in `ผว 7697`) when remaining right margin space is detected ($\ge 0.75 \times Median\_W$).
      - Reclaims dropped internal digits (e.g. slender '1' in `กข 713`) when internal spacing exceeds $0.48 \times Median\_W$.
 
+### 6. Dual Google Cloud Storage (Firestore & BigQuery) with Zero-Latency Async Sync
+- **The Problem:** Writing to cloud databases during real-time inference causes network I/O lag, crippling FPS and raising latency. Furthermore, BigQuery is optimized for analytics and text rows, but cannot efficiently store image binary crops.
+- **The Solution:**
+  1. **Dual Storage Architecture:**
+     - **Google Cloud Firestore (`lpr-db`)**: Real-time NoSQL document database storing full detection metadata, validation status, timestamps, user tags, and base64-encoded plate crop thumbnails for instant web inspection.
+     - **Google Cloud BigQuery (`lpr_query.lpr_history`)**: Analytical data warehouse storing structured tabular records for high-speed SQL queries, reporting, and vehicle traffic analytics.
+  2. **Non-Blocking Background Worker (`CloudStorageManager`):** Writes are dispatched to a dedicated thread pool executor (`ThreadPoolExecutor(max_workers=4)`). Inference completes with **0 ms added latency**.
+  3. **Cloud Run Native Detection:** The app detects the `K_SERVICE` environment variable on Google Cloud Run, automatically hiding ephemeral SQLite controls and defaulting to Cloud Firestore for production records.
+
+### 7. Industrial-Grade Motion-Gated Stream & 5-Second Dynamic Vehicle Session Aggregator
+- **Rain & Noise-Proof Motion Gating (0 ms Idle Latency):** Video frames pass through a $15 \times 15$ Gaussian blur, background subtractor (MOG2), and morphological opening ($5 \times 5$). Static roads, raindrops, and shadows bypass heavy AI inference completely ($0\text{ ms}$ processing time).
+- **Dynamic 5-Second Vehicle Session Consolidation:**
+  - Passing vehicles generate dozens of camera frames. Rather than saving 20 duplicate records for 1 car, the processor tracks the vehicle for a continuous 5.0-second window.
+  - Runs **majority voting** on plate characters and province, computes **mean confidence score**, and picks the highest-resolution plate crop.
+  - Saves **exactly 1 clean consolidated entry** to the database per vehicle event.
+- **High-Precision Thresholding (`conf_m1 = 0.80`):** Rejects road textures and barrier reflections with high-frequency sampling (`STREAM_FRAME_SKIP = 2`, `STREAM_TARGET_SAMPLES = 1`) to capture vehicles reliably on their first pass.
+
 ---
 
 ## ⚡ Model 1 Candidate Benchmark & Selection Guide
@@ -147,11 +165,11 @@ All Model 1 candidates have been trained and benchmarked on identical test sets 
 | **Stage 1.1 (Corner Regressor)**| `plate_corner_regressor_opset18.onnx` | MobileNetV3 Keypoint Regressor | $224 \times 224$ | `[1, 8]` (4 physical corners: $x_1, y_1 \dots x_4, y_4$) | **BSD-3** | ✅ Active (`~3.2ms CPU`) |
 | **Stage 1.5 (Country Cls)** | `country_classifier.pth` | MobileNetV3-Small | $128 \times 128$ | `[1, 2]` (0: Thai, 1: Laos) | **BSD-3** | ✅ Active (`~1.5ms CPU`) |
 | **Stage 2 (Component Detector)**| `component_detector_dfine_nano.pt` | D-FINE-Nano | $320 \times 160$ | `[1, 300, 4]` (`plate_char`, `province`) | **MIT** | ✅ Active (`~18ms CPU`) |
-| **Stage 3A (Char Box Detector)**| `character_box_detector_dfine_small.pt` / `character_box_detector_dfine_nano.pt` | D-FINE-Small / D-FINE-Nano | $160 \times 320$ | `[1, 300, 4]` (Individual character boxes + Subsumed Filter) | **MIT** | ✅ Active (`~35ms CPU`) |
+| **Stage 3A (Char Box Detector)**| `character_box_detector_rfdetr.pt` | RF-DETR-Base (Deformable Attention) | $160 \times 320$ | `[1, 300, 4]` (High-precision character localization) | **Apache-2.0** | ✅ Active (`~45ms CPU`) |
 | **Stage 3A (Thai Char Cls)** | `character_classifier.pth` | MobileNetV2 (50 Classes Balanced) | $64 \times 64$ | `[1, 50]` (Thai consonants & digits) | **BSD-3** | ✅ Active (`99.58% Val Top-1 / 99.89% Top-3`) |
 | **Stage 3A (Thai OCR CTC)** | `ocr_model.pth` | ResNet18 + BiLSTM + CTC | $32 \times 256$ | `[T, B, 71]` (CTC sequence logits) | **Apache-2.0** | ✅ Active (`~8.5ms CPU`) |
 | **Stage 3A (Lao Char Cls)** | `character_classifier_lao.pth` / `.onnx`| MobileNetV2 (34 Classes) | $64 \times 64$ | `[1, 34]` (Lao consonants & digits) | **BSD-3** | ✅ Active (`~1.8ms CPU`) |
-| **Stage 3B (Thai Province)** | `province_model_resnet34_grayscale_thai.pth` | Grayscale ResNet34 | $80 \times 256$ | `[1, 77]` (77 Thai Provinces) | **BSD-3** | ✅ Active (`99.10% Val / 98.71% Test Top-1`) |
+| **Stage 3B (Thai Province)** | `province_model_grayscale_thai.pth` | Grayscale ResNet18 | $64 \times 256$ | `[1, 77]` (77 Thai Provinces) | **BSD-3** | ✅ Active (`99.20% Val Top-1 / 43 MB`) |
 | **Stage 3B (Lao Province)** | `province_model_grayscale_lao.pth` | Grayscale ResNet18 | $64 \times 256$ | `[1, 18]` (18 Lao Provinces) | **BSD-3** | ✅ Active (`99.2% Top-1`) |
 
 ---
@@ -165,37 +183,76 @@ All system parameters, active model filenames, and hardware acceleration flags a
 
 class Config:
     # --- Model 1: Plate Detector ---
-    # Options (fastest -> highest accuracy):
-    #   "plate_detector_picodet_s.pt"      <- PicoDet-S (⚡ Fastest: 6.5 ms CPU, 3.8 MB ONNX)
-    #   "plate_detector_picodet_m.pt"      <- PicoDet-M (⚡ Medium: 12.0 ms CPU, 8.9 MB ONNX)
-    #   "plate_detector_dfine_nano.pt"     <- D-FINE Nano (⚡ Recommended: 27 ms CPU, 15 MB ONNX)
-    #   "plate_detector_dfine_small.pt"    <- D-FINE Small (High precision: 63 ms CPU, 40 MB ONNX)
-    #   "plate_detector_rfdetr_nano.pt"    <- RF-DETR-Nano (Transformer: 42 ms CPU)
-    MODEL_1_FILENAME = "plate_detector_dfine_nano.pt"
+    MODEL_1_FILENAME = "plate_detector_dfine_nano.pt"  # ⚡ D-FINE Nano (~27ms CPU, 15 MB)
 
     # --- Model 2: Component Detector ---
-    #   "component_detector_dfine_nano.pt"   <- D-FINE Nano (⚡ recommended: MIT, high mAP)
-    #   "component_detector_rfdetr_small.pt" <- RF-DETR-Small (Apache-2.0)
-    MODEL_2_FILENAME = "component_detector_dfine_nano.pt"
+    MODEL_2_FILENAME = "component_detector_dfine_nano.pt"  # ⚡ D-FINE Nano (plate_char & province)
 
     # --- Model 3A: Character Box Detector ---
-    #   "character_box_detector_dfine_small.pt" <- D-FINE Small (⚡ recommended: MIT, precise localization)
-    #   "character_box_detector_dfine_nano.pt"  <- D-FINE Nano (⚡ lightweight)
-    MODEL_3A_FILENAME = "character_box_detector_dfine_small.pt"
+    MODEL_3A_FILENAME = "character_box_detector_rfdetr.pt"  # ⚡ RF-DETR-Base (Deformable Attention Transformer)
 
-    # --- Model 3A: OCR Engine (ResNet-CRNN + CTC) ---
+    # --- Model 3A: Character Classifier & CTC ---
+    CHAR_CLASSIFIER_THAI_FILENAME = "character_classifier.pth"
     OCR_FILENAME = "ocr_model.pth"
 
     # --- Model 3B: Province Classifiers ---
-    #   "province_model_resnet34_grayscale_thai.pth" <- Grayscale ResNet34 (⚡ 80x256, 99.10% Val Top-1)
-    MODEL_3B_THAI_FILENAME = "province_model_resnet34_grayscale_thai.pth"
+    MODEL_3B_THAI_FILENAME = "province_model_grayscale_thai.pth"  # ⚡ ResNet18 Grayscale (43 MB, 99.20% Top-1)
     MODEL_3B_LAO_FILENAME  = "province_model_grayscale_lao.pth"
 
-    # --- Lao Plate Detector ---
-    MODEL_LAO_FILENAME = "plate_detector_lao_dfine_nano.pt"
+    # --- Real-Time Stream Video Configuration ---
+    STREAM_CONF_M1 = 0.80          # Model 1 plate confidence threshold (0.80 rejects road textures & noise)
+    VIDEO_CONF_M1 = 0.80           # Batch video upload threshold
+    STREAM_FRAME_SKIP = 2          # Sample frames frequently during car movement
+    STREAM_TARGET_SAMPLES = 1      # Locks on immediately upon detection, aggregates up to 5 diverse frames
+    STREAM_SESSION_SEC = 5.0       # 5-second tracking window: averages multiple captures of the same car into 1 record
+
+    # --- Google Cloud Platform (Firestore & BigQuery) ---
+    GCP_PROJECT_ID = "lpr-car-plate"
+    FIRESTORE_DATABASE_ID = "lpr-db"
+    FIRESTORE_COLLECTION = "recognition_history"
+    BIGQUERY_DATASET = "lpr_query"
+    BIGQUERY_TABLE = "lpr_history"
 ```
 
 To switch models on the fly, simply update the filename in `src/config.py`. The backend automatically adapts the inference wrapper to PicoDet, D-FINE, RF-DETR, or RT-DETRv2 without server restart.
+
+---
+
+## ☁️ Google Cloud Platform Integration (Firestore & BigQuery)
+
+The microservice features an enterprise-grade, dual-cloud persistence architecture integrating **Google Cloud Firestore** and **Google Cloud BigQuery** with zero impact on real-time inference latency.
+
+```mermaid
+flowchart TD
+    INF["⚡ Real-Time AI Inference Pipeline\n(FastAPI / RTSP Stream / Upload)"] --> RES["Consolidated Plate Detection Result"]
+    
+    RES -->|"Non-blocking submit()"| POOL["ThreadPoolExecutor\n(max_workers=4, 0ms latency impact)"]
+    
+    subgraph GCP["Google Cloud Platform Infrastructure"]
+        POOL -->|"1. Document Write (Set)"| FS["🔥 Cloud Firestore (Database: 'lpr-db')\nCollection: 'recognition_history'"]
+        POOL -->|"2. Analytical Row Stream"| BQ["📊 Cloud BigQuery (Dataset: 'lpr_query')\nTable: 'lpr_history'"]
+        
+        FS -.->|"ETL Reconciliation\n/api/cloud/sync/firestore-to-bigquery"| BQ
+    end
+    
+    FS --> UI["🌐 Web History Dashboard (with base64 plate crops)"]
+    BQ --> BI["📈 Business Intelligence / Metabase / Looker Studio"]
+```
+
+### 1. Firestore vs BigQuery Separation of Concerns
+| Cloud Component | Target Database / Dataset | Primary Responsibility | Data Format & Content |
+| :--- | :--- | :--- | :--- |
+| **Google Cloud Firestore** | Database: `lpr-db`<br>Collection: `recognition_history` | Real-time interactive UI feeds, user profiles, audit logs | Rich JSON documents with **Base64-encoded plate crop thumbnails**, validation flags, pattern names, and full confidence dicts. |
+| **Google Cloud BigQuery** | Dataset: `lpr_query`<br>Table: `lpr_history` | Long-term big data analytics, SQL queries, traffic reporting | Optimized flat SQL rows (`record_id`, `plate_text`, `country`, `province`, `is_valid`, `pattern`, `total_latency_ms`, `timestamp`). |
+
+### 2. Zero-Latency Asynchronous Architecture
+- Database operations run via [`src/cloud_storage_manager.py`](file:///Users/kwankhaos/Desktop/Personal%20Projects/Thai-License-Plate-Recognition-API-old/src/cloud_storage_manager.py) in a background thread pool executor.
+- Real-time video streams and REST API calls return predictions immediately without waiting for cloud round-trips.
+
+### 3. Serverless Cloud Run Auto-Detection
+- When deployed on **Google Cloud Run**, the application detects `K_SERVICE`, securely loads Google Application Default Credentials (ADC), and automatically adapts the web UI:
+  - Hides ephemeral container SQLite toggles.
+  - Automatically routes queries and history rendering to **Cloud Firestore (`lpr-db`)**.
 
 ---
 
