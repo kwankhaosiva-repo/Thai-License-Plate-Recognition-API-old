@@ -1269,6 +1269,8 @@ class LPRPipelineService:
         conf_m1: float = 0.35,
         conf_m2: float = 0.25,
         allow_low_conf_recovery: bool = True,
+        record_history: bool = True,
+        user: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Executes the end-to-end multi-country recognition pipeline on an OpenCV BGR image:
@@ -2572,12 +2574,13 @@ class LPRPipelineService:
         }
 
         self.latest_stream_detection = result_dict
-        # Automatically record to recognition history
-        try:
-            thumb = rectified_plate if (rectified_plate is not None and rectified_plate.size > 0) else plate_crop
-            save_recognition(result_dict, thumbnail_bgr=thumb, raw_bgr=raw_display)
-        except Exception as e:
-            logger.warning(f"Failed to record recognition to history: {e}")
+        # Automatically record to recognition history (for static uploads / standalone calls)
+        if record_history:
+            try:
+                thumb = rectified_plate if (rectified_plate is not None and rectified_plate.size > 0) else plate_crop
+                save_recognition(result_dict, thumbnail_bgr=thumb, raw_bgr=raw_display, user=user)
+            except Exception as e:
+                logger.warning(f"Failed to record recognition to history: {e}")
         return result_dict
 
 
@@ -2840,6 +2843,56 @@ def api_clear_history(days: Optional[int] = Query(None)):
     return {"status": "success", "deleted_records": deleted}
 
 
+# --- Google Cloud (Firestore & BigQuery) Endpoints ---
+
+@app.get("/api/cloud/status")
+def api_cloud_status():
+    """Returns real-time connection status for Firestore (lpr-db) and BigQuery (lpr_query)."""
+    from src.cloud_storage_manager import cloud_storage_manager
+    return cloud_storage_manager.get_status()
+
+
+@app.get("/api/cloud/bigquery/records")
+def api_cloud_bigquery_records(limit: int = Query(50, ge=1, le=200)):
+    """Queries and returns the latest live records directly from BigQuery table (lpr_query.lpr_history)."""
+    from src.cloud_storage_manager import cloud_storage_manager
+    rows = cloud_storage_manager.query_bigquery_records(limit=limit)
+    return {
+        "status": "success",
+        "source": "BigQuery",
+        "dataset": getattr(cfg, "BIGQUERY_DATASET", "lpr_query"),
+        "table": getattr(cfg, "BIGQUERY_TABLE", "lpr_history"),
+        "count": len(rows),
+        "records": rows,
+    }
+
+
+@app.get("/api/cloud/firestore/records")
+def api_cloud_firestore_records(limit: int = Query(50, ge=1, le=100)):
+    """Queries and returns the latest live documents directly from Firestore (lpr-db)."""
+    from src.cloud_storage_manager import cloud_storage_manager
+    docs = cloud_storage_manager.query_firestore_records(limit=limit)
+    return {
+        "status": "success",
+        "source": "Firestore",
+        "database": getattr(cfg, "FIRESTORE_DATABASE_ID", "lpr-db"),
+        "collection": getattr(cfg, "FIRESTORE_COLLECTION", "recognition_history"),
+        "count": len(docs),
+        "records": docs,
+    }
+
+
+@app.api_route("/api/cloud/sync/firestore-to-bigquery", methods=["GET", "POST"])
+def api_sync_firestore_to_bigquery(limit: int = Query(1000, ge=1, le=5000)):
+    """
+    Periodic ETL synchronization endpoint designed for Google Cloud Scheduler.
+    Reads missing recognition records from Firestore and batch inserts them into BigQuery.
+    Idempotent: will never insert duplicate rows.
+    """
+    from src.cloud_storage_manager import cloud_storage_manager
+    return cloud_storage_manager.sync_firestore_to_bigquery(limit=limit)
+
+
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
     """Silence browser favicon 404 requests."""
@@ -2853,6 +2906,7 @@ async def detect_image_endpoint(
     debug: Optional[bool] = Form(None),
     conf_m1: float = Form(0.35),
     conf_m2: float = Form(0.25),
+    current_user: Dict[str, Any] = Depends(get_current_user_profile),
 ):
     # Use cfg.DEBUG_MODE as default; dashboard can still override per-request
     use_debug = cfg.DEBUG_MODE if debug is None else debug
@@ -2879,6 +2933,7 @@ async def detect_image_endpoint(
             debug=use_debug,
             conf_m1=conf_m1,
             conf_m2=conf_m2,
+            user=current_user,
         )
         res["filename"] = f.filename
         results.append(res)
@@ -2890,7 +2945,8 @@ async def detect_image_endpoint(
 async def detect_video_endpoint(
     file: UploadFile = File(...),
     debug: Optional[bool] = Form(None),
-    sample_rate: int = Form(5),
+    sample_rate: int = Form(2),
+    conf_m1: float = Form(0.80),
 ):
     use_debug = cfg.DEBUG_MODE if debug is None else debug
     if pipeline_service is None:
@@ -2919,7 +2975,12 @@ async def detect_video_endpoint(
 
             if frame_count % sample_rate == 0:
                 sec = round(frame_count / fps, 2)
-                res = pipeline_service.process_image(frame, debug=use_debug)
+                res = pipeline_service.process_image(
+                    frame,
+                    debug=use_debug,
+                    conf_m1=conf_m1,
+                    record_history=False,
+                )
                 if res.get("detected"):
                     res["timestamp_sec"] = sec
                     res["frame_idx"] = frame_count
@@ -2949,7 +3010,7 @@ STREAM_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 @app.post("/api/stream/upload_video")
 async def upload_video_for_stream(
     file: UploadFile = File(...),
-    conf_m1: float = Form(0.65),
+    conf_m1: float = Form(0.80),
 ):
     """
     Saves an uploaded video file to streamable storage and initializes real-time RTSP simulation.
@@ -3013,14 +3074,18 @@ class RTSPLPRProcessor:
         min_vehicle_area: int = 1800,
         cooldown_sec: float = 5.0,
         session_duration_sec: float = 5.0,
-        target_samples: int = 2,
-        conf_m1: float = 0.65,
+        target_samples: int = 1,
+        max_session_frames: int = 5,
+        frame_skip: int = 1,
+        conf_m1: float = 0.80,
     ):
         self.pipeline = pipeline_service
         self.min_vehicle_area = min_vehicle_area
         self.cooldown_sec = cooldown_sec
         self.session_duration_sec = session_duration_sec
         self.target_samples = target_samples
+        self.max_session_frames = max_session_frames
+        self.frame_skip = frame_skip
         self.conf_m1 = conf_m1
         self.last_emit_time = 0.0
         self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(history=200, varThreshold=25, detectShadows=False)
@@ -3030,6 +3095,7 @@ class RTSPLPRProcessor:
         self.session_saved = False
         self.last_consolidated: Optional[Dict[str, Any]] = None
         self.frame_idx = 0
+        self.last_inferred_frame = -999
 
     def reset(self):
         self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(history=200, varThreshold=25, detectShadows=False)
@@ -3040,15 +3106,16 @@ class RTSPLPRProcessor:
         self.last_consolidated = None
         self.frame_idx = 0
         self.last_emit_time = 0.0
+        self.last_inferred_frame = -999
 
     def _is_same_plate(self, text_a: str, text_b: str) -> bool:
         if not text_a or not text_b:
-            return True
+            return False
         c_a = text_a.strip().replace(" ", "").replace("-", "")
         c_b = text_b.strip().replace(" ", "").replace("-", "")
         if c_a == c_b:
             return True
-        # Matching registration digits (e.g. '3296' in both 'ญณ 3296' and 'ฉญฌ 3296')
+        # Matching registration digits (e.g. '7934' in both '1ฒส 7934' and 'ฒส 7934')
         d_a = "".join(ch for ch in c_a if ch.isdigit())
         d_b = "".join(ch for ch in c_b if ch.isdigit())
         if d_a and d_b and (d_a == d_b or (len(d_a) >= 3 and d_a in d_b) or (len(d_b) >= 3 and d_b in d_a)):
@@ -3095,12 +3162,22 @@ class RTSPLPRProcessor:
         now = time.time()
         has_motion = self.detect_vehicle_motion(frame)
 
+        # Check if vehicle left the scene (idle road for > 1.5s):
+        if not has_motion:
+            if self.session_start_time > 0 and (now - self.last_emit_time) > 1.5:
+                self.session_buffer.clear()
+                self.session_start_time = 0.0
+                self.session_anchor_plate = None
+                self.session_saved = False
+                self.last_inferred_frame = -999
+
         # Check if the active 5-second session has expired:
         if self.session_start_time > 0 and (now - self.session_start_time) > self.session_duration_sec:
             self.session_buffer.clear()
             self.session_start_time = 0.0
             self.session_anchor_plate = None
             self.session_saved = False
+            self.last_inferred_frame = -999
 
         # Within cooldown: keep displaying confirmed vehicle detection if road is idle
         if self.last_consolidated and (now - self.last_emit_time) < self.cooldown_sec:
@@ -3113,7 +3190,27 @@ class RTSPLPRProcessor:
                 return None, False, False
             return self.last_consolidated, False, False
 
+        # Determine active 5-second window status
+        in_active_window = (self.session_start_time > 0) and ((now - self.session_start_time) <= self.session_duration_sec)
+
+        # Feature 1: Max 5 Frames Cap per Vehicle Session
+        # Once 5 diverse frames have been captured and averaged for this vehicle,
+        # bypass heavy neural inference and directly reuse the consolidated 5-frame average!
+        if in_active_window and len(self.session_buffer) >= self.max_session_frames:
+            return self.last_consolidated, True, True
+
+        # Feature 2: Frame Skipping across Vehicle Movement Duration
+        # Avoid processing consecutive identical video frames. Skip `self.frame_skip` frames
+        # between neural inferences to capture diverse snapshots across the vehicle's movement.
+        frames_since_last = self.frame_idx - self.last_inferred_frame
+        if in_active_window and frames_since_last < (self.frame_skip + 1):
+            preview_res = self.last_consolidated or (self.session_buffer[-1] if self.session_buffer else None)
+            is_confirmed = len(self.session_buffer) >= self.target_samples
+            return preview_res, is_confirmed, True
+
         # Vehicle motion detected: run LPR pipeline with strict stream threshold
+        # (record_history=False prevents flooding the database with individual stream frames!)
+        self.last_inferred_frame = self.frame_idx
         current_res = None
         if self.pipeline is not None:
             res = self.pipeline.process_image(
@@ -3121,6 +3218,7 @@ class RTSPLPRProcessor:
                 debug=debug,
                 conf_m1=self.conf_m1,
                 allow_low_conf_recovery=False,
+                record_history=False,
             )
             if res.get("detected"):
                 p_text = res.get("plate_text", "").replace(" ", "").replace("-", "")
@@ -3138,14 +3236,14 @@ class RTSPLPRProcessor:
                     current_res = res
                     raw_plate = res.get("plate_text", "")
 
-                    # Determine if this belongs to the active 5-second vehicle session ("bring to the same plate")
-                    in_active_window = (self.session_start_time > 0) and ((now - self.session_start_time) <= self.session_duration_sec)
                     is_same_car = in_active_window and self._is_same_plate(raw_plate, self.session_anchor_plate or "")
 
                     if is_same_car:
-                        self.session_buffer.append(res)
-                    else:
-                        # New passing vehicle: start a fresh 5-second session
+                        if len(self.session_buffer) < self.max_session_frames:
+                            self.session_buffer.append(res)
+                    elif is_valid and len(p_text) >= 3:
+                        # New passing vehicle: ONLY start a fresh session on a genuine valid plate!
+                        # (Rejects exit noise / fragments like '4ฐ' or '17117' when car drives away)
                         self.session_start_time = now
                         self.session_anchor_plate = raw_plate
                         self.session_buffer = [res]
@@ -3161,13 +3259,18 @@ class RTSPLPRProcessor:
                             if self.pipeline is not None:
                                 self.pipeline.latest_stream_detection = consolidated
 
-                            # Save exactly 1 clean entry to history for this vehicle session
+                            # Save exactly 1 clean entry to history for this vehicle session:
                             if not self.session_saved and consolidated.get("is_valid"):
                                 try:
+                                    # Use best crop from the session buffer
+                                    best_sample = max(self.session_buffer, key=lambda s: s.get("confidence", {}).get("plate_detection", 0.0))
+                                    if "crops" in best_sample and best_sample["crops"].get("plate_rectified"):
+                                        consolidated.setdefault("crops", {})["plate_rectified"] = best_sample["crops"]["plate_rectified"]
+                                    consolidated["dedup_window_sec"] = self.cooldown_sec
                                     save_recognition(consolidated)
                                     self.session_saved = True
-                                except Exception:
-                                    pass
+                                except Exception as e:
+                                    logger.warning(f"Failed to record stream consolidated recognition: {e}")
 
                             return consolidated, True, True
                     else:
@@ -3232,7 +3335,7 @@ def mjpeg_stream_generator(
     source: str,
     debug: bool = False,
     loop: bool = True,
-    conf_m1: float = 0.65,
+    conf_m1: float = 0.80,
 ):
     cam_source = int(source) if source.isdigit() else source
     cap = cv2.VideoCapture(cam_source)
@@ -3245,13 +3348,15 @@ def mjpeg_stream_generator(
         fps = 25.0
     frame_delay = 1.0 / fps
 
-    stream_m1 = conf_m1 if (conf_m1 and conf_m1 >= 0.20) else getattr(cfg, "STREAM_CONF_M1", 0.65)
+    stream_m1 = conf_m1 if (conf_m1 and conf_m1 >= 0.20) else getattr(cfg, "STREAM_CONF_M1", 0.80)
     processor = RTSPLPRProcessor(
         pipeline_service,
         min_vehicle_area=getattr(cfg, "STREAM_MIN_VEHICLE_AREA", 1800),
         cooldown_sec=getattr(cfg, "STREAM_COOLDOWN_SEC", 5.0),
         session_duration_sec=getattr(cfg, "STREAM_SESSION_SEC", 5.0),
-        target_samples=getattr(cfg, "STREAM_TARGET_SAMPLES", 2),
+        target_samples=getattr(cfg, "STREAM_TARGET_SAMPLES", 1),
+        max_session_frames=getattr(cfg, "STREAM_MAX_SESSION_FRAMES", 5),
+        frame_skip=getattr(cfg, "STREAM_FRAME_SKIP", 1),
         conf_m1=stream_m1,
     ) if pipeline_service else None
 
@@ -3316,13 +3421,14 @@ def mjpeg_stream_generator(
             cv2.putText(frame, disp_plate, (20, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2 if cached_text else 1)
 
             if cached_prov:
-                disp_prov = f"PROV:  {cached_prov} | 5s AVG ({cached_samples} frames -> 1 result)"
+                disp_prov = f"PROV:  {cached_prov} | 5s AVG ({cached_samples}/5 frames -> 1 result)"
             else:
-                disp_prov = f"STATUS: MONITORING LANE (M1 THRESHOLD: {int(stream_m1 * 100)}%)"
+                disp_prov = f"STATUS: MONITORING LANE (M1: {int(stream_m1 * 100)}% | SKIP: {getattr(processor, 'frame_skip', 3)}f)"
             cv2.putText(frame, disp_prov, (20, 84), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (16, 185, 129) if cached_prov else (100, 120, 140), 1)
 
-            latency_txt = f"LATENCY: {res.get('timing', {}).get('total_ms', 0)}ms" if (has_vehicle_motion and res) else "LATENCY: 0ms (GATE IDLE)"
-            cv2.putText(frame, latency_txt, (20, 106), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 240, 255) if has_vehicle_motion else (80, 180, 120), 1)
+            latency_val = res.get('timing', {}).get('total_ms', 0) if (has_vehicle_motion and res) else 0
+            latency_txt = f"LATENCY: {latency_val}ms (PROCESSED {cached_samples}/5)" if latency_val > 0 else "LATENCY: 0ms (FRAME SKIP / IDLE)"
+            cv2.putText(frame, latency_txt, (20, 106), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 240, 255) if latency_val > 0 else (80, 180, 120), 1)
 
             ret_enc, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
             if not ret_enc:
@@ -3346,7 +3452,7 @@ def stream_mjpeg_endpoint(
     source: str = Query("0"),
     debug: bool = Query(False),
     loop: bool = Query(True),
-    conf_m1: float = Query(0.65, ge=0.20, le=0.95),
+    conf_m1: float = Query(0.80, ge=0.20, le=0.95),
 ):
     return StreamingResponse(
         mjpeg_stream_generator(source, debug=debug, loop=loop, conf_m1=conf_m1),

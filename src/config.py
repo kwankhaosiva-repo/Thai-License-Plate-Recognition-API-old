@@ -68,15 +68,26 @@ class Config:
     # --- Model 3B: Lao Province Classifier ---
     MODEL_3B_LAO_FILENAME = "province_model_grayscale_lao.pth"
 
-    # --- Real-Time Stream Video Configuration ---
-    # Model 1 Plate Confidence Threshold for real-time video streams:
-    # Real-time streaming requires a stricter threshold (0.60 - 0.70) than static single-image uploads (0.35)
-    # to completely reject stationary background patterns, road textures, and empty walls.
-    STREAM_CONF_M1 = 0.65
+    # --- Real-Time Stream & Video Configuration ---
+    # Model 1 Plate Confidence Threshold for real-time video streams and video uploads:
+    # Set to 0.80 for sharp, high-confidence detection and clean rejection of background clutter.
+    STREAM_CONF_M1 = 0.80
+    VIDEO_CONF_M1 = 0.80
     STREAM_MIN_VEHICLE_AREA = 1800
-    STREAM_TARGET_SAMPLES = 2   # Initial lock-on (2 frames) to begin vehicle aggregation session
-    STREAM_SESSION_SEC = 5.0    # 5-second tracking & aggregation window: accumulates and averages frames of the same plate into 1 result
-    STREAM_COOLDOWN_SEC = 5.0   # 5-second debounce window to prevent duplicate records for the same passing vehicle
+    STREAM_TARGET_SAMPLES = 1     # Immediate lock-on on valid detection, then aggregates up to 5 frames
+    STREAM_MAX_SESSION_FRAMES = 5 # Maximum frames to process per vehicle session (caps compute, averages 5 diverse frames)
+    STREAM_FRAME_SKIP = 2         # Skip only 1 frame for higher frequency detection during car movement (captures passing cars reliably)
+    STREAM_SESSION_SEC = 5.0      # 5-second tracking & aggregation window: accumulates and averages frames of the same plate into 1 result
+    STREAM_COOLDOWN_SEC = 5.0     # 5-second debounce window to prevent duplicate records for the same passing vehicle
+
+    # --- Google Cloud Platform (Firestore & BigQuery) Configuration ---
+    GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "lpr-car-plate")
+    GCP_KEY_FILENAME = os.environ.get("GCP_KEY_FILENAME", "lpr-car-plate-e4c1f71338f3.json")
+    FIRESTORE_DATABASE_ID = os.environ.get("FIRESTORE_DATABASE_ID", "lpr-db")
+    FIRESTORE_COLLECTION = os.environ.get("FIRESTORE_COLLECTION", "recognition_history")
+    BIGQUERY_DATASET = os.environ.get("BIGQUERY_DATASET", "lpr_query")
+    BIGQUERY_TABLE = os.environ.get("BIGQUERY_TABLE", "lpr_history")
+    GCP_CLOUD_SYNC_ENABLED = os.environ.get("GCP_CLOUD_SYNC_ENABLED", "1") == "1"
 
     # ============================================================
     # (No need to edit below unless you know what you're doing)

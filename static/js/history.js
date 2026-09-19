@@ -41,6 +41,13 @@ document.addEventListener("DOMContentLoaded", () => {
   const btnExportCsv = document.getElementById("btnExportCsv");
   const btnClearHistory = document.getElementById("btnClearHistory");
 
+  // Data Source & Cloud Elements
+  const histSourceSwitcher = document.getElementById("histSourceSwitcher");
+  const btnSourceLocal = document.getElementById("btnSourceLocal");
+  const btnSourceBigQuery = document.getElementById("btnSourceBigQuery");
+  const historyTableHead = document.getElementById("historyTableHead");
+  let currentSource = "local"; // "local" | "cloud"
+
   // Modal Elements
   const histModal = document.getElementById("histModal");
   const btnCloseModal = document.getElementById("btnCloseModal");
@@ -140,6 +147,29 @@ document.addEventListener("DOMContentLoaded", () => {
   // Load Paginated History Table
   async function loadHistory() {
     try {
+      if (currentSource === "cloud") {
+        historyTableBody.innerHTML = `
+          <tr>
+            <td colspan="6" style="text-align: center; padding: 40px; color: var(--accent-cyan);">
+              ☁️ Loading Cloud History from Firestore (lpr-db)...
+            </td>
+          </tr>
+        `;
+        const res = await fetch(`/api/cloud/firestore/records?limit=50`);
+        if (!res.ok) throw new Error("Firestore API returned " + res.status);
+        const data = await res.json();
+        renderCloudTable(data.records || []);
+
+        lblShowing.textContent = data.records?.length || 0;
+        lblTotal.textContent = data.count || 0;
+        lblCurrentPage.textContent = 1;
+        lblTotalPages.textContent = 1;
+        btnPrevPage.disabled = true;
+        btnNextPage.disabled = true;
+        return;
+      }
+
+      // Local SQLite Mode
       const dateRange = getDateRange();
       const params = new URLSearchParams({
         page: currentPage,
@@ -169,7 +199,7 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch (err) {
       historyTableBody.innerHTML = `
         <tr>
-          <td colspan="9" style="text-align: center; padding: 40px; color: var(--accent-red);">
+          <td colspan="10" style="text-align: center; padding: 40px; color: var(--accent-red);">
             Failed to load recognition history: ${err.message}
           </td>
         </tr>
@@ -177,13 +207,112 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // Render Table Rows
-  function renderTable(records) {
-    currentRecordsMap = {};
+  // Render Cloud (Firestore) History Table Rows
+  function renderCloudTable(records) {
+    if (historyTableHead) {
+      historyTableHead.innerHTML = `
+        <tr>
+          <th style="width: 110px;">Crop</th>
+          <th style="width: 170px;">Timestamp (UTC+7)</th>
+          <th style="width: 100px;">Country</th>
+          <th style="width: 170px;">Plate Number</th>
+          <th style="width: 160px;">Province</th>
+          <th style="width: 160px;">Pattern</th>
+          <th style="width: 90px;">Validity</th>
+          <th style="width: 150px;">Captured By</th>
+          <th style="width: 90px;">Latency</th>
+        </tr>
+      `;
+    }
+
     if (!records || records.length === 0) {
       historyTableBody.innerHTML = `
         <tr>
           <td colspan="9" style="text-align: center; padding: 48px; color: var(--text-muted);">
+            No records found in Cloud Firestore (lpr-db).
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    const rowsHtml = records.map((r) => {
+      const isThai = (r.country || "Thai") === "Thai";
+      const countryBadge = isThai
+        ? `<span class="badge-country thai">🇹🇭 Thai</span>`
+        : `<span class="badge-country laos">🇱🇦 Laos</span>`;
+
+      const validBadge = r.is_valid
+        ? `<span class="badge-valid">VALID</span>`
+        : `<span class="badge-invalid">INVALID</span>`;
+
+      const userTag = r.user_name || r.user_email || "Guest";
+      const latency = r.total_latency_ms || r.latency_ms || 0;
+
+      // Crop image from Firestore (base64)
+      const cropSrc = r.plate_crop_base64
+        ? `data:image/jpeg;base64,${r.plate_crop_base64}`
+        : null;
+      const cropHtml = cropSrc
+        ? `<img src="${cropSrc}" style="width:90px; height:38px; object-fit:cover; border-radius:5px; border:1px solid rgba(56,189,248,0.25);" />`
+        : `<span style="font-size:0.7rem; color:var(--text-muted);">No image</span>`;
+
+      const ts = r.timestamp || "-";
+
+      return `
+        <tr>
+          <td>${cropHtml}</td>
+          <td style="font-family: var(--font-mono); font-size: 0.8rem; color: #38bdf8;">${escapeHtml(ts)}</td>
+          <td>${countryBadge}</td>
+          <td><span class="hist-plate-badge" style="font-size: 0.92rem;">${escapeHtml(r.plate_text || r.plate_number || "-")}</span></td>
+          <td style="font-weight: 600; color: #f8fafc;">${escapeHtml(r.province || "-")}</td>
+          <td style="font-size: 0.8rem; color: var(--text-secondary);">${escapeHtml(r.pattern || "-")}</td>
+          <td>${validBadge}</td>
+          <td>
+            <span style="font-size: 0.74rem; font-family: var(--font-mono); color: #94a3b8; background: rgba(255,255,255,0.06); padding: 2px 7px; border-radius: 4px;">
+              👤 ${escapeHtml(userTag)}
+            </span>
+          </td>
+          <td style="font-family: var(--font-mono); font-weight: 600; color: var(--accent-cyan); font-size: 0.8rem;">${latency} ms</td>
+        </tr>
+      `;
+    }).join("");
+
+    historyTableBody.innerHTML = rowsHtml;
+  }
+
+  // Render Table Rows (Local SQLite)
+  function renderTable(records) {
+    if (historyTableHead) {
+      historyTableHead.innerHTML = `
+        <tr>
+          <th style="width: 110px;">Crop</th>
+          <th class="sortable" data-sort="timestamp" style="width: 170px;">
+            Timestamp <span id="sortIconTimestamp">▼</span>
+          </th>
+          <th style="width: 120px;">Country</th>
+          <th class="sortable" data-sort="plate_text" style="width: 180px;">
+            Plate Number <span id="sortIconPlate"></span>
+          </th>
+          <th class="sortable" data-sort="province" style="width: 170px;">
+            Province <span id="sortIconProvince"></span>
+          </th>
+          <th style="width: 180px;">Pattern</th>
+          <th style="width: 100px;">Validity</th>
+          <th style="width: 140px;">Captured By</th>
+          <th class="sortable" data-sort="total_latency_ms" style="width: 110px;">
+            Latency <span id="sortIconLatency"></span>
+          </th>
+          <th style="width: 90px; text-align: center;">Action</th>
+        </tr>
+      `;
+    }
+
+    currentRecordsMap = {};
+    if (!records || records.length === 0) {
+      historyTableBody.innerHTML = `
+        <tr>
+          <td colspan="10" style="text-align: center; padding: 48px; color: var(--text-muted);">
             No license plate recognition logs found matching current filters.
           </td>
         </tr>
@@ -206,6 +335,8 @@ document.addEventListener("DOMContentLoaded", () => {
         ? `<img src="${r.thumbnail}" alt="Crop" class="hist-thumb btn-thumb-zoom" data-record-id="${r.record_id}" title="🔍 Click to zoom / expand image">`
         : `<div class="hist-thumb" style="display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:10px;">NO CROP</div>`;
 
+      const userTag = r.user_email || r.user_id || "Guest";
+
       return `
         <tr data-record-id="${r.record_id}">
           <td>${thumbImg}</td>
@@ -215,6 +346,11 @@ document.addEventListener("DOMContentLoaded", () => {
           <td style="font-weight: 600; color: #fff;">${escapeHtml(r.province || "-")}</td>
           <td style="font-size: 0.8rem; color: var(--text-secondary);">${escapeHtml(r.pattern || "-")}</td>
           <td>${validBadge}</td>
+          <td>
+            <span style="font-size: 0.74rem; font-family: var(--font-mono); color: #94a3b8; background: rgba(255,255,255,0.06); padding: 2px 7px; border-radius: 4px;" title="User: ${escapeHtml(userTag)}">
+              👤 ${escapeHtml(userTag)}
+            </span>
+          </td>
           <td style="font-family: var(--font-mono); font-weight: 600; color: var(--accent-cyan);">${r.total_latency_ms || 0} ms</td>
           <td style="text-align: center;">
             <button type="button" class="btn-hist btn-inspect" data-record-id="${r.record_id}" style="padding: 4px 10px; font-size: 0.74rem; background: rgba(0, 240, 255, 0.12); color: var(--accent-cyan); border-color: rgba(0, 240, 255, 0.3);">
@@ -621,7 +757,56 @@ document.addEventListener("DOMContentLoaded", () => {
       .replace(/'/g, "&#039;");
   }
 
+  async function setupSourceSwitcher() {
+    if (btnSourceLocal && btnSourceBigQuery) {
+      btnSourceLocal.addEventListener("click", () => {
+        if (currentSource === "local") return;
+        currentSource = "local";
+        btnSourceLocal.style.background = "var(--accent-cyan)";
+        btnSourceLocal.style.color = "#020617";
+        btnSourceLocal.style.fontWeight = "600";
+        btnSourceBigQuery.style.background = "transparent";
+        btnSourceBigQuery.style.color = "var(--text-secondary)";
+        btnSourceBigQuery.style.fontWeight = "500";
+        loadHistory();
+      });
+
+      btnSourceBigQuery.addEventListener("click", () => {
+        if (currentSource === "cloud") return;
+        currentSource = "cloud";
+        btnSourceBigQuery.style.background = "var(--accent-cyan)";
+        btnSourceBigQuery.style.color = "#020617";
+        btnSourceBigQuery.style.fontWeight = "600";
+        btnSourceLocal.style.background = "transparent";
+        btnSourceLocal.style.color = "var(--text-secondary)";
+        btnSourceLocal.style.fontWeight = "500";
+        loadHistory();
+      });
+    }
+
+    // Auto-detect GCP Cloud Run environment
+    try {
+      const resp = await fetch("/api/cloud/status");
+      if (resp.ok) {
+        const st = await resp.json();
+        if (st.is_cloud_run) {
+          // On Cloud Run: hide Local SQLite switcher and force Cloud Firestore records
+          if (histSourceSwitcher) {
+            histSourceSwitcher.style.display = "none";
+          }
+          if (currentSource !== "cloud") {
+            currentSource = "cloud";
+            loadHistory();
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("GCP deployment check warning:", e);
+    }
+  }
+
   // Initial Load
+  setupSourceSwitcher();
   loadStats();
   loadHistory();
   startAutoRefresh();
