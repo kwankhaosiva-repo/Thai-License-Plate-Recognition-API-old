@@ -108,10 +108,17 @@ class GrayscaleSmartResize:
         return new_im.convert("RGB")
 
 
-def get_grayscale_prov_transforms(is_train=False):
+def get_grayscale_prov_transforms(is_train=False, size=(256, 64)):
+    """Grayscale SmartResize transforms for province classifiers.
+
+    RESOLUTION CONTRACT (must match the training scripts exactly):
+      - Thai  (train_grayscale_province_thai.py): (256, 80) — backbone resnet18/34
+      - Lao   (train_grayscale_province_lao.py) : (256, 64) — backbone resnet18
+    Serving at the wrong H silently degrades accuracy (train/serve mismatch).
+    """
     if is_train:
         return transforms.Compose([
-            GrayscaleSmartResize((256, 64)),
+            GrayscaleSmartResize(size),
             transforms.RandomAffine(degrees=4, translate=(0.02, 0.04)),
             transforms.ColorJitter(brightness=0.3, contrast=0.3),
             transforms.RandomAutocontrast(p=0.4),
@@ -120,7 +127,7 @@ def get_grayscale_prov_transforms(is_train=False):
         ])
     else:
         return transforms.Compose([
-            GrayscaleSmartResize((256, 64)),
+            GrayscaleSmartResize(size),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.25, 0.25, 0.25]),
         ])
