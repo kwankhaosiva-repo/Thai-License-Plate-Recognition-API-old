@@ -174,6 +174,15 @@ All Model 1 candidates have been trained and benchmarked on identical test sets 
 > then divide returned boxes by the upscale factors (see
 > `upscale_to_train_geometry` / `divide_boxes_by_scale`). Model 3A inference
 > must also stay **CLAHE-free** (no CLAHE existed in its training data).
+>
+> **A/B testing serve geometry:** the full per-model serve-resolution table
+> lives in `src/config.py` (SERVE / PRE-PROCESS GEOMETRY section). To test a
+> different tensor size or input aspect per stage, set
+> `PREPROCESS_OVERRIDES = {"M1": {"tensor": 416}, "M2": {"aspect": 4/3}, ...}`
+> there — or without editing code, `LPR_PRE_M1_TENSOR=416`,
+> `LPR_PRE_M2_ASPECT=1.3333`, `LPR_PRE_M3A_TENSOR=640` etc. Everything
+> downstream (serve pixels, imgsz, RF-DETR `predict(shape=...)`, box
+> rescaling) follows the resolved spec automatically.
 
 ---
 

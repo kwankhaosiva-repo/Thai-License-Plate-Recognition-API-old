@@ -138,6 +138,7 @@ from src.preprocess_registry import (
     get_m3a_spec,
     upscale_to_train_geometry,
     divide_boxes_by_scale,
+    apply_override,
 )
 from src.auth_manager import (
     get_auth_config,
@@ -766,9 +767,11 @@ class LibreYOLOWrapper:
 
 class RFDETRWrapper:
     """Wraps an RFDETRBase instance so it is callable identically to an Ultralytics YOLO/RTDETR model."""
-    def __init__(self, model, names: dict[int, str] | list[str] | None = None, device=None):
+    def __init__(self, model, names: dict[int, str] | list[str] | None = None, device=None, serve_tensor: int | None = None):
         self.model = model
         self.device = device
+        # Optional square inference size from PREPROCESS_OVERRIDES (see registry).
+        self.serve_tensor = serve_tensor
         if names is None:
             raw_names = getattr(getattr(self.model, "model", None), "class_names", {})
             if isinstance(raw_names, list):
@@ -821,7 +824,12 @@ class RFDETRWrapper:
             img_rgb = img
 
         threshold = float(conf) if conf is not None else 0.25
-        dets = self.model.predict(img_rgb, threshold=threshold)
+        # serve_tensor (from PREPROCESS_OVERRIDES) forces an explicit square shape;
+        # rfdetr still applies its own stretch + ImageNet normalization internally.
+        if self.serve_tensor is not None:
+            dets = self.model.predict(img_rgb, threshold=threshold, shape=(self.serve_tensor, self.serve_tensor))
+        else:
+            dets = self.model.predict(img_rgb, threshold=threshold)
 
         # NOTE: no coordinate rescaling — predict() returns boxes on the input grid.
         return [RFDETRResult(dets, names=self.names)]
@@ -878,11 +886,13 @@ class LPRPipelineService:
 
         active_m1_path = cfg.ACTIVE_MODEL_1_PATH
         if "rfdetr" in active_m1_path.name and "obb" not in active_m1_path.name and active_m1_path.exists():
-            self.model_plate = self._load_rfdetr_model(active_m1_path, class_names=["plate"])
+            _m1_srv = apply_override(get_m1_spec(active_m1_path.name), cfg, "M1")
+            _m1_tensor = _m1_srv.tensor_w if _m1_srv.tensor_w == _m1_srv.tensor_h else None
+            self.model_plate = self._load_rfdetr_model(active_m1_path, class_names=["plate"], serve_tensor=_m1_tensor)
         elif active_m1_path.name.endswith("_rtdetr.pt"):
             self.model_plate = RTDETR(str(active_m1_path))
         elif any(k in active_m1_path.name.lower() for k in ["dfine", "libre", "picodet", "rtdetrv2", "obb"]):
-            m1_spec = get_m1_spec(active_m1_path.name)
+            m1_spec = apply_override(get_m1_spec(active_m1_path.name), cfg, "M1")
             self.model_plate = self._load_libreyolo_model(
                 active_m1_path, class_names=["plate"],
                 default_imgsz=m1_spec.tensor_w if m1_spec.tensor_w == m1_spec.tensor_h else None,
@@ -902,11 +912,13 @@ class LPRPipelineService:
         # 3. Load Model 2 (Component Detector: plate_char & province)
         active_m2_path = cfg.ACTIVE_MODEL_2_PATH
         if "rfdetr" in active_m2_path.name and active_m2_path.exists():
-            self.model_comp = self._load_rfdetr_model(active_m2_path, class_names=["plate_char", "province"])
+            _m2_srv = apply_override(get_m2_spec(active_m2_path.name), cfg, "M2")
+            _m2_tensor = _m2_srv.tensor_w if _m2_srv.tensor_w == _m2_srv.tensor_h else None
+            self.model_comp = self._load_rfdetr_model(active_m2_path, class_names=["plate_char", "province"], serve_tensor=_m2_tensor)
         elif active_m2_path.name.endswith("_rtdetr.pt"):
             self.model_comp = RTDETR(str(active_m2_path))
         elif any(k in active_m2_path.name.lower() for k in ["dfine", "libre", "picodet"]):
-            m2_spec = get_m2_spec(active_m2_path.name)
+            m2_spec = apply_override(get_m2_spec(active_m2_path.name), cfg, "M2")
             self.model_comp = self._load_libreyolo_model(
                 active_m2_path, class_names=["plate_char", "province"],
                 default_imgsz=m2_spec.tensor_w if m2_spec.tensor_w == m2_spec.tensor_h else None,
@@ -920,11 +932,13 @@ class LPRPipelineService:
         # 4.5. Load Character Box Detector & Character Classifier
         active_char_box_path = cfg.ACTIVE_CHAR_BOX_MODEL_PATH
         if "rfdetr" in active_char_box_path.name and active_char_box_path.exists():
-            self.char_box_model = self._load_rfdetr_model(active_char_box_path, class_names=["char"])
+            _m3a_srv = apply_override(get_m3a_spec(active_char_box_path.name), cfg, "M3A")
+            _m3a_tensor = _m3a_srv.tensor_w if _m3a_srv.tensor_w == _m3a_srv.tensor_h else None
+            self.char_box_model = self._load_rfdetr_model(active_char_box_path, class_names=["char"], serve_tensor=_m3a_tensor)
         elif active_char_box_path.name.endswith("_rtdetr.pt"):
             self.char_box_model = RTDETR(str(active_char_box_path))
         elif any(k in active_char_box_path.name.lower() for k in ["dfine", "libre", "picodet"]):
-            m3a_spec = get_m3a_spec(active_char_box_path.name)
+            m3a_spec = apply_override(get_m3a_spec(active_char_box_path.name), cfg, "M3A")
             self.char_box_model = self._load_libreyolo_model(
                 active_char_box_path, class_names=["char"],
                 default_imgsz=m3a_spec.tensor_w if m3a_spec.tensor_w == m3a_spec.tensor_h else None,
@@ -968,9 +982,13 @@ class LPRPipelineService:
         # Detection stages were trained with STRETCH resize at fixed resolutions;
         # inference must reproduce the train pixel geometry exactly. See
         # src/preprocess_registry.py for the measured dataset aspects & rules.
-        self.m1_spec = get_m1_spec(cfg.ACTIVE_MODEL_1_PATH.name)
-        self.m2_spec = get_m2_spec(cfg.ACTIVE_MODEL_2_PATH.name)
-        self.m3a_spec = get_m3a_spec(cfg.ACTIVE_CHAR_BOX_MODEL_PATH.name)
+        self.m1_spec = apply_override(get_m1_spec(cfg.ACTIVE_MODEL_1_PATH.name), cfg, "M1")
+        self.m2_spec = apply_override(get_m2_spec(cfg.ACTIVE_MODEL_2_PATH.name), cfg, "M2")
+        self.m3a_spec = apply_override(get_m3a_spec(cfg.ACTIVE_CHAR_BOX_MODEL_PATH.name), cfg, "M3A")
+        if "[OVERRIDDEN]" in self.m1_spec.name or "[OVERRIDDEN]" in self.m2_spec.name or "[OVERRIDDEN]" in self.m3a_spec.name:
+            print("[Preprocess] Overridden serve geometry active:")
+            for tag, s in (("M1", self.m1_spec), ("M2", self.m2_spec), ("M3A", self.m3a_spec)):
+                print(f"   {tag:>3}: {s.tensor_w}x{s.tensor_h} stretch, train-aspect {s.train_aspect_w_over_h:.3f}  ({s.name})")
         # Tensor size of each detection stage — passed as imgsz so LibreYOLO
         # predicts at the exact resolution each model was trained/exported at
         # (PicoDet 416, D-FINE 640; RF-DETR ignores imgsz and uses its native res).
@@ -1014,8 +1032,14 @@ class LPRPipelineService:
             debug=cfg.DEBUG_MODE,
         )
 
-    def _load_rfdetr_model(self, model_path: Path, class_names: list[str] | dict[int, str] | None = None):
-        """Loads an RF-DETR (Base, Small, or Nano) model from a checkpoint (.pt or .pth) and wraps it."""
+    def _load_rfdetr_model(self, model_path: Path, class_names: list[str] | dict[int, str] | None = None, serve_tensor: int | None = None):
+        """Loads an RF-DETR (Base, Small, or Nano) model from a checkpoint (.pt or .pth) and wraps it.
+
+        serve_tensor: optional square inference size (PREPROCESS_OVERRIDES["M1"]["tensor"]
+        or ["M3A"]["tensor"]). Passed straight through to rfdetr predict(shape=...).
+        NOTE: only valid for the same variant family — e.g. a Base checkpoint can serve
+        at 560 or 640, but forcing 416 on a Base checkpoint silently degrades accuracy.
+        """
         from rfdetr import RFDETRBase, RFDETRSmall, RFDETRNano
         name_lower = str(model_path).lower()
         if "nano" in name_lower:
@@ -1031,7 +1055,7 @@ class LPRPipelineService:
         # Force RF-DETR to respect self.device (otherwise RF-DETR auto-detects MPS and ignores FORCE_CPU)
         if hasattr(model, "model") and hasattr(model.model, "device"):
             model.model.device = self.device
-        return RFDETRWrapper(model, names=class_names, device=self.device)
+        return RFDETRWrapper(model, names=class_names, device=self.device, serve_tensor=serve_tensor)
 
     def _load_libreyolo_model(self, model_path: Path, class_names: list[str] | dict[int, str] | None = None, default_imgsz: int | None = None):
         """Loads a LibreYOLO checkpoint (D-FINE Nano/Small, RT-DETRv2, PicoDet) and wraps it."""

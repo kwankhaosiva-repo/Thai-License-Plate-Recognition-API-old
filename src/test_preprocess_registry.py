@@ -30,6 +30,7 @@ from src.preprocess_registry import (  # noqa: E402
     stretch_resize,
     upscale_to_train_geometry,
     divide_boxes_by_scale,
+    apply_override,
     M1_PICODET,
     M1_DFINE,
     M1_RFDETR_BASE,
@@ -91,6 +92,27 @@ def main() -> int:
     ok &= check("RFDETR Base 560", M1_RFDETR_BASE.tensor_w == 560)
     ok &= check("RFDETR Small 512", M1_RFDETR_SMALL.tensor_w == 512)
     ok &= check("PicoDet 416", M1_PICODET.tensor_w == 416)
+
+    print("== 6. Config-driven overrides (A/B testing) ==")
+    class _FakeCfg:
+        PREPROCESS_OVERRIDES: dict = {}
+    base_cfg = _FakeCfg()
+    ok &= check("empty overrides keep defaults",
+                apply_override(M1_DFINE, base_cfg, "M1") is M1_DFINE)
+    ok &= check("None values keep defaults",
+                apply_override(M1_DFINE, type("C", (), {"PREPROCESS_OVERRIDES": {"M1": {"tensor": None, "aspect": None}}})(), "M1") is M1_DFINE)
+    o1 = apply_override(M1_DFINE, type("C", (), {"PREPROCESS_OVERRIDES": {"M1": {"tensor": 416}}})(), "M1")
+    ok &= check("tensor override -> 416 and square", o1.tensor_w == 416 and o1.tensor_h == 416)
+    ok &= check("tensor override keeps train aspect", abs(o1.train_aspect_w_over_h - 4/3) < 1e-6)
+    ok &= check("tensor override updates input shape", o1.recommended_input_shape() == (554, 416))
+    o2 = apply_override(M2_COMPONENTS, type("C", (), {"PREPROCESS_OVERRIDES": {"M2": {"aspect": 4/3}}})(), "M2")
+    ok &= check("aspect override -> 4/3 keeps tensor 640", o2.tensor_w == 640 and o2.tensor_h == 640)
+    ok &= check("aspect override -> input 852x640", o2.recommended_input_shape() == (852, 640))
+    ok &= check("overridden spec is immutable-safe (new object)", o1 is not M1_DFINE and o2 is not M2_COMPONENTS)
+    ok &= check("base spec untouched by overrides", M1_DFINE.tensor_w == 640 and M2_COMPONENTS.train_aspect_w_over_h == 2.0)
+    # Other stages' overrides must not leak into a different stage.
+    o3 = apply_override(M3A_CHARBOX, type("C", (), {"PREPROCESS_OVERRIDES": {"M1": {"tensor": 384}}})(), "M3A")
+    ok &= check("stage isolation (M1 override does not hit M3A)", o3 is M3A_CHARBOX)
 
     print()
     print("ALL PASS" if ok else "SOME CHECKS FAILED")
