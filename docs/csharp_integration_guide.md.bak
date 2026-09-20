@@ -32,24 +32,6 @@ Post-processing steps:
 2. Filter by threshold (e.g. 0.35)
 3. Convert `(cx, cy, w, h)` → `(x1, y1, x2, y2)` in pixel coordinates
 
-> [!IMPORTANT]
-> **Resize convention (critical):** D-FINE was trained AND is meant to run with
-> a pure **stretch** to 640×640 — **no letterbox, no grey padding** (this is
-> confirmed by LibreYOLO's own DeepStream export config:
-> `maintain-aspect-ratio=0` for D-FINE). Stretching a 1080×810 (4:3) street
-> photo is exactly what the model saw during training, so keep the direct
-> `Cv2.Resize(src, new Size(640, 640))` below. Do **not** "improve" it with
-> letterboxing/padding — that would shift the object distribution away from
-> training and lower accuracy. The same rule applies to RF-DETR (stretch to
-> 560×560 + ImageNet mean/std normalization `mean=[0.485,0.456,0.406],
-> std=[0.229,0.224,0.225]`) and PicoDet (stretch to 416×416).
-> Only Ultralytics YOLO/RT-DETR checkpoints use letterbox with grey padding.
->
-> **Crop-stage exception (Model 2 / Model 3A):** when feeding rectified-plate
-> crops, first upscale the crop to the *training pixel geometry* — M2 ≈ 2:1
-> → 1280×640, M3A char rows ≈ 3.7:1 → 2088×560 — then stretch to the square
-> tensor, and divide returned boxes by the same per-axis upscale factors.
-
 ---
 
 ## 3. Full C# Class

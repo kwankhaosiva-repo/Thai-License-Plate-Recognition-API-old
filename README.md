@@ -144,15 +144,36 @@ All Model 1 candidates have been trained and benchmarked on identical test sets 
 | **PicoDet-M** ⭐ | $416 \times 416$ | **8.9 MB** | **12.0 ms** | ~7.5 ms | **Apache-2.0** | **Higher capacity edge / stacked convs=4 (Medium)** |
 | **D-FINE Nano** ⭐ | $640 \times 640$ | **15.0 MB** | **27.0 ms** | ~18.0 ms | **MIT** | **Balanced Server & CPU Production (High mAP)** |
 | **D-FINE Small** | $640 \times 640$ | **40.0 MB** | **63.5 ms** | ~22.0 ms | **MIT** | High-precision / Distant plate localization |
-| **RF-DETR-Small** | $640 \times 640$ | 122.0 MB | 84.0 ms | 21.0 ms | **Apache-2.0** | Robust baseline with transformer feature maps |
+| **RF-DETR-Small** | $512 \times 512$ (native stretch) | 122.0 MB | 84.0 ms | 21.0 ms | **Apache-2.0** | Robust baseline with transformer feature maps |
 | **RF-DETR-OBB Small** | $640 \times 640$ | 110.0 MB | 92.0 ms | 24.0 ms | **Apache-2.0 / MIT**| 1-Stage Oriented Bounding Box (Direct Angle) |
 | **RT-DETRv2-R18** | $640 \times 640$ | 77.0 MB | 108.0 ms | ~30.0 ms | **Apache-2.0** | Real-time Deformable Attention DETR |
 | **RT-DETRv2-OBB** | $1024 \times 1024$ | 32.7 MB | 120.0 ms | ~35.0 ms | **Apache-2.0** | Large-scale 1-Stage OBB inference |
 
 > [!TIP]
 > **Production Recommendation:**
-> - For **maximum FPS / lowest CPU usage**: Use **PicoDet-S** (`plate_detector_picodet_s.pt` / `.onnx`). At just 3.8 MB and ~6.5 ms CPU, it easily hits 100+ FPS on edge hardware.
+> - For **maximum FPS / lowest CPU usage**: Use **PicoDet-S** (`plate_detector_picodet_s.pt` / `.onnx`). At just 3.8 MB and ~6.5 ms CPU, it easily hits 100+ FPS on edge hardware. ⚠️ Always run/predict at `imgsz=416` — its ONNX input is 416×416.
 > - For **maximum detection precision at reasonable latency**: Use **D-FINE Nano** (`plate_detector_dfine_nano.pt` / `.onnx`). At 15 MB and ~27 ms CPU, it provides near-perfect mAP on challenging lighting and skewed angles.
+
+> [!IMPORTANT]
+> **Preprocessing truth table (single source of truth: `src/preprocess_registry.py`)**
+>
+> All detector families in this repo are trained with **stretch** resize to a
+> square tensor — none of them were trained with background padding:
+>
+> | Family | Resize | Native tensor | Normalization | imgsz at predict |
+> | :--- | :--- | :---: | :--- | :--- |
+> | RF-DETR Base / Small / Nano | **stretch** | **560 / 512 / 384** | ImageNet mean/std | n/a (fixed native) |
+> | D-FINE Nano/Small (LibreYOLO) | **stretch** (no letterbox — confirmed by LibreYOLO's DeepStream config `maintain-aspect-ratio=0`) | 640 | /255 | **640** |
+> | PicoDet-S/M (LibreYOLO) | **stretch** | **416** | /255 | **416** (not 640!) |
+> | Ultralytics YOLO / RT-DETR | **letterbox** (grey pad) | 640 (adaptive) | /255 | 640/1280 |
+>
+> Do **not** letterbox RF-DETR / D-FINE / PicoDet inputs and do **not** feed
+> crop stages (Model 2 / 3A) at a smaller size than their train pixel geometry:
+> M2 rectified plates → upscale to **1280×640** (train aspect ≈ 2:1); M3A char
+> rows → upscale to **2088×560** (train aspect ≈ 3.7:1) before the stretch,
+> then divide returned boxes by the upscale factors (see
+> `upscale_to_train_geometry` / `divide_boxes_by_scale`). Model 3A inference
+> must also stay **CLAHE-free** (no CLAHE existed in its training data).
 
 ---
 

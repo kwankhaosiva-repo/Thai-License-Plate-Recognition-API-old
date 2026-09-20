@@ -132,13 +132,6 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.config import cfg
-from src.preprocess_registry import (
-    get_m1_spec,
-    get_m2_spec,
-    get_m3a_spec,
-    upscale_to_train_geometry,
-    divide_boxes_by_scale,
-)
 from src.auth_manager import (
     get_auth_config,
     register_user_account,
@@ -727,15 +720,11 @@ class RFDETRResult:
 
 
 class LibreYOLOWrapper:
-    """Wraps a LibreYOLO (D-FINE / RT-DETRv2 / PicoDet) model so it is callable identically to Ultralytics YOLO/RTDETR."""
+    """Wraps a LibreYOLO (D-FINE / RT-DETRv2) model so it is callable identically to Ultralytics YOLO/RTDETR."""
 
-    def __init__(self, model, names: dict | list | None = None, device: str = "cpu", default_imgsz: int | None = None):
+    def __init__(self, model, names: dict | list | None = None, device: str = "cpu"):
         self.model = model
         self.device = str(device) if device else "cpu"
-        # PREPROCESS FIX: PicoDet fine-tunes run at imgsz=416 (ONNX 416x416), but the
-        # wrapper previously let predict() default to 640 -> scale mismatch vs training.
-        # The pipeline now passes the per-model spec imgsz (see preprocess_registry).
-        self.default_imgsz = default_imgsz
         if names is None:
             self.names = {0: "plate"}
         elif isinstance(names, list):
@@ -745,13 +734,12 @@ class LibreYOLOWrapper:
 
     def __call__(self, img, conf: float = 0.25, imgsz: int | None = None, verbose: bool = False, device=None):
         target_device = str(device) if device is not None else self.device
-        effective_imgsz = imgsz if imgsz is not None else self.default_imgsz
         kwargs: dict = {
             "conf": float(conf) if conf is not None else 0.25,
             "device": target_device,
         }
-        if effective_imgsz is not None:
-            kwargs["imgsz"] = int(effective_imgsz)
+        if imgsz is not None:
+            kwargs["imgsz"] = int(imgsz)
         results = self.model.predict(img, **kwargs)
         # LibreYOLO may return a Results object directly; normalise to list-of-one
         r = results[0] if isinstance(results, list) else results
@@ -785,33 +773,22 @@ class RFDETRWrapper:
             self.names = {}
 
     def __call__(self, img, conf=0.25, imgsz=None, verbose=False, device=None):
-        """RF-DETR inference with TRAINING-FAITHFUL preprocessing.
-
-        rfdetr's predict() already does the exact training preprocessing:
-        pure STRETCH to the variant's native square resolution (Base 560,
-        Small 512, Nano 384 — ONNX-verified) + ImageNet normalization, and it
-        returns boxes in the pixel grid of the image we pass in (no rescale
-        needed). We therefore:
-          - NEVER letterbox and NEVER pre-stretch ourselves,
-          - keep the frame's aspect ratio and only cap the long side at 1600 px
-            (a pure latency guard for HD/4K camera frames; detections keep
-            sub-560 accuracy since the model stretches to native res anyway),
-          - ignore `imgsz` for resolution: RF-DETR has a fixed native input
-            size, unlike YOLO (the pipeline passes 640 for the RT-DETR family;
-            forcing 640 here previously degraded quality for zero benefit).
-        """
         import cv2
         import numpy as np
 
         if isinstance(img, np.ndarray):
             h, w = img.shape[:2]
-            max_side = 1600  # latency guard only — geometry is handled by predict()
-            if max(h, w) > max_side:
-                scale = max_side / float(max(h, w))
+            # RF-DETR is natively trained at 560x560.
+            # If the raw camera input is HD/4K (e.g. 1550x1174), running unresized causes CPU latency to explode.
+            # Resizing to 640 preserves full plate detail while dropping inference time from 2000ms to ~45ms!
+            target_dim = 640
+            if max(h, w) > target_dim:
+                scale = target_dim / float(max(h, w))
                 new_w, new_h = int(w * scale), int(h * scale)
                 img_resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
             else:
                 img_resized = img
+                scale = 1.0
 
             if len(img_resized.shape) == 3 and img_resized.shape[2] == 3:
                 img_rgb = cv2.cvtColor(img_resized, cv2.COLOR_BGR2RGB)
@@ -819,11 +796,15 @@ class RFDETRWrapper:
                 img_rgb = img_resized
         else:
             img_rgb = img
+            scale = 1.0
 
         threshold = float(conf) if conf is not None else 0.25
         dets = self.model.predict(img_rgb, threshold=threshold)
 
-        # NOTE: no coordinate rescaling — predict() returns boxes on the input grid.
+        # Rescale detected boxes back to original image dimensions if resized
+        if scale != 1.0 and hasattr(dets, 'xyxy') and dets.xyxy is not None and len(dets.xyxy) > 0:
+            dets.xyxy = dets.xyxy / scale
+
         return [RFDETRResult(dets, names=self.names)]
 
 
@@ -882,11 +863,7 @@ class LPRPipelineService:
         elif active_m1_path.name.endswith("_rtdetr.pt"):
             self.model_plate = RTDETR(str(active_m1_path))
         elif any(k in active_m1_path.name.lower() for k in ["dfine", "libre", "picodet", "rtdetrv2", "obb"]):
-            m1_spec = get_m1_spec(active_m1_path.name)
-            self.model_plate = self._load_libreyolo_model(
-                active_m1_path, class_names=["plate"],
-                default_imgsz=m1_spec.tensor_w if m1_spec.tensor_w == m1_spec.tensor_h else None,
-            )
+            self.model_plate = self._load_libreyolo_model(active_m1_path, class_names=["plate"])
         else:
             self.model_plate = YOLO(str(active_m1_path))
 
@@ -906,11 +883,7 @@ class LPRPipelineService:
         elif active_m2_path.name.endswith("_rtdetr.pt"):
             self.model_comp = RTDETR(str(active_m2_path))
         elif any(k in active_m2_path.name.lower() for k in ["dfine", "libre", "picodet"]):
-            m2_spec = get_m2_spec(active_m2_path.name)
-            self.model_comp = self._load_libreyolo_model(
-                active_m2_path, class_names=["plate_char", "province"],
-                default_imgsz=m2_spec.tensor_w if m2_spec.tensor_w == m2_spec.tensor_h else None,
-            )
+            self.model_comp = self._load_libreyolo_model(active_m2_path, class_names=["plate_char", "province"])
         else:
             self.model_comp = YOLO(str(active_m2_path))
 
@@ -924,11 +897,7 @@ class LPRPipelineService:
         elif active_char_box_path.name.endswith("_rtdetr.pt"):
             self.char_box_model = RTDETR(str(active_char_box_path))
         elif any(k in active_char_box_path.name.lower() for k in ["dfine", "libre", "picodet"]):
-            m3a_spec = get_m3a_spec(active_char_box_path.name)
-            self.char_box_model = self._load_libreyolo_model(
-                active_char_box_path, class_names=["char"],
-                default_imgsz=m3a_spec.tensor_w if m3a_spec.tensor_w == m3a_spec.tensor_h else None,
-            )
+            self.char_box_model = self._load_libreyolo_model(active_char_box_path, class_names=["char"])
         elif active_char_box_path.exists():
             self.char_box_model = YOLO(str(active_char_box_path))
         else:
@@ -963,20 +932,6 @@ class LPRPipelineService:
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
-
-        # --- Per-model preprocessing specs (single source of truth) ---
-        # Detection stages were trained with STRETCH resize at fixed resolutions;
-        # inference must reproduce the train pixel geometry exactly. See
-        # src/preprocess_registry.py for the measured dataset aspects & rules.
-        self.m1_spec = get_m1_spec(cfg.ACTIVE_MODEL_1_PATH.name)
-        self.m2_spec = get_m2_spec(cfg.ACTIVE_MODEL_2_PATH.name)
-        self.m3a_spec = get_m3a_spec(cfg.ACTIVE_CHAR_BOX_MODEL_PATH.name)
-        # Tensor size of each detection stage — passed as imgsz so LibreYOLO
-        # predicts at the exact resolution each model was trained/exported at
-        # (PicoDet 416, D-FINE 640; RF-DETR ignores imgsz and uses its native res).
-        self.m1_imgsz_native = self.m1_spec.tensor_w if self.m1_spec.tensor_w == self.m1_spec.tensor_h else None
-        self.m2_imgsz_native = self.m2_spec.tensor_w if self.m2_spec.tensor_w == self.m2_spec.tensor_h else None
-        self.m3a_imgsz_native = self.m3a_spec.tensor_w if self.m3a_spec.tensor_w == self.m3a_spec.tensor_h else None
 
         # 8. Lao Ground Truth Lookup
         self.lao_gt_lookup = {}
@@ -1033,11 +988,11 @@ class LPRPipelineService:
             model.model.device = self.device
         return RFDETRWrapper(model, names=class_names, device=self.device)
 
-    def _load_libreyolo_model(self, model_path: Path, class_names: list[str] | dict[int, str] | None = None, default_imgsz: int | None = None):
-        """Loads a LibreYOLO checkpoint (D-FINE Nano/Small, RT-DETRv2, PicoDet) and wraps it."""
+    def _load_libreyolo_model(self, model_path: Path, class_names: list[str] | dict[int, str] | None = None):
+        """Loads a LibreYOLO checkpoint (D-FINE Nano/Small or RT-DETRv2) and wraps it."""
         from libreyolo import LibreYOLO
         model = LibreYOLO(str(model_path))
-        return LibreYOLOWrapper(model, names=class_names, device=self.device, default_imgsz=default_imgsz)
+        return LibreYOLOWrapper(model, names=class_names, device=self.device)
 
     def _load_country_classifier(self, path: Path):
         if not path.exists():
@@ -1336,18 +1291,9 @@ class LPRPipelineService:
             preview_bgr = img_bgr.copy()
 
         # Determine optimal inference resolution for Model 1:
-        # PREPROCESS FIX: use each model's TRAINED tensor size (PicoDet 416,
-        # D-FINE 640, RF-DETR 560) instead of a blanket 640 — RFDETRWrapper
-        # ignores imgsz entirely (native resolution), LibreYOLO needs the
-        # exact train/export size. Ultralytics YOLO letterboxes adaptively,
-        # so its old 1280-for-HD behavior is preserved.
+        # RT-DETR and RF-DETR Vision Transformers use 640/560 fixed resolution; for YOLO, 1280 can be used on high-res.
         is_rtdetr_m1 = isinstance(self.model_plate, (RTDETR, RFDETRWrapper, LibreYOLOWrapper)) or cfg.ACTIVE_MODEL_1_PATH.name.endswith(("_rtdetr.pt", "_rfdetr.pt"))
-        if isinstance(self.model_plate, LibreYOLOWrapper) and self.m1_imgsz_native is not None:
-            m1_imgsz = self.m1_imgsz_native
-        elif is_rtdetr_m1:
-            m1_imgsz = 640
-        else:
-            m1_imgsz = 1280 if max(h_orig, w_orig) >= 960 else 640
+        m1_imgsz = 640 if is_rtdetr_m1 else (1280 if max(h_orig, w_orig) >= 960 else 640)
 
         # --- Stage 1: Model 1 Plate Polygon Detection & Rectification ---
         t1_start = time.time()
@@ -1360,10 +1306,7 @@ class LPRPipelineService:
         # Only attempted for static single-image uploads with low threshold (conf_m1 < 0.45).
         # Disabled in real-time video streams to prevent ghost triggers on road/barrier textures.
         allow_recovery = allow_low_conf_recovery and (conf_m1 < 0.45)
-        if isinstance(self.model_plate, LibreYOLOWrapper) and self.m1_imgsz_native is not None:
-            sens_imgsz = self.m1_imgsz_native
-        else:
-            sens_imgsz = 640 if (is_rtdetr_m1 or (w_orig <= 800 and h_orig <= 800)) else 1280
+        sens_imgsz = 640 if (is_rtdetr_m1 or (w_orig <= 800 and h_orig <= 800)) else 1280
         if allow_recovery and len(res1.boxes) == 0:
             try:
                 res1_sens = self.model_plate(img_bgr, imgsz=sens_imgsz, conf=0.20, verbose=False, device=self.device)[0]
@@ -1405,9 +1348,7 @@ class LPRPipelineService:
             if 1.2 <= aspect_ratio <= 4.5 and w_orig <= 1200 and h_orig <= 600:
                 test_resized = cv2.resize(img_bgr, (320, 160), interpolation=cv2.INTER_CUBIC)
                 try:
-                    # Same train-geometry upscale as the main Model 2 path.
-                    m2_check_input, _ = upscale_to_train_geometry(test_resized, self.m2_spec)
-                    res2_check = self.model_comp(m2_check_input, conf=0.25, verbose=False)[0]
+                    res2_check = self.model_comp(test_resized, conf=0.25, verbose=False)[0]
                     if len(res2_check.boxes) > 0:
                         c_name, c_conf = self.classify_country(test_resized)
                         rectified_plate = test_resized
@@ -1598,15 +1539,10 @@ class LPRPipelineService:
 
         if country_name == "Thai":
             # Thai Standard Layout: Top 65% is Characters, Bottom 35% is Province
-            # PREPROCESS FIX: M2 was fine-tuned on ~2:1 rectified-plate crops at
-            # 640x640 stretch. Feeding the 320x160 rectified plate made objects
-            # ~3.5x smaller in tensor space than in training -> recall loss.
-            # Upscale to the train pixel geometry (1280x640) before inference.
-            m2_input, m2_scale = upscale_to_train_geometry(rectified_plate, self.m2_spec)
             try:
-                res2 = self.model_comp(m2_input, conf=conf_m2, verbose=False, device=self.device)[0]
+                res2 = self.model_comp(rectified_plate, conf=conf_m2, verbose=False, device=self.device)[0]
             except Exception:
-                res2 = self.model_comp(m2_input, conf=conf_m2, verbose=False)[0]
+                res2 = self.model_comp(rectified_plate, conf=conf_m2, verbose=False)[0]
 
             if len(res2.boxes) > 0:
                 for c_box in res2.boxes:
@@ -1614,9 +1550,6 @@ class LPRPipelineService:
                     c_name = self.model_comp.names[c_idx].lower()
                     c_conf = float(c_box.conf[0])
                     bx1, by1, bx2, by2 = c_box.xyxy[0].cpu().numpy().astype(int)
-                    # POSTPROCESS FIX: map boxes from the upscaled grid back to
-                    # rectified-plate pixels before clamping/cropping.
-                    bx1, by1, bx2, by2 = [int(v) for v in divide_boxes_by_scale([bx1, by1, bx2, by2], m2_scale)[0]]
                     bx1, by1 = max(0, bx1), max(0, by1)
                     bx2, by2 = min(rw, bx2), min(rh, by2)
 
@@ -1674,12 +1607,10 @@ class LPRPipelineService:
             # Lao Inverted Layout: User's Flip-and-Detect Workflow!
             # 1. Vertically flip plate so characters are at top and province at bottom (matching Thai Model 2 layout)
             flipped_plate = cv2.flip(rectified_plate, 0)
-            # Same PREPROCESS FIX as the Thai branch (train geometry 1280x640).
-            m2_input, m2_scale = upscale_to_train_geometry(flipped_plate, self.m2_spec)
             try:
-                res2 = self.model_comp(m2_input, conf=conf_m2, verbose=False, device=self.device)[0]
+                res2 = self.model_comp(flipped_plate, conf=conf_m2, verbose=False, device=self.device)[0]
             except Exception:
-                res2 = self.model_comp(m2_input, conf=conf_m2, verbose=False)[0]
+                res2 = self.model_comp(flipped_plate, conf=conf_m2, verbose=False)[0]
 
             if len(res2.boxes) > 0:
                 for c_box in res2.boxes:
@@ -1687,8 +1618,6 @@ class LPRPipelineService:
                     c_name = self.model_comp.names[c_idx].lower()
                     c_conf = float(c_box.conf[0])
                     bx1, by1, bx2, by2 = c_box.xyxy[0].cpu().numpy().astype(int)
-                    # POSTPROCESS FIX: undo the upscale before the flip-back math.
-                    bx1, by1, bx2, by2 = [int(v) for v in divide_boxes_by_scale([bx1, by1, bx2, by2], m2_scale)[0]]
                     bx1, by1 = max(0, bx1), max(0, by1)
                     bx2, by2 = min(rw, bx2), min(rh, by2)
 
@@ -1758,14 +1687,16 @@ class LPRPipelineService:
             # 3A-1: Thai Character Box Detection & Individual Classification
             if self.char_box_model is not None and self.char_classifier is not None and char_crop is not None:
                 t_bdet_start = time.time()
-                # PREPROCESS FIX: CLAHE removed. The char-box detector was trained on
-                # raw crops (no CLAHE/unsharp at train time), so enhancing at inference
-                # created a domain mismatch (duplicate boxes on complex Thai chars such
-                # as ณ / ฌ). The model now sees the exact domain it was trained on.
-                det_char_input = char_crop
-                # Upscale to the train pixel geometry (~3.7:1 crops at a 560 tensor);
-                # the per-axis scale is undone right after detection below.
-                det_char_input, m3a_scale = upscale_to_train_geometry(det_char_input, self.m3a_spec)
+                # Contrast enhancement (CLAHE) to help separate blurry adjacent characters.
+                # Note: Unsharp masking removed — it caused domain mismatch with box detector
+                # training data, resulting in duplicate boxes on complex Thai chars (e.g. ณ, ฌ).
+                try:
+                    char_gray = cv2.cvtColor(char_crop, cv2.COLOR_BGR2GRAY)
+                    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4))
+                    cl_gray = clahe.apply(char_gray)
+                    det_char_input = cv2.cvtColor(cl_gray, cv2.COLOR_GRAY2BGR)
+                except Exception:
+                    det_char_input = char_crop
 
                 try:
                     box_res = self.char_box_model(det_char_input, conf=0.10, verbose=False, device=self.device)[0]
@@ -1774,7 +1705,7 @@ class LPRPipelineService:
                 raw_boxes = []
                 crop_w = char_crop.shape[1]
                 for b in box_res.boxes:
-                    bx1, by1, bx2, by2 = [int(v) for v in divide_boxes_by_scale(b.xyxy[0].cpu().numpy(), m3a_scale)[0]]
+                    bx1, by1, bx2, by2 = [int(v) for v in b.xyxy[0]]
                     bconf = float(b.conf[0])
                     bw = bx2 - bx1
                     bh = by2 - by1
@@ -2313,18 +2244,16 @@ class LPRPipelineService:
 
             # 3A-1: Lao Character Box Detection & Individual Classification
             if self.char_box_model is not None and self.char_classifier_lao is not None and char_crop is not None and char_crop.size > 0:
-                # PREPROCESS FIX: same train-geometry upscale as the Thai branch.
-                lao_char_input, lao_m3a_scale = upscale_to_train_geometry(char_crop, self.m3a_spec)
                 try:
                     try:
-                        box_res = self.char_box_model(lao_char_input, conf=0.12, verbose=False, device=self.device)[0]
+                        box_res = self.char_box_model(char_crop, conf=0.12, verbose=False, device=self.device)[0]
                     except Exception:
-                        box_res = self.char_box_model(lao_char_input, conf=0.12, verbose=False)[0]
+                        box_res = self.char_box_model(char_crop, conf=0.12, verbose=False)[0]
 
                     raw_boxes = []
                     crop_w = char_crop.shape[1]
                     for b in box_res.boxes:
-                        bx1, by1, bx2, by2 = [int(v) for v in divide_boxes_by_scale(b.xyxy[0].cpu().numpy(), lao_m3a_scale)[0]]
+                        bx1, by1, bx2, by2 = [int(v) for v in b.xyxy[0]]
                         bconf = float(b.conf[0])
                         bw = bx2 - bx1
                         bh = by2 - by1

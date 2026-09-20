@@ -32,11 +32,6 @@ def ensure_datasets():
 
 
 def train_dfine(size="n", epochs=20, batch=8, imgsz=640, patience=12):
-    """RESOLUTION CONTRACT: D-FINE trains at 640 with pure STRETCH resize
-    (LibreYOLO convention: no letterbox, no padding). Inference must pass
-    imgsz=640 and must NOT letterbox — enforced in api_server via
-    src/preprocess_registry.M1_DFINE.
-    """
     model_name = f"dfine_{'nano' if size == 'n' else 'small'}"
     pt_source = f"weights/LibreDFINE{size}.pt"
     target_pt = OUTPUT_WEIGHTS_DIR / f"plate_detector_{model_name}.pt"
@@ -181,10 +176,6 @@ def train_rfdetr_obb(epochs=20, batch_size=4, patience=12):
 
 
 def train_picodet(size="s", epochs=30, batch=16, imgsz=416, patience=12):
-    """RESOLUTION CONTRACT: PicoDet trains at imgsz=416 (STRETCH, no letterbox).
-    predict-time imgsz must be 416 too — enforced via
-    src/preprocess_registry.M1_PICODET and LibreYOLOWrapper.default_imgsz.
-    """
     model_name = f"picodet_{size}"
     pt_source = f"weights/LibrePICODET{size}.pt"
     target_pt = OUTPUT_WEIGHTS_DIR / f"plate_detector_{model_name}.pt"

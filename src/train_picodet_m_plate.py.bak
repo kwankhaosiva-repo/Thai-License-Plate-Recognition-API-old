@@ -46,10 +46,6 @@ def ensure_pretrained_weights():
 def train_picodet_m_plate(
     epochs: int = 35,
     batch: int = 16,
-    # RESOLUTION CONTRACT: PicoDet must train, export AND predict at 416.
-    # LibreYOLO trains PicoDet with pure STRETCH (no letterbox). If you change
-    # this value you MUST also update: (1) the predict-time imgsz used by
-    # src/preprocess_registry.M1_PICODET, (2) the ONNX export size below.
     imgsz: int = 416,
     lr: float = 1e-3,
     patience: int = 12,
@@ -62,7 +58,7 @@ def train_picodet_m_plate(
     print(f"   License      : Apache-2.0 ✅ (100% Commercial Permissive)")
     print(f"   Pretrained   : {PRETRAINED_SOURCE.name}")
     print(f"   Dataset      : {BBOX_DATA_YAML}")
-    print(f"   Resolution   : {imgsz}x{imgsz} (STRETCH — predict MUST use the same imgsz)")
+    print(f"   Resolution   : {imgsz}x{imgsz}")
     print(f"   Epochs       : {epochs} | Batch: {batch} | Patience: {patience}")
     print(f"   Device       : {device.upper()}")
     print("=" * 75)
