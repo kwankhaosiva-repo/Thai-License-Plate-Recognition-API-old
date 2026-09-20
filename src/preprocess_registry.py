@@ -286,3 +286,71 @@ def divide_boxes_by_scale(xyxy, scale):
     out[:, [0, 2]] /= sx
     out[:, [1, 3]] /= sy
     return out
+
+
+# ---------------------------------------------------------------------------
+# Config-driven overrides (A/B testing).
+#
+# The pipeline calls apply_override(<base spec>, cfg, "M1") at startup, so any
+# value placed in the PREPROCESS OVERRIDES section of src/config.py (or the
+# matching LPR_PRE_<STAGE>_* environment variables) takes effect everywhere:
+# serve geometry, imgsz, box rescaling and ONNX/C# docs all stay consistent
+# because they all read the same resolved spec object.
+# ---------------------------------------------------------------------------
+
+def _env(stage: str, key: str):
+    import os
+    return os.environ.get(f"LPR_PRE_{stage}_{key}")
+
+
+def _to_int(v) -> int | None:
+    try:
+        return int(str(v).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_float(v) -> float | None:
+    try:
+        return float(str(v).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def apply_override(base: ModelPreprocessSpec, cfg, stage: str) -> ModelPreprocessSpec:
+    """Return a possibly-overridden copy of `base` for pipeline stage `stage`.
+
+    `stage` is one of "M1", "M2", "M3A". Sources, in priority order:
+      1. Environment variables:  LPR_PRE_<STAGE>_TENSOR, LPR_PRE_<STAGE>_ASPECT
+         (highest priority — zero-restart experiments).
+      2. Config class attributes (edit src/config.py):
+         PREPROCESS_OVERRIDES = {"M1": {"tensor": 416, "aspect": 1.333}, ...}
+         Any key omitted (or None) keeps the trained default.
+    """
+    settings: dict = {}
+    src = getattr(cfg, "PREPROCESS_OVERRIDES", None)
+    if isinstance(src, dict):
+        settings = dict(src.get(stage) or {})
+
+    if _env(stage, "TENSOR") is not None:
+        settings["tensor"] = _env(stage, "TENSOR")
+    if _env(stage, "ASPECT") is not None:
+        settings["aspect"] = _env(stage, "ASPECT")
+
+    tensor = _to_int(settings.get("tensor"))
+    aspect = _to_float(settings.get("aspect"))
+
+    if tensor is None and aspect is None:
+        return base
+
+    return ModelPreprocessSpec(
+        name=f"{base.name} [OVERRIDDEN]",
+        resize_mode=base.resize_mode,
+        tensor_h=tensor if tensor is not None else base.tensor_h,
+        tensor_w=tensor if tensor is not None else base.tensor_w,
+        normalization=base.normalization,
+        train_aspect_w_over_h=aspect if aspect is not None else base.train_aspect_w_over_h,
+        postprocess=base.postprocess,
+        notes=(base.notes + f" | OVERRIDDEN at load time: tensor={tensor}, "
+               f"aspect={aspect}. Re-train/export at this size for a permanent change."),
+    )

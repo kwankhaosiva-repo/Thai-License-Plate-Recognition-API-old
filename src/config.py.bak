@@ -90,65 +90,6 @@ class Config:
     GCP_CLOUD_SYNC_ENABLED = os.environ.get("GCP_CLOUD_SYNC_ENABLED", "1") == "1"
 
     # ============================================================
-    # SERVE / PRE-PROCESS GEOMETRY — READ THIS BEFORE A/B TESTING
-    # ============================================================
-    # Every detector here was trained with PURE STRETCH resize to a square
-    # tensor — none of them were trained with background padding. The pipeline
-    # (src/preprocess_registry.py + api_server.py) reproduces the TRAIN pixel
-    # geometry at serve time automatically.
-    #
-    # PER-MODEL SERVE SPEC (single source of truth: preprocess_registry.py):
-    #
-    #   Stage / model                      Tensor (stretch)  Input aspect fed              Norm       Predict imgsz
-    #   ---------------------------------  ----------------  ----------------------------  ---------  -------------
-    #   M1  RF-DETR-Base                   560 x 560         4:3 scene (1.33)              ImageNet   n/a (fixed native)
-    #   M1  RF-DETR-Small                  512 x 512         4:3                           ImageNet   n/a
-    #   M1  RF-DETR-Nano                   384 x 384         4:3                           ImageNet   n/a
-    #   M1  D-FINE Nano/Small (LibreYOLO)  640 x 640         4:3                           /255       640
-    #   M1  PicoDet-S/M (LibreYOLO)        416 x 416         4:3                           /255       416  (NOT 640!)
-    #   M1  YOLO11 / RT-DETR (Ultralytics) 640 x 640         4:3 letterbox (grey pad)      /255       640/1280
-    #   M1.5  Country cls (MobileNetV3)    256 x 128 (WxH)   stretch from 320x160 plate    ImageNet   n/a
-    #   M2  D-FINE Nano components         640 x 640         crop upscaled to 1280x640 (2:1)  /255     640
-    #   M2  RF-DETR-Base components        560 x 560         same 2:1 upscale              ImageNet   n/a
-    #   M3A RF-DETR-Base char box          560 x 560         crop upscaled to 2088x560 (3.7:1) ImageNet n/a
-    #   M3A D-FINE Nano/Small char box     640 x 640         same 3.7:1 upscale            /255       640
-    #   M3A cls  Char classifier (MBv2)    64 x 64           square stretch                ImageNet   n/a
-    #   M3A OCR  ResNetCRNN (CTC)          256 x 64 (WxH)    SmartResize pad               none       n/a
-    #   M3B     Province (gray ResNet)     256 x 80 / 64x256 (WxH) SmartResize pad         ImageNet   n/a
-    #
-    # M1.5 / M3A-cls / OCR / M3B are torchvision transforms wired in api_server.py
-    # __init__ (tf_country / tf_char / tf_ocr / tf_prov) and must match
-    # train_country_classifier.py / train_ocr.py / train_*_province.py.
-    #
-    # OVERRIDES FOR A/B TESTING (optional):
-    #   Set "tensor" (square network size) and/or "aspect" (W/H of the pixels
-    #   fed to the stretch) per stage. Omitted or None keys keep the trained
-    #   default. Everything downstream — serve geometry, imgsz, RF-DETR
-    #   predict(shape=...), box rescaling, startup banner — follows automatically.
-    #
-    #   * Only values the checkpoint actually supports make sense:
-    #       - M1 D-FINE:    tensor 640 (trained) — 416/512 also valid at predict
-    #                       time for a quick scale-robustness test.
-    #       - M1 PicoDet:   tensor 416 (trained) — the ONNX is hard-pinned 416.
-    #       - M1/M3A RF-DETR: Base 560, Small 512, Nano 384 (ONNX-pinned).
-    #       - M2:           tensor 640 (D-FINE) / 560 (RF-DETR-Base).
-    #   * "aspect" only changes the PIXELS you feed before the stretch — the
-    #     tensor stays square. e.g. M2 aspect 4/3 tests serving rectified
-    #     plates at 4:3 instead of the trained ~2:1.
-    #   * For a PERMANENT change: re-train AND re-export ONNX at the new size,
-    #     then update the table above.
-    #   * Env-var equivalent (no restart/edit): LPR_PRE_M1_TENSOR, LPR_PRE_M1_ASPECT,
-    #     LPR_PRE_M2_TENSOR, LPR_PRE_M2_ASPECT, LPR_PRE_M3A_TENSOR, LPR_PRE_M3A_ASPECT.
-    #
-    # Examples — uncomment to activate:
-    # PREPROCESS_OVERRIDES = {
-    #     "M1":  {"tensor": 416, "aspect": 1.333},   # serve M1 like PicoDet geometry
-    #     "M2":  {"aspect": 4/3},                    # test 4:3 plate crops instead of 2:1
-    #     "M3A": {"tensor": 640},                    # serve RF-DETR-Base charbox at 640
-    # }
-    PREPROCESS_OVERRIDES: dict = {}   # keep {} (= all trained defaults) for production
-
-    # ============================================================
     # (No need to edit below unless you know what you're doing)
     # ============================================================
 
