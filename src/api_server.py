@@ -959,10 +959,12 @@ class LPRPipelineService:
 
         # 7. Transforms
         self.tf_ocr = get_ocr_transforms(is_train=False)
-        if "grayscale" in prov_path.name or "grayscale" in prov_lao_path.name:
-            self.tf_prov = get_grayscale_prov_transforms(is_train=False)
-        else:
-            self.tf_prov = get_prov_transforms(is_train=False)
+        # PREPROCESS FIX: Thai & Lao province models were trained at DIFFERENT
+        # geometries (Thai GrayscaleSmartResize(256,80) vs Lao (256,64)) but the
+        # server previously shared ONE transform — mismatching whichever model
+        # got the wrong size. Keep two transforms matched to each training script.
+        self.tf_prov_thai = get_grayscale_prov_transforms(is_train=False, size=(256, 80))
+        self.tf_prov_lao = get_grayscale_prov_transforms(is_train=False, size=(256, 64))
         self.tf_char = transforms.Compose([
             transforms.Resize((64, 64)),
             transforms.ToTensor(),
@@ -2270,7 +2272,7 @@ class LPRPipelineService:
                 prov_clean = cv2.cvtColor(cv2.merge((clahe_p.apply(lp), ap, bp)), cv2.COLOR_LAB2BGR)
 
             prov_pil = Image.fromarray(cv2.cvtColor(prov_clean, cv2.COLOR_BGR2RGB))
-            ts_prov = self.tf_prov(prov_pil).unsqueeze(0).to(self.device)
+            ts_prov = self.tf_prov_thai(prov_pil).unsqueeze(0).to(self.device)
 
             with torch.no_grad():
                 out_prov = self.prov_model_thai(ts_prov)
@@ -2312,7 +2314,7 @@ class LPRPipelineService:
             else:
                 prov_banner = rectified_plate[int(rh * 0.02) : int(rh * 0.38), int(rw * 0.12) : int(rw * 0.88)]
                 prov_pil = Image.fromarray(cv2.cvtColor(prov_banner, cv2.COLOR_BGR2RGB))
-            ts_prov = self.tf_prov(prov_pil).unsqueeze(0).to(self.device)
+            ts_prov = self.tf_prov_lao(prov_pil).unsqueeze(0).to(self.device)
 
             if self.prov_model_lao is not None and len(self.int_to_prov_lao) > 0:
                 with torch.no_grad():

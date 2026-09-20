@@ -46,24 +46,28 @@
 | **Model 2 (Component Detector)** | **D-FINE-Nano**<br>(~18 ms CPU, 15 MB) | • RF-DETR-Small (~55 ms)<br>• PicoDet-S (~10 ms) | ทำหน้าที่แยกพื้นที่ระหว่าง `plate_char` (แถวตัวหนังสือ) และ `province` (แถวจังหวัดด้านล่าง) D-FINE-Nano ตัดขอบแบ่งโซนได้คมชัด ไม่กินพื้นที่ทับซ้อนกัน |
 | **Stage 3A (Char Localization)** | **RF-DETR-Base (Box)**<br>(~45 ms CPU, 122 MB .pt) | • **D-FINE-Small** (~35 ms, 165 MB)<br>• **D-FINE-Nano** (~16 ms, 15 MB)<br>• Connected Component Analysis | **ทำไมเลือก RF-DETR-Base?**<br>• ใช้ Multi-scale Deformable Attention ในการสแกนพื้นที่ตัวอักษรโดยตรงโดยไม่มีปัญหา Anchor Box Bias<br>• สามารถตรวจจับขอบเขตตัวอักษรที่ชิดกัน หรือตัวอักษรที่มีสระ/วรรณยุกต์ซ้อน และป้ายที่มีสกรูยึดเจาะทะลุได้อย่างคมชัดและแม่นยำสูงสุด |
 | **Model 3A (Text Recognition)** | **Hybrid Method A+C Dual-Engine**<br>• MobileNetV2 (50-Class Balanced Cls, **99.58% Top-1**)<br>• ResNet18-BiLSTM-CTC<br>• Autocontrast Normalization<br>• Spatial Gap Gating + DLT Syntax Guard | • Tesseract OCR<br>• EasyOCR<br>• 12-Epoch Imbalanced Classifier<br>• Blind Sequence Alignment | **ทำไมต้อง Balanced 50-Class + Method A+C Unified Fusion?**<br>• **Balanced Dataset:** ทำ Augmentation ปรับสมดุลทุกคลาสเป็น $\ge 400$ ตัวอย่าง/คลาส (รวม 29,385 ภาพ) พร้อมใส่ Photometric Shadow Gradients แก้ปัญหาตัวอักษรหายาก (`ผ`, `ณ`, `ฬ`) โดนทายสับสนเป็นตัวเลขทึบอย่าง `8`<br>• **Autocontrast Normalization:** ดึง Contrast ขยาย Dynamic Range ตัวอักษรในเงามืดก่อนเข้า Classifier<br>• **Method A+C Fusion:** ผสานความแม่นยำระดับ **99.58% Top-1 (99.89% Top-3)** ของ Classifier เข้ากับ CTC โดยมี **DLT Syntax Guard** ดักจับ Format ป้ายส่วนบุคคลที่เป็นไปไม่ได้ (เช่น `\d[พยัญชนะ]\d{4}`) |
-| **Model 3B (Province Classifier)** | **ResNet18-Grayscale**<br>(~5.0 ms CPU, 42.9 MB, $64 \times 256$) | • ResNet34 Grayscale ($80 \times 256$, 81.5 MB)<br>• ResNet34 RGB<br>• MobileNetV2 RGB | **ทำไมเลือก ResNet18 Grayscale ($64 \times 256$)?**<br>• ขนาดไฟล์เล็กลงเกือบ 50% (เหลือเพียง 42.9 MB) และประมวลผลเร็วมากบน CPU (~5 ms) เหมาะสำหรับการทำ Containerization บน Cloud Run<br>• ให้ความแม่นยำสูงถึง **99.20% Val Top-1** ครบทั้ง 77 จังหวัด และทนทานต่อสภาพแสงสะท้อน แดดย้อน หรือเงามืด |
+| **Model 3B (Province Classifier)** | **ResNet18-Grayscale**<br>(~5.0 ms CPU, 42.9 MB, input $256 \times 80$ ไทย / $256 \times 64$ ลาว) | • ResNet34 Grayscale ($256 \times 80$, 81.5 MB)<br>• ResNet34 RGB<br>• MobileNetV2 RGB | **ทำไมเลือก ResNet18 Grayscale?**<br>• ขนาดไฟล์เล็กลงเกือบ 50% (เหลือเพียง 42.9 MB) และประมวลผลเร็วมากบน CPU (~5 ms) เหมาะสำหรับการทำ Containerization บน Cloud Run<br>• ให้ความแม่นยำสูงถึง **99.46% Val Top-1** ครบทั้ง 77 จังหวัด (ลาว 18 จังหวัด: 99.56%) และทนทานต่อสภาพแสงสะท้อน แดดย้อน หรือเงามืด<br>• ⚠️ Serve ต้อง resize ตรงตามตอนเทรน: ไทย `GrayscaleSmartResize(256,80)` / ลาว `(256,64)` — pad ด้วยโทนพื้นหลังจริงไม่ใช่ดำ |
 
 ---
 
 ## 2. ข้อมูลทางเทคนิคของแต่ละโมเดล (Specs & Frameworks)
 
-| Workflow Stage | โมเดล / สถาปัตยกรรม | Input Resolution | ขนาดไฟล์ (Weights / ONNX) | Framework ที่ใช้เทรน | Task / Output Type |
+> **CONVENTION: Input Resolution = (W × H)** — ค่าจริงจาก checkpoint/ONNX/`src/preprocess_registry.py`
+> หมายเหตุ: โมเดล detection ทุกตัวใช้ tensor จัตุรัส (stretch ไม่ letterbox) — ภาพ input ถูกปรับ aspect ก่อนยืดเข้า tensor ตามเอกสารข้อ 3
+
+| Workflow Stage | โมเดล / สถาปัตยกรรม | Input Resolution (W × H) | ขนาดไฟล์ (Weights / ONNX) | Framework ที่ใช้เทรน | Task / Output Type |
 | :--- | :--- | :---: | :---: | :---: | :--- |
-| **Stage 1 (Plate Detector)** | D-FINE-Nano | $640 \times 640 \times 3$ | 15.0 MB | PyTorch / Ultralytics (D-FINE Engine) | Object Detection (`[1, 300, 4]`) |
-| **Stage 1.1 (Corner Regressor)** | MobileNetV3-Small Head | $224 \times 224 \times 3$ | 4.0 MB | PyTorch (`torchvision`) | 8-D Regression (`[1, 8]`: $x_1, y_1 \dots x_4, y_4$) |
-| **Stage 1.5 (Country Cls)** | MobileNetV3-Small | $128 \times 128 \times 3$ | 3.8 MB | PyTorch (`torchvision`) | Binary Classification (`[1, 2]`) |
-| **Stage 2 (Component Detector)** | D-FINE-Nano | $320 \times 160 \times 3$ | 15.0 MB | PyTorch (D-FINE Engine) | Object Detection (`plate_char`, `province`) |
-| **Stage 3A (Char Box Detector)**| RF-DETR-Base | $160 \times 320 \times 3$ | 121.8 MB | PyTorch (RF-DETR Transformer) | Character Box Detection (`[1, 300, 4]`) |
-| **Stage 3A (Thai Char Classifier)**| MobileNetV2 | $64 \times 64 \times 3$ | 9.0 MB | PyTorch (`torchvision`) | 50-Class Softmax (`[1, 50]`) — **99.58% Val Top-1 / 99.89% Top-3** |
-| **Stage 3A (Thai Full OCR Engine)**| ResNet18 + BiLSTM + CTC | $32 \times 256 \times 3$ | 54.8 MB | PyTorch (Custom CTC Model) | CTC Sequence Logits (`[T, 1, 71]`) |
-| **Stage 3A (Lao Char Classifier)** | MobileNetV2 | $64 \times 64 \times 3$ | 8.9 MB | PyTorch (`torchvision`) | 34-Class Softmax (`[1, 34]`) |
-| **Stage 3B (Thai Province)** | ResNet18 (Grayscale) | $64 \times 256 \times 3$ | 42.9 MB | PyTorch (`torchvision`) | 77-Class Softmax (`[1, 77]`) — **99.20% Val Top-1** |
-| **Stage 3B (Lao Province)** | ResNet18 (Grayscale) | $64 \times 256 \times 3$ | 42.7 MB | PyTorch (`torchvision`) | 18-Class Softmax (`[1, 18]`) — **99.20% Val Top-1** |
+| **Stage 1 (Plate Detector)** | D-FINE-Nano | $640 \times 640$ (stretch; scene 4:3) | 15.0 MB | PyTorch / LibreYOLO (D-FINE Engine) | Object Detection (`[1, 300, 4]`) |
+| *Alternative Stage 1* | PicoDet-S | **$416 \times 416$** (stretch; predict imgsz=416) | 3.8 MB | PyTorch / LibreYOLO (PaddleDetection) | Object Detection (`[1, 3598, 5]`) |
+| **Stage 1.1 (Corner Regressor)** | MobileNetV3-Small Head | $224 \times 224$ (bbox + 12% margin) | 4.0 MB | PyTorch (`torchvision`) | 8-D Regression (`[1, 8]`: $x_1, y_1 \dots x_4, y_4$) |
+| **Stage 1.5 (Country Cls)** | MobileNetV3-Small | **$256 \times 128$** (stretch จาก plate 320×160) | 3.8 MB | PyTorch (`torchvision`) | Binary Classification (`[1, 2]`) |
+| **Stage 2 (Component Detector)** | D-FINE-Nano | **$640 \times 640$ tensor** — serve: upscale rectified plate $320\times160 \to 1280\times640$ (2:1) แล้ว divide boxes กลับ | 15.0 MB | PyTorch (D-FINE Engine) | Object Detection (`plate_char`, `province`) |
+| **Stage 3A (Char Box Detector)**| RF-DETR-Base | **$560 \times 560$ tensor** — serve: upscale char row $\to 2088\times560$ (3.7:1) | 121.8 MB | PyTorch (RF-DETR Transformer) | Character Box Detection (`[1, 300, 4]`) |
+| **Stage 3A (Thai Char Classifier)**| MobileNetV2 | $64 \times 64$ (pre-pad สี median มุม crop; ImageNet norm) | 9.0 MB | PyTorch (`torchvision`) | 50-Class Softmax (`[1, 50]`) — **99.58% Val Top-1 / 99.89% Top-3** |
+| **Stage 3A (Thai Full OCR Engine)**| ResNet18 + BiLSTM + CTC | **$256 \times 64$** (grayscale, pad ดำ, ไม่ normalize) | 54.8 MB | PyTorch (Custom CTC Model) | CTC Sequence Logits (`[T, 1, 71]`) |
+| **Stage 3A (Lao Char Classifier)** | MobileNetV2 | $64 \times 64$ (pad กฎเดียวกับไทย) | 8.9 MB | PyTorch (`torchvision`) | 34-Class Softmax (`[1, 34]`) — **99.56% Val Top-1** |
+| **Stage 3B (Thai Province)** | ResNet18 (Grayscale) | **$256 \times 80$** (⚠️ ไม่ใช่ 256×64 — pad โทนพื้นหลังจริง, norm 0.5/0.25) | 42.9 MB | PyTorch (`torchvision`) | 77-Class Softmax (`[1, 77]`) — **99.46% Val Top-1** |
+| **Stage 3B (Lao Province)** | ResNet18 (Grayscale) | **$256 \times 64$** (pad โทนพื้นหลังจริง, norm 0.5/0.25) | 42.7 MB | PyTorch (`torchvision`) | 18-Class Softmax (`[1, 18]`) — **99.56% Val Top-1** |
 
 ---
 
@@ -84,6 +88,11 @@
 3. **Grayscale Smart-Resize with Ambient Background Filling (Stage 3B)**:
    - ปัญหาเดิมของการ Resize ภาพจังหวัดคือถ้าถมขอบดำ (Black bars) โมเดลจะสับสนกับตัวหนังสือ
    - **นวัตกรรมใหม่:** โค้ดจะอ่านค่าสีเฉลี่ยจากมุมทั้ง 4 ของภาพป้ายจริง (`np.median(corners)`) แล้วนำสีนั้นมาเป็นสีพื้นหลังของ Canvas Padding ทำให้ตัวหนังสือกลมกลืนและไม่เสียอัตราส่วน (Aspect Ratio)
+   - **⚠️ RESOLUTION CONTRACT:** ไทยเทรนที่ **(256, 80)** / ลาว **(256, 64)** — serve ต้องใช้ขนาดเดียวกันต่อประเทศ (`tf_prov_thai` / `tf_prov_lao` แยกกันใน `api_server.py` แล้ว) ห้ามแชร์ transform เดียว
+4. **Serve-Geometry Upscale สำหรับ Detection (Stage 2 / 3A)**:
+   - Rectified plate 320×160 จาก Stage 1 ต้อง upscale เป็น **1280×640** ก่อนเข้า Model 2 (train aspect ≈ 2:1) แล้ว divide boxes กลับรายแกน
+   - Char row ต้อง upscale เป็น **2088×560** ก่อนเข้า RF-DETR (train aspect ≈ 3.7:1)
+   - ทั้งหมด STRETCH เท่านั้น — ห้าม letterbox/pad เพราะโมเดลเทรนด้วย stretch (ตรวจสอบด้วย `python src/test_preprocess_registry.py` และ `python src/test_classifier_preprocess.py`)
 
 ---
 
@@ -131,7 +140,7 @@
 
 ### ❌ ยุคที่ 4: พึ่งพาตัวอ่านรหัสป้ายรถบรรทุกด้านบน (DLT Top Banner Code)
 - **ปัญหา:** ป้ายรถบรรทุกมีรหัสตัวเลข 2 หลักข้างคำว่า THAILAND (เช่น 70 = ราชบุรี, 55 = น่าน) แต่ตัวเลขนี้มักมีขนาดเล็กมาก และมักโดนหัวน็อตยึดป้ายเจาะทับ ทำให้โมเดลอ่านผิด (เช่น อ่าน 70 กลายเป็น 55) แล้วไป Override ทับชื่อจังหวัดที่ถูกต้อง
-- **ทางออกที่ชนะ:** **ถอดระบบ DLT Code Override ออก** แล้วพัฒนา **Model 3B Grayscale Classifier (ResNet34, 80x256)** ให้แม่นยำสูงถึง **99.10% Val / 98.71% Test Top-1** โดยอ่านจากชื่อจังหวัดตรงๆ ด้านล่าง ซึ่งมีพื้นที่ใหญ่กว่าและเชื่อถือได้มากกว่าหลายเท่า
+- **ทางออกที่ชนะ:** **ถอดระบบ DLT Code Override ออก** แล้วพัฒนา **Model 3B Grayscale Classifier (ResNet34, input 256×80)** ให้แม่นยำสูงถึง **99.10% Val / 98.71% Test Top-1** โดยอ่านจากชื่อจังหวัดตรงๆ ด้านล่าง ซึ่งมีพื้นที่ใหญ่กว่าและเชื่อถือได้มากกว่าหลายเท่า
 
 ### ❌ ยุคที่ 5: การเติมตัวอักษรแบบ Blind CTC Insertion
 - **ปัญหา:** เมื่อ Box Detector หลุดตัวอักษร แล้วให้ CTC นำตัวอักษรที่เกินมาเติมแบบตรงๆ (Blind Sequence Alignment) จะทำให้เกิดปัญหา:
