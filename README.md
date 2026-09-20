@@ -325,12 +325,29 @@ python src/train_dfine_nano_all.py --model components,charbox --epochs 30
 # 3. Train all 4 models from scratch sequentially
 python src/train_dfine_nano_all.py --all --epochs 30
 
-# 4. Train individual detector scripts directly
+# 4. เทรนเวอร์ชันใหม่โดยไม่ทับโมเดลเดิม — ใส่ --tag (จะได้ *_v2.pt แยกจากของเดิม)
+python src/train_dfine_nano_all.py --all --epochs 30 --batch 8 --tag v2
+
+# 5. เทรนหลาย variant (dfine_nano / dfine_small / picodet_s / picodet_m) ต่อ task
+python src/train_dfine_nano_all.py --task plate --variant dfine_nano,dfine_small,picodet_s,picodet_m --tag v2
+
+# 6. Preview ว่าจะเทรนอะไรบ้างและไฟล์ output ชื่ออะไร (ไม่เทรนจริง)
+python src/train_dfine_nano_all.py --all-variants --all-tasks --tag v2 --dry-run
+
+# 7. ป้องกันการ overwrite อัตโนมัติ: ถ้าไฟล์ปลายทางมีอยู่แล้ว "และไม่ได้ใส่ --tag"
+#    task นั้นจะถูกข้าม (โมเดลเดิมปลอดภัย) — ใช้ --overwrite เพื่อบังคับแทนที่แบบตั้งใจ
+
+# 8. Train individual detector scripts directly
 python src/train_dfine_nano_components.py --epochs 30  # Model 2: Component Detector
 python src/train_dfine_nano_charbox.py    --epochs 30  # Model 3A: Character Box Detector
 python src/train_dfine_nano_lao_plate.py  --epochs 30  # Lao: Lao Plate Detector
 python src/train_dfine_nano_plate.py      --epochs 30  # Model 1: Plate Detector (already trained)
 ```
+
+> ℹ️ ทุก variant ใช้ engine เดียวกันคือ `src/train_libreyolo_task.py` ซึ่งบังคับ
+> **RESOLUTION CONTRACT อัตโนมัติ**: dfine_* = 640², picodet_* = 416² (stretch, ไม่ letterbox)
+> ตรงกับ `src/preprocess_registry.py` — ห้าม override `--imgsz` เว้นแต่จะ export ONNX
+> และ serve ที่ขนาดเดียวกันด้วย
 
 ### 🚀 RF-DETR-Nano Training Suite (Apache-2.0)
 
