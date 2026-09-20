@@ -72,7 +72,9 @@ def verify_component_detector(
         if img_bgr is None:
             continue
 
-        results = model.predict(img_bgr, conf=conf_thresh, imgsz=320, verbose=False)[0]
+        # NOTE: imgsz must match training (640) — the old 320 caused a
+        # train/infer scale mismatch identical to the one fixed in api_server.
+        results = model.predict(img_bgr, conf=conf_thresh, imgsz=640, verbose=False)[0]
         vis = img_bgr.copy()
         h, w = vis.shape[:2]
 
