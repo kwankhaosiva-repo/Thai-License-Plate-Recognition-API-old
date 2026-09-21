@@ -10,7 +10,8 @@ ENV PYTHONUNBUFFERED=1 \
     PORT=8080 \
     TZ="Asia/Bangkok" \
     OMP_NUM_THREADS=2 \
-    MKL_NUM_THREADS=2
+    MKL_NUM_THREADS=2 \
+    GCS_WEIGHTS_BUCKET="lpr-weight"
 
 # Install system dependencies for OpenCV, image processing, and Thai fonts
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -34,8 +35,8 @@ COPY weights/ ./weights/
 EXPOSE 8080
 
 # Healthcheck for container orchestration
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:' + ('${PORT}' or '8080') + '/health')" || exit 1
 
-# Run with single fast worker optimized for Cloud Run request-based concurrency
-CMD ["sh", "-c", "uvicorn src.api_server:app --host 0.0.0.0 --port ${PORT:-8080} --workers 1"]
+# Download weights from GCS bucket on container boot, then start Uvicorn
+CMD ["sh", "-c", "python3 src/download_weights.py && exec uvicorn src.api_server:app --host 0.0.0.0 --port ${PORT:-8080} --workers 1"]

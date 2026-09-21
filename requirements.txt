@@ -29,4 +29,6 @@ pydantic
 # --- Google Cloud Platform ---
 google-cloud-firestore==2.31.0
 google-cloud-bigquery==3.45.2
+google-cloud-storage==2.18.2
+
 
