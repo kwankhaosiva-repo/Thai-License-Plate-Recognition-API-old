@@ -36,12 +36,18 @@ class Config:
     MODEL_2_FILENAME = "component_detector_picodet_s_v2.pt"
 
     # --- Model 3A: Character Box Detector ---
-    #   "character_box_detector_dfine_nano.pt"  ← D-FINE-Nano (⚡ recommended: MIT, precise char localization)
-    #   "character_box_detector_dfine_small.pt" ← D-FINE-Small (MIT, higher capacity)
+    #   "character_box_detector_picodet_s_v2.pt" ← PicoDet-S v2 (⚡ BEST measured on val: P=0.81/R=0.93 with NMS, dup~0%)
+    #   "character_box_detector_picodet_m_v2.pt" ← PicoDet-M v2
+    #   "character_box_detector_dfine_nano_v2.pt" ← D-FINE-Nano v2 (highest recall 0.99, needs NMS — see api_server)
+    #   "character_box_detector_dfine_small_v2.pt"← D-FINE-Small v2 (recall 0.98 with NMS)
+    #   "character_box_detector_dfine_nano.pt"  ← D-FINE-Nano v1 (⚡ recommended: MIT, precise char localization)
+    #   "character_box_detector_dfine_small.pt" ← D-FINE-Small v1 (MIT, higher capacity)
     #   "character_box_detector_rfdetr_nano.pt" ← RF-DETR-Nano (Apache-2.0)
     #   "character_box_detector_rfdetr_small.pt"← RF-DETR-Small
     #   "character_box_detector_rfdetr.pt"      ← RF-DETR-Base
     #   "character_box_detector_rtdetr.pt"      ← RT-DETR-L (older)
+    # NOTE: filename must be the EXACT weight filename (no "...pt_v2.pt" mistakes —
+    # a nonexistent name silently falls back to an older checkpoint via ACTIVE_CHAR_BOX_MODEL_PATH).
     MODEL_3A_FILENAME = "character_box_detector_picodet_s_v2.pt"
 
     # --- Model 3A: Character Classifier (MobileNetV2) ---
@@ -263,6 +269,12 @@ class Config:
     @property
     def MODEL_2_TAG(self):
         name = self.ACTIVE_MODEL_2_PATH.name.lower()
+        if "picodet_m" in name:
+            return "PicoDet-M (PaddleDetection / Apache-2.0, ⚡)"
+        if "picodet" in name:
+            return "PicoDet-S (PaddleDetection / Apache-2.0, ⚡)"
+        if "dfine_small" in name:
+            return "D-FINE Small (MIT, ⚡)"
         if "dfine_nano" in name:
             return "D-FINE Nano (MIT, ⚡)"
         if "rfdetr_nano" in name:
@@ -306,6 +318,10 @@ class Config:
     @property
     def CHAR_BOX_TAG(self):
         name = self.ACTIVE_CHAR_BOX_MODEL_PATH.name.lower()
+        if "picodet_m" in name:
+            return "PicoDet-M (PaddleDetection / Apache-2.0, ⚡)"
+        if "picodet" in name:
+            return "PicoDet-S (PaddleDetection / Apache-2.0, ⚡)"
         if "dfine_small" in name:
             return "D-FINE Small (MIT, ⚡)"
         if "dfine_nano" in name:
