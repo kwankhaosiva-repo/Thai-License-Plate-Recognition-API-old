@@ -48,7 +48,7 @@ class Config:
     #   "character_box_detector_rtdetr.pt"      ← RT-DETR-L (older)
     # NOTE: filename must be the EXACT weight filename (no "...pt_v2.pt" mistakes —
     # a nonexistent name silently falls back to an older checkpoint via ACTIVE_CHAR_BOX_MODEL_PATH).
-    MODEL_3A_FILENAME = "character_box_detector_picodet_s_v2.pt"
+    MODEL_3A_FILENAME = "character_box_detector_dfine_nano_v2.pt"
 
     # --- Model 3A: Character Classifier (MobileNetV2) ---
     #   "character_classifier.pth" ← MobileNetV2 (50 Thai character & digit classes)
