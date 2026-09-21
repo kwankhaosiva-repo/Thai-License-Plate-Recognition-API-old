@@ -25,7 +25,7 @@ class Config:
     #   "plate_detector_rtdetrv2_r18.pt"     ← RT-DETRv2-R18 (Apache-2.0)
     #   "plate_detector_rfdetr.pt"           ← RF-DETR-Base (More accurate, heavier)
     #   "plate_detector_rtdetr.pt"           ← RT-DETR-L (Older baseline)
-    MODEL_1_FILENAME = "plate_detector_dfine_nano.pt"
+    MODEL_1_FILENAME = "plate_detector_picodet_s_v2.pt"
 
     # --- Model 2: Component Detector (plate_char / province bbox) ---
     #   "component_detector_dfine_nano.pt"     ← D-FINE-Nano (⚡ recommended: MIT, ultra-fast & high mAP)
@@ -33,7 +33,7 @@ class Config:
     #   "component_detector_rfdetr_small.pt"   ← RF-DETR-Small
     #   "component_detector_rfdetr.pt"         ← RF-DETR-Base
     #   "component_detector_rtdetr.pt"         ← RT-DETR-L (older)
-    MODEL_2_FILENAME = "component_detector_dfine_nano.pt"
+    MODEL_2_FILENAME = "component_detector_picodet_s_v2.pt"
 
     # --- Model 3A: Character Box Detector ---
     #   "character_box_detector_dfine_nano.pt"  ← D-FINE-Nano (⚡ recommended: MIT, precise char localization)
@@ -42,7 +42,7 @@ class Config:
     #   "character_box_detector_rfdetr_small.pt"← RF-DETR-Small
     #   "character_box_detector_rfdetr.pt"      ← RF-DETR-Base
     #   "character_box_detector_rtdetr.pt"      ← RT-DETR-L (older)
-    MODEL_3A_FILENAME = "character_box_detector_rfdetr.pt"
+    MODEL_3A_FILENAME = "character_box_detector_picodet_s_v2.pt"
 
     # --- Model 3A: Character Classifier (MobileNetV2) ---
     #   "character_classifier.pth" ← MobileNetV2 (50 Thai character & digit classes)
@@ -109,9 +109,11 @@ class Config:
     #   M1  YOLO11 / RT-DETR (Ultralytics) 640 x 640         4:3 letterbox (grey pad)      /255       640/1280
     #   M1.5  Country cls (MobileNetV3)    256 x 128 (WxH)   stretch from 320x160 plate    ImageNet   n/a
     #   M2  D-FINE Nano components         640 x 640         crop upscaled to 1280x640 (2:1)  /255     640
+    #   M2  PicoDet-S/M components         416 x 416         crop upscaled to 832x416 (2:1)   /255     416
     #   M2  RF-DETR-Base components        560 x 560         same 2:1 upscale              ImageNet   n/a
     #   M3A RF-DETR-Base char box          560 x 560         crop upscaled to 2088x560 (3.7:1) ImageNet n/a
     #   M3A D-FINE Nano/Small char box     640 x 640         same 3.7:1 upscale            /255       640
+    #   M3A PicoDet-S/M char box           416 x 416         crop upscaled to 1550x416 (3.7:1) /255    416
     #   M3A cls  Char classifier (MBv2)    64 x 64           square stretch                ImageNet   n/a
     #   M3A OCR  ResNetCRNN (CTC)          256 x 64 (WxH)    SmartResize pad               none       n/a
     #   M3B     Province (gray ResNet)     256 x 80 / 64x256 (WxH) SmartResize pad         ImageNet   n/a

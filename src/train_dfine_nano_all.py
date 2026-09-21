@@ -31,6 +31,14 @@ Overwrite protection:
 
 import argparse
 import time
+import resource
+
+# Expand file descriptor limit on macOS/Linux to avoid [Errno 24] Too many open files
+try:
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (min(65536, hard), hard))
+except Exception:
+    pass
 
 from train_libreyolo_task import VARIANTS, TASKS, train_libreyolo_task, target_paths
 
