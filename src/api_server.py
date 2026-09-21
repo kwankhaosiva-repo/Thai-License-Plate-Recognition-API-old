@@ -434,6 +434,120 @@ def recover_character_boxes(detected_boxes, crop_w, crop_h, is_lao=False):
     return boxes
 
 
+def split_wide_char_boxes(boxes, char_crop, max_char_aspect=1.1):
+    """Split merged wide boxes (2+ chars inside one bbox) via vertical projection.
+
+    Symptom: serve overlays show a wide 'square' box covering the middle
+    characters (e.g. '535' in one green box). Root cause: detectors emit a
+    merged multi-character box occasionally; downstream heuristics then read
+    it as ONE character. GT has no wide boxes (verified: 0 boxes with
+    w/h >= 1.5 in the whole charbox dataset), so any box wider than a
+    character (aspect > max_char_aspect) is suspicious.
+
+    Splitting: 1D valleys (background columns) inside the box from the
+    grayscale vertical projection; falls back to equal splits when valley
+    count implies k chars but valleys are ambiguous.
+    """
+    import cv2
+    import numpy as np
+
+    if not boxes or char_crop is None or char_crop.size == 0:
+        return boxes
+    gray = cv2.cvtColor(char_crop, cv2.COLOR_BGR2GRAY)
+    h_crop, w_crop = gray.shape[:2]
+    # Foreground = dark strokes on light plate (plates are light background).
+    bin_img = (gray < 110).astype(np.float32)
+    col_ink = bin_img.sum(axis=0)
+    thresh_ink = max(1.0, 0.15 * float(bin_img.shape[0]))
+
+    out = []
+    for (x1, y1, x2, y2, conf) in boxes:
+        bw = x2 - x1
+        bh = y2 - y1
+        if bh <= 0 or bw <= 0:
+            continue
+        aspect = bw / float(bh)
+        if aspect <= max_char_aspect:
+            out.append((x1, y1, x2, y2, conf))
+            continue
+        k = max(2, int(round(aspect / 0.85)))  # chars ~0.85 w/h at serve scale
+        x1c, x2c = max(0, x1), min(w_crop, x2)
+        if x2c - x1c < 24:
+            out.append((x1, y1, x2, y2, conf))
+            continue
+        seg = col_ink[x1c:x2c]
+        # Find low-ink valleys as split boundaries
+        valleys = []
+        run_start = None
+        for i, v in enumerate(seg):
+            if v < thresh_ink:
+                if run_start is None:
+                    run_start = i
+            else:
+                if run_start is not None:
+                    valleys.append((run_start + i - 1) // 2)
+                    run_start = None
+        if run_start is not None:
+            valleys.append((run_start + len(seg) - 1) // 2)
+        # Trust OBSERVED valleys (inter-character gaps) over the aspect guess:
+        # merge adjacent valleys, keep cuts that leave segments >= 14 px.
+        merged_valleys = []
+        for v in valleys:
+            if merged_valleys and v - merged_valleys[-1] < 6:
+                merged_valleys[-1] = (merged_valleys[-1] + v) // 2
+            else:
+                merged_valleys.append(v)
+        cuts = []
+        prev_x = 0
+        for v in merged_valleys:
+            if v - prev_x >= 14 and (x2c - x1c) - v >= 14:
+                cuts.append(v)
+                prev_x = v
+        if not cuts:
+            # No readable gaps (touching chars): equal split with the
+            # aspect-based character-count estimate as the last resort.
+            cuts = [int((j + 1) * (x2c - x1c) / k) for j in range(k - 1)]
+        prev = x1
+        for c in cuts + [x2c - x1c]:
+            nx2 = x1 + c
+            if nx2 - prev >= 8:
+                out.append((prev, y1, nx2, y2, conf))
+            prev = nx2
+        if not cuts and (x2 - x1) >= 8:
+            out.append((x1, y1, x2, y2, conf))
+    return out
+
+
+def charbox_greedy_nms(raw_boxes, iou_thr=0.35):
+    """Greedy confidence-ordered IoU NMS for Model 3A character boxes.
+
+    D-FINE / RF-DETR (NMS-free DETR heads) emit many low-confidence duplicate
+    and nested boxes at serve thresholds (measured 40-65% duplicates at
+    conf=0.10 on the charbox val set, 131 imgs). Conf-ordered IoU NMS at
+    ~0.35 removes the duplicate artifact almost entirely (1-3%) with <2%
+    recall cost, and also prunes PicoDet's low-conf jitter (precision
+    +5-19%). See scratch/eval_m3a_nms.py for the measurement.
+
+    raw_boxes: list of (x1, y1, x2, y2, conf). Returns the same format,
+    sorted by confidence (descending).
+    """
+    if not raw_boxes:
+        return raw_boxes
+
+    def _iou(a, b):
+        ix = max(0.0, float(min(a[2], b[2]) - max(a[0], b[0])))
+        iy = max(0.0, float(min(a[3], b[3]) - max(a[1], b[1])))
+        inter = ix * iy
+        ua = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+        return inter / ua if ua > 0 else 0.0
+
+    kept = []
+    for cand in sorted(raw_boxes, key=lambda b: -b[4]):
+        if all(_iou(cand, k) < iou_thr for k in kept):
+            kept.append(cand)
+    return kept
+
+
 def has_invalid_thai_consonant_placement(text: str) -> bool:
     """
     Validates Thai license plate consonant syntax invariants.
@@ -997,6 +1111,11 @@ class LPRPipelineService:
         self.m1_imgsz_native = self.m1_spec.tensor_w if self.m1_spec.tensor_w == self.m1_spec.tensor_h else None
         self.m2_imgsz_native = self.m2_spec.tensor_w if self.m2_spec.tensor_w == self.m2_spec.tensor_h else None
         self.m3a_imgsz_native = self.m3a_spec.tensor_w if self.m3a_spec.tensor_w == self.m3a_spec.tensor_h else None
+        # Per-family M3A confidence floor. PicoDet emits a long low-conf tail
+        # (measured: P=0.43 at conf 0.10 -> P=0.83 at 0.20 on val, recall -0.6%)
+        # and its occasional merged-box artifact fed the char classifier garbage;
+        # D-FINE duplicates are handled by charbox_greedy_nms at conf 0.10.
+        self.m3a_conf = 0.22 if "picodet" in cfg.ACTIVE_CHAR_BOX_MODEL_PATH.name.lower() else 0.10
 
         # 8. Lao Ground Truth Lookup
         self.lao_gt_lookup = {}
@@ -1794,9 +1913,9 @@ class LPRPipelineService:
                 det_char_input, m3a_scale = upscale_to_train_geometry(det_char_input, self.m3a_spec)
 
                 try:
-                    box_res = self.char_box_model(det_char_input, conf=0.10, verbose=False, device=self.device)[0]
+                    box_res = self.char_box_model(det_char_input, conf=self.m3a_conf, verbose=False, device=self.device)[0]
                 except Exception:
-                    box_res = self.char_box_model(det_char_input, conf=0.10, verbose=False)[0]
+                    box_res = self.char_box_model(det_char_input, conf=self.m3a_conf, verbose=False)[0]
                 raw_boxes = []
                 crop_w = char_crop.shape[1]
                 for b in box_res.boxes:
@@ -1813,6 +1932,15 @@ class LPRPipelineService:
                     if bx2 >= crop_w - 1 and bw < 8:
                         continue
                     raw_boxes.append((bx1, by1, bx2, by2, bconf))
+
+                # 0. Conf-ordered IoU NMS — kills the DETR duplicate/nested-box
+                # artifact (measured 40-65% of raw D-FINE output at conf=0.10;
+                # drops to 1-3% at IoU 0.35 with <2% recall cost) and prunes
+                # PicoDet low-conf jitter (precision +5-19%).
+                raw_boxes = charbox_greedy_nms(raw_boxes, iou_thr=0.35)
+                # Split detector-merged multi-character boxes (the wide 'square'
+                # overlay covering middle chars) — GT contains no wide boxes.
+                raw_boxes = split_wide_char_boxes(raw_boxes, char_crop)
 
                 # 1. Filter out merged composite boxes and sub-stroke fragments
                 # A: Suppress sub-stroke boxes that are fully inside a larger normal character box
@@ -2341,11 +2469,12 @@ class LPRPipelineService:
             if self.char_box_model is not None and self.char_classifier_lao is not None and char_crop is not None and char_crop.size > 0:
                 # PREPROCESS FIX: same train-geometry upscale as the Thai branch.
                 lao_char_input, lao_m3a_scale = upscale_to_train_geometry(char_crop, self.m3a_spec)
+                lao_m3a_conf = max(self.m3a_conf, 0.12)
                 try:
                     try:
-                        box_res = self.char_box_model(lao_char_input, conf=0.12, verbose=False, device=self.device)[0]
+                        box_res = self.char_box_model(lao_char_input, conf=lao_m3a_conf, verbose=False, device=self.device)[0]
                     except Exception:
-                        box_res = self.char_box_model(lao_char_input, conf=0.12, verbose=False)[0]
+                        box_res = self.char_box_model(lao_char_input, conf=lao_m3a_conf, verbose=False)[0]
 
                     raw_boxes = []
                     crop_w = char_crop.shape[1]
@@ -2361,6 +2490,10 @@ class LPRPipelineService:
                         if bx2 >= crop_w - 2 and bw < 12:
                             continue
                         raw_boxes.append((bx1, by1, bx2, by2, bconf))
+
+                    # Conf-ordered IoU NMS + merged-box split (same fix as Thai branch)
+                    raw_boxes = charbox_greedy_nms(raw_boxes, iou_thr=0.35)
+                    raw_boxes = split_wide_char_boxes(raw_boxes, char_crop)
 
                     # Horizontal NMS / Deduplication
                     raw_boxes.sort(key=lambda x: x[4], reverse=True)
@@ -3186,20 +3319,17 @@ class RTSPLPRProcessor:
         self.conf_m1 = conf_m1
         self.last_emit_time = 0.0
         self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(history=200, varThreshold=25, detectShadows=False)
-        self.session_buffer: List[Dict[str, Any]] = []
-        self.session_start_time = 0.0
-        self.session_anchor_plate: Optional[str] = None
-        self.session_saved = False
+        # Multi-vehicle sessions: one independent capture session PER plate text,
+        # so a 2nd car trailing the 1st gets its own record (the old
+        # single-session design stopped inferring after car #1 hit its frame cap).
+        self.active_sessions: Dict[str, Dict[str, Any]] = {}
         self.last_consolidated: Optional[Dict[str, Any]] = None
         self.frame_idx = 0
         self.last_inferred_frame = -999
 
     def reset(self):
         self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(history=200, varThreshold=25, detectShadows=False)
-        self.session_buffer.clear()
-        self.session_start_time = 0.0
-        self.session_anchor_plate = None
-        self.session_saved = False
+        self.active_sessions.clear()
         self.last_consolidated = None
         self.frame_idx = 0
         self.last_emit_time = 0.0
@@ -3259,50 +3389,37 @@ class RTSPLPRProcessor:
         now = time.time()
         has_motion = self.detect_vehicle_motion(frame)
 
-        # Check if vehicle left the scene (idle road for > 1.5s):
+        # Expire stale sessions: age > session_duration OR road idle > 1.5s.
+        # Sessions are PER PLATE, so car #2 keeps its own live session while
+        # car #1's session expires independently.
+        expired_keys = [
+            key for key, s in self.active_sessions.items()
+            if (now - s["start"]) > self.session_duration_sec
+            or (not has_motion and (now - s["last_seen"]) > 1.5)
+        ]
+        for key in expired_keys:
+            del self.active_sessions[key]
+
+        # No vehicle motion: skip neural inference; keep showing the last
+        # confirmed result during the display cooldown.
         if not has_motion:
-            if self.session_start_time > 0 and (now - self.last_emit_time) > 1.5:
-                self.session_buffer.clear()
-                self.session_start_time = 0.0
-                self.session_anchor_plate = None
-                self.session_saved = False
-                self.last_inferred_frame = -999
-
-        # Check if the active 5-second session has expired:
-        if self.session_start_time > 0 and (now - self.session_start_time) > self.session_duration_sec:
-            self.session_buffer.clear()
-            self.session_start_time = 0.0
-            self.session_anchor_plate = None
-            self.session_saved = False
-            self.last_inferred_frame = -999
-
-        # Within cooldown: keep displaying confirmed vehicle detection if road is idle
-        if self.last_consolidated and (now - self.last_emit_time) < self.cooldown_sec:
-            if not has_motion:
+            if self.last_consolidated and (now - self.last_emit_time) < self.cooldown_sec:
                 return self.last_consolidated, False, False
+            return None, False, False
 
-        # No vehicle motion: skip neural inference
-        if not has_motion:
-            if (now - self.last_emit_time) > self.cooldown_sec:
-                return None, False, False
-            return self.last_consolidated, False, False
-
-        # Determine active 5-second window status
-        in_active_window = (self.session_start_time > 0) and ((now - self.session_start_time) <= self.session_duration_sec)
-
-        # Feature 1: Max 5 Frames Cap per Vehicle Session
-        # Once 5 diverse frames have been captured and averaged for this vehicle,
-        # bypass heavy neural inference and directly reuse the consolidated 5-frame average!
-        if in_active_window and len(self.session_buffer) >= self.max_session_frames:
-            return self.last_consolidated, True, True
-
-        # Feature 2: Frame Skipping across Vehicle Movement Duration
-        # Avoid processing consecutive identical video frames. Skip `self.frame_skip` frames
-        # between neural inferences to capture diverse snapshots across the vehicle's movement.
+        # Feature: Frame Skipping across Vehicle Movement Duration.
+        # Avoid processing consecutive identical frames; skip `frame_skip`
+        # frames between neural inferences. NOTE: this is GLOBAL (not tied to
+        # any one session) so a NEW plate entering the frame is inferred on
+        # the very next allowed frame — the old design returned early once
+        # the single session hit its 5-frame cap and never saw car #2.
         frames_since_last = self.frame_idx - self.last_inferred_frame
-        if in_active_window and frames_since_last < (self.frame_skip + 1):
-            preview_res = self.last_consolidated or (self.session_buffer[-1] if self.session_buffer else None)
-            is_confirmed = len(self.session_buffer) >= self.target_samples
+        if self.last_inferred_frame >= 0 and frames_since_last < (self.frame_skip + 1):
+            preview_res = self.last_consolidated
+            is_confirmed = any(
+                s["saved"] or len(s["buffer"]) >= self.target_samples
+                for s in self.active_sessions.values()
+            )
             return preview_res, is_confirmed, True
 
         # Vehicle motion detected: run LPR pipeline with strict stream threshold
@@ -3333,49 +3450,65 @@ class RTSPLPRProcessor:
                     current_res = res
                     raw_plate = res.get("plate_text", "")
 
-                    is_same_car = in_active_window and self._is_same_plate(raw_plate, self.session_anchor_plate or "")
+                    # Route this reading to a session: same plate -> same session
+                    # (fuzzy match tolerates OCR jitter); otherwise open a NEW
+                    # session so a trailing 2nd car gets its own record.
+                    session_key = None
+                    for key in self.active_sessions:
+                        if self._is_same_plate(raw_plate, key):
+                            session_key = key
+                            break
 
-                    if is_same_car:
-                        if len(self.session_buffer) < self.max_session_frames:
-                            self.session_buffer.append(res)
+                    if session_key is not None:
+                        sess = self.active_sessions[session_key]
+                        sess["last_seen"] = now
+                        if len(sess["buffer"]) < self.max_session_frames:
+                            sess["buffer"].append(res)
                     elif is_valid and len(p_text) >= 3:
-                        # New passing vehicle: ONLY start a fresh session on a genuine valid plate!
-                        # (Rejects exit noise / fragments like '4ฐ' or '17117' when car drives away)
-                        self.session_start_time = now
-                        self.session_anchor_plate = raw_plate
-                        self.session_buffer = [res]
-                        self.session_saved = False
+                        # New vehicle: only start a fresh session on a genuine
+                        # valid plate (rejects exit noise / fragments like '4ฐ')
+                        self.active_sessions[raw_plate] = {
+                            "start": now,
+                            "last_seen": now,
+                            "buffer": [res],
+                            "saved": False,
+                        }
+                        session_key = raw_plate
 
-                    # Consolidate and average across all captures within the 5-second window into 1 result
-                    if len(self.session_buffer) >= self.target_samples:
-                        consolidated = self.aggregate_buffer(self.session_buffer)
-                        if consolidated:
-                            consolidated["session_duration"] = f"{round(min(self.session_duration_sec, now - self.session_start_time), 1)}s / 5.0s"
-                            self.last_consolidated = consolidated
-                            self.last_emit_time = now
-                            if self.pipeline is not None:
-                                self.pipeline.latest_stream_detection = consolidated
+                    if session_key is not None:
+                        sess = self.active_sessions[session_key]
+                        # Consolidate + average across all captures of THIS vehicle
+                        if len(sess["buffer"]) >= self.target_samples:
+                            consolidated = self.aggregate_buffer(sess["buffer"])
+                            if consolidated:
+                                elapsed = min(self.session_duration_sec, now - sess["start"])
+                                consolidated["session_duration"] = f"{round(elapsed, 1)}s / {self.session_duration_sec}s"
+                                self.last_consolidated = consolidated
+                                self.last_emit_time = now
+                                if self.pipeline is not None:
+                                    self.pipeline.latest_stream_detection = consolidated
 
-                            # Save exactly 1 clean entry to history for this vehicle session:
-                            if not self.session_saved and consolidated.get("is_valid"):
-                                try:
-                                    # Use best crop from the session buffer
-                                    best_sample = max(self.session_buffer, key=lambda s: s.get("confidence", {}).get("plate_detection", 0.0))
-                                    if "crops" in best_sample and best_sample["crops"].get("plate_rectified"):
-                                        consolidated.setdefault("crops", {})["plate_rectified"] = best_sample["crops"]["plate_rectified"]
-                                    consolidated["dedup_window_sec"] = self.cooldown_sec
-                                    save_recognition(consolidated)
-                                    self.session_saved = True
-                                except Exception as e:
-                                    logger.warning(f"Failed to record stream consolidated recognition: {e}")
+                                # Save exactly 1 clean entry to history per vehicle session:
+                                if not sess["saved"] and consolidated.get("is_valid"):
+                                    try:
+                                        # Use best crop from the session buffer
+                                        best_sample = max(sess["buffer"], key=lambda s: s.get("confidence", {}).get("plate_detection", 0.0))
+                                        if "crops" in best_sample and best_sample["crops"].get("plate_rectified"):
+                                            consolidated.setdefault("crops", {})["plate_rectified"] = best_sample["crops"]["plate_rectified"]
+                                        consolidated["dedup_window_sec"] = self.cooldown_sec
+                                        save_recognition(consolidated)
+                                        sess["saved"] = True
+                                    except Exception as e:
+                                        logger.warning(f"Failed to record stream consolidated recognition: {e}")
 
-                            return consolidated, True, True
+                                return consolidated, True, True
                     else:
+                        # Genuine reading but too weak to open a session: preview only
                         if self.pipeline is not None:
                             self.pipeline.latest_stream_detection = res
                         return res, False, True
 
-        preview_res = current_res or (self.session_buffer[-1] if self.session_buffer else self.last_consolidated)
+        preview_res = current_res or self.last_consolidated
         return preview_res, False, True
 
     def aggregate_buffer(self, buffer: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
