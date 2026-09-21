@@ -174,6 +174,17 @@ M2_COMPONENTS = ModelPreprocessSpec(
           "divide returned xyxy by the upscale factor. Do NOT letterbox.",
 )
 
+M2_COMPONENTS_PICODET = ModelPreprocessSpec(
+    name="component_detector_picodet_* (PicoDet-S/M)",
+    resize_mode=ResizeMode.STRETCH,
+    tensor_h=416, tensor_w=416,
+    normalization=Normalization.UNIT,
+    train_aspect_w_over_h=2.0,
+    postprocess="divide_by_upscale_scale",
+    notes="Feed rectified plates upscaled to 832x416 (train aspect 2:1) and "
+          "divide returned xyxy by the upscale factor. Do NOT letterbox.",
+)
+
 # ---------------------------------------------------------------------------
 # Model 3A — character box detector.
 # Trained on Roboflow char crops, measured median aspect 3.73 (~3.7:1),
@@ -203,6 +214,17 @@ M3A_CHARBOX_DFINE = ModelPreprocessSpec(
     notes="Same geometry rule as the RF-DETR variant but 640 tensor + unit norm.",
 )
 
+M3A_CHARBOX_PICODET = ModelPreprocessSpec(
+    name="character_box_detector_picodet_* (PicoDet-S/M)",
+    resize_mode=ResizeMode.STRETCH,
+    tensor_h=416, tensor_w=416,
+    normalization=Normalization.UNIT,
+    train_aspect_w_over_h=3.73,
+    postprocess="divide_by_upscale_scale",
+    notes="Feed char crops upscaled to train aspect (~3.7:1, height 416) and "
+          "divide returned xyxy by the upscale factor. Unit norm.",
+)
+
 
 def get_m1_spec(model_filename: str) -> ModelPreprocessSpec:
     """Pick the Model 1 spec from the active weight filename."""
@@ -223,6 +245,8 @@ def get_m1_spec(model_filename: str) -> ModelPreprocessSpec:
 
 def get_m2_spec(model_filename: str) -> ModelPreprocessSpec:
     n = model_filename.lower()
+    if "picodet" in n:
+        return M2_COMPONENTS_PICODET
     if "rfdetr" in n:
         return M1_RFDETR_BASE  # same family geometry (560 stretch + ImageNet)
     return M2_COMPONENTS
@@ -230,6 +254,8 @@ def get_m2_spec(model_filename: str) -> ModelPreprocessSpec:
 
 def get_m3a_spec(model_filename: str) -> ModelPreprocessSpec:
     n = model_filename.lower()
+    if "picodet" in n:
+        return M3A_CHARBOX_PICODET
     if "dfine" in n:
         return M3A_CHARBOX_DFINE
     if "rtdetr" in n or "yolo" in n:

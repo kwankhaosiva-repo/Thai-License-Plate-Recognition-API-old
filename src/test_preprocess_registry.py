@@ -54,8 +54,10 @@ def main() -> int:
     ok &= check("dfine nano -> 640", get_m1_spec("plate_detector_dfine_nano.pt").tensor_w == 640)
     ok &= check("picodet m -> 416", get_m1_spec("plate_detector_picodet_m.pt").tensor_w == 416)
     ok &= check("rtdetrv2 -> dfine family (640)", get_m1_spec("plate_detector_rtdetrv2_r18.pt").tensor_w == 640)
-    ok &= check("m2 default -> 640 tensor", get_m2_spec("component_detector_dfine_nano.pt").tensor_w == 640)
-    ok &= check("m3a default -> 560 tensor", get_m3a_spec("character_box_detector_rfdetr.pt").tensor_w == 560)
+    ok &= check("m2 default (dfine) -> 640 tensor", get_m2_spec("component_detector_dfine_nano.pt").tensor_w == 640)
+    ok &= check("m2 picodet -> 416 tensor", get_m2_spec("component_detector_picodet_s_v2.pt").tensor_w == 416)
+    ok &= check("m3a default (rfdetr) -> 560 tensor", get_m3a_spec("character_box_detector_rfdetr.pt").tensor_w == 560)
+    ok &= check("m3a picodet -> 416 tensor", get_m3a_spec("character_box_detector_picodet_s_v2.pt").tensor_w == 416)
 
     print("== 2. Train pixel geometry ==")
     ok &= check("M2 -> 1280x640 (train aspect ~2:1)", M2_COMPONENTS.recommended_input_shape() == (1280, 640))

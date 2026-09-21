@@ -203,4 +203,23 @@ def train_libreyolo_task(task, variant, epochs=30, batch=8, imgsz=None,
         print(f"⚠️ Checkpoint not found in {run_dir}. Check logs.")
         return False
 
+    # Clean up memory and file descriptors between sequential jobs
+    try:
+        del model
+        if 'trained_model' in locals():
+            del trained_model
+    except Exception:
+        pass
+
+    import gc
+    gc.collect()
+    try:
+        import torch
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+        elif torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
     return True
