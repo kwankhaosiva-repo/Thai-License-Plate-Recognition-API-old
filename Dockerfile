@@ -26,10 +26,13 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu && \
     pip install --no-cache-dir -r requirements.txt
 
-# Copy application source, web static assets, and production weights
+# Copy application source and web static assets.
+# NOTE: weights/ is NOT baked into the image (the full dir is ~6 GB).
+# The container downloads ONLY the production files from GCS at boot via
+# src/download_weights.py (bucket: GCS_WEIGHTS_BUCKET) — keeps the image
+# small and Cloud Run cold starts fast.
 COPY src/ ./src/
 COPY static/ ./static/
-COPY weights/ ./weights/
 
 # Expose Cloud Run default port
 EXPOSE 8080

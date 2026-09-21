@@ -2818,10 +2818,52 @@ class LPRPipelineService:
 pipeline_service: Optional[LPRPipelineService] = None
 
 
+def _warmup_pipeline(service: "LPRPipelineService") -> None:
+    """
+    Runs one tiny dummy inference through EVERY loaded detector so the first
+    real request is fast. torch lazily initializes conv algorithms, thread
+    pools and per-model buffers on the FIRST forward pass — without this the
+    first dashboard request pays a multi-second warm-up bill even though the
+    terminal already printed that weights were loaded.
+    Failures are non-fatal (e.g. weights still syncing in a fresh container).
+    """
+    import numpy as _np
+    dummy = _np.full((320, 640, 3), 128, dtype=_np.uint8)  # 4:3-ish scene, M1 spec aspect
+    for name in ("model_plate", "model_comp", "char_box_model"):
+        model = getattr(service, name, None)
+        if model is None:
+            continue
+        try:
+            model(dummy.copy(), conf=0.05)
+        except Exception as e:
+            print(f"[Warmup] {name} skipped: {e}")
+    # Classifiers: single tiny forward to page in weights
+    for name, shape in (
+        ("char_classifier", (1, 3, 64, 64)),
+        ("char_classifier_lao", (1, 3, 64, 64)),
+        ("prov_model_thai", (1, 3, 80, 256)),
+        ("prov_model_lao", (1, 3, 64, 256)),
+        ("country_model", (1, 3, 128, 256)),
+        ("ocr_model", (1, 1, 64, 256)),
+    ):
+        m = getattr(service, name, None)
+        if m is None:
+            continue
+        try:
+            with __import__("torch").no_grad():
+                m(__import__("torch").zeros(shape))
+        except Exception as e:
+            print(f"[Warmup] {name} skipped: {e}")
+    print("[Warmup] All loaded models warmed up — first request will be fast.")
+
+
 @app.on_event("startup")
 async def startup_event():
     global pipeline_service
     pipeline_service = LPRPipelineService()
+    # Warm up OUTSIDE the event loop so uvicorn can serve /health immediately
+    import asyncio as _asyncio
+    await _asyncio.get_event_loop().run_in_executor(None, _warmup_pipeline, pipeline_service)
 
 
 # --- REST API Endpoints ---
