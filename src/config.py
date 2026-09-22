@@ -79,6 +79,19 @@ class Config:
     # Set to 0.80 for sharp, high-confidence detection and clean rejection of background clutter.
     STREAM_CONF_M1 = 0.80
     VIDEO_CONF_M1 = 0.80
+
+    # --- Confidence Gating (Model 1 × 2 × 3 consensus) ---
+    # Production filter for "detect ผิด / มองไม่เห็น" cases. When BOTH Model 2
+    # (component split) and Model 3 (char/province read) fall below their
+    # floors, the read is untrustworthy:
+    #   - M1 still confident (>= CONF_GATE_M1_KEEP) -> keep the crop & flag it
+    #     LOW CONFIDENCE for review (typical: white plates with colored text
+    #     that M2/M3 miss but M1 clearly sees).
+    #   - M1 also weak -> discard entirely (false positive / not a plate).
+    CONF_GATE_ENABLED = True
+    CONF_GATE_M2_MIN = 0.50   # > this = genuine M2 boxes (0.50 exact = fallback crop)
+    CONF_GATE_M3_MIN = 0.30   # province classification floor (matches ambiguity flag)
+    CONF_GATE_M1_KEEP = 0.60  # keep crop for review when M2/M3 both low
     STREAM_MIN_VEHICLE_AREA = 1800
     STREAM_TARGET_SAMPLES = 1     # Immediate lock-on on valid detection, then aggregates up to 5 frames
     STREAM_MAX_SESSION_FRAMES = 5 # Maximum frames to process per vehicle session (caps compute, averages 5 diverse frames)

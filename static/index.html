@@ -3,598 +3,509 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Thai License Plate Recognition (Thai LPR) - AI Web Dashboard</title>
-  
-  <!-- Fonts -->
+  <title>License Plate Recognition | Live Monitor</title>
+
+  <!-- Fonts: Sarabun (Thai+Latin UI) + JetBrains Mono (numbers/code) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@400;500;600;700;800&family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
-  
-  <!-- Stylesheet -->
-  <link rel="stylesheet" href="/static/css/style.css?v=2">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Sarabun:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="/static/css/style.css?v=6">
 </head>
 <body>
 
-  <!-- Top App Header -->
-  <header class="app-header">
-    <div class="brand">
-      <div class="brand-icon">
-        <svg viewBox="0 0 24 24">
-          <path d="M19 4H5c-1.11 0-2 .9-2 2v12c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H5V6h14v12zM7 10h2v5H7zm4-3h2v8h-2zm4 2h2v6h-2z"/>
-        </svg>
-      </div>
-      <div>
-        <span class="brand-title">THAI LPR SYSTEM</span>
-        <span class="brand-badge">Pipeline 3-Stage</span>
-      </div>
+  <div class="app-shell">
 
-      <!-- Navigation Page Switcher -->
-      <nav class="nav-page-switcher" style="margin-left: 20px;">
-        <a href="/" class="nav-page-btn active">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
-          </svg>
-          Live Monitor
-        </a>
-        <a href="/history" class="nav-page-btn">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/>
-          </svg>
-          Recognition History
-        </a>
-      </nav>
-    </div>
-
-    <div class="header-controls">
-      <div class="status-pills">
-        <button id="modelsPillBtn" class="pill pill-clickable" title="Click to view loaded model architectures">
-          <span class="dot"></span>
-          <span style="color: var(--accent-cyan); font-weight: 600;">Models: 4/4 Loaded</span>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="opacity: 0.7; margin-left: 2px;">
-            <path d="M7 10l5 5 5-5z"/>
-          </svg>
-        </button>
-      </div>
-
-      <!-- Debug Toggle Switch -->
-      <div class="debug-toggle-wrapper">
-        <span class="debug-label">
-          <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M20 8h-2.81c-.45-.78-1.07-1.45-1.82-1.96L17 4.41 15.59 3l-2.17 2.17C12.96 5.06 12.49 5 12 5c-.49 0-.96.06-1.41.17L8.41 3 7 4.41l1.62 1.63C7.88 6.55 7.26 7.22 6.81 8H4v2h2.09c-.05.33-.09.66-.09 1v1H4v2h2v1c0 .34.04.67.09 1H4v2h2.81c1.04 1.79 2.97 3 5.19 3s4.15-1.21 5.19-3H20v-2h-2.09c.05-.33.09-.66.09-1v-1h2v-2h-2v-1c0-.34-.04-.67-.09-1H20V8zm-6 8h-4v-2h4v2zm0-4h-4v-2h4v2z"/>
-          </svg>
-          Debug Inspection
-        </span>
-        <label class="switch" title="Toggle debug breakdown images (Off saves resources)">
-          <input type="checkbox" id="debugToggle">
-          <span class="slider"></span>
-        </label>
-      </div>
-
-      <!-- User Authentication Profile & Session Widget -->
-      <div id="auth-user-container" class="auth-user-container"></div>
-    </div>
-  </header>
-
-  <!-- Main Content Layout -->
-  <main class="main-container">
-
-    <!-- Mode Selector Switcher -->
-    <div class="mode-tabs">
-      <button class="tab-btn active" id="tabUpload">
-        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-          <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
-        </svg>
-        Upload Mode (Image / Batch / Video)
+    <!-- ================= SIDEBAR ================= -->
+    <aside class="sidebar">
+      <button type="button" class="sidebar-toggle" id="sidebarToggle" data-i18n-title="nav_collapse" title="Collapse sidebar">
+        <svg class="toggle-chevron" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 19l-7-7 7-7m8 14l-7-7 7-7"/></svg>
+        <span class="toggle-label" data-i18n="nav_collapse">Collapse</span>
       </button>
-      <button class="tab-btn" id="tabLive">
-        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-          <path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
-        </svg>
-        Live Video / RTSP Port
+
+      <div class="sidebar-brand">
+        <div class="brand-icon">
+          <svg viewBox="0 0 24 24"><path d="M19 4H5c-1.11 0-2 .9-2 2v12c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H5V6h14v12zM7 10h2v5H7zm4-3h2v8h-2zm4 2h2v6h-2z"/></svg>
+        </div>
+        <div>
+          <div class="sidebar-title" data-i18n="app_name">License Plate Recognition</div>
+          <div class="sidebar-subtitle" data-i18n="app_sub">Thai &amp; Lao LPR</div>
+        </div>
+      </div>
+
+      <div class="sidebar-section" data-i18n="sec_overview">Overview</div>
+      <a href="/" class="nav-item active">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+        <span data-i18n="nav_live">Live Monitor</span>
+      </a>
+      <a href="/history" class="nav-item">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        <span data-i18n="nav_history">Recognition History</span>
+      </a>
+
+      <div class="sidebar-section" data-i18n="sec_system">System</div>
+      <button type="button" class="nav-item" id="navModelsBtn">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/></svg>
+        <span data-i18n="nav_models">AI Models</span>
+        <span class="nav-badge" id="navModelsBadge">9/9</span>
       </button>
+
+      <div class="sidebar-section" data-i18n="sec_user">User</div>
+      <div id="sidebar-nav-user"></div>
+
+      <div class="sidebar-footer">
+        <div id="auth-user-container" class="auth-user-container"></div>
+      </div>
+    </aside>
+
+    <!-- ================= CONTENT ================= -->
+    <div class="content-area">
+
+      <header class="topbar">
+        <div>
+          <div class="topbar-title" data-i18n="live_title">Live Monitor</div>
+          <div class="topbar-sub" data-i18n="live_sub">Upload images/videos or connect an RTSP camera for real-time plate recognition</div>
+        </div>
+        <div class="topbar-controls">
+          <!-- Debug inspection switch (next to models pill) -->
+          <div class="debug-toggle-wrapper" data-i18n-title="nav_debug_title" title="Show intermediate AI pipeline images (uses more resources)">
+            <span class="debug-label" data-i18n="nav_debug">Debug Inspection</span>
+            <label class="switch">
+              <input type="checkbox" id="debugToggle">
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <button id="modelsPillBtn" class="pill pill-clickable" data-i18n-title="nav_models" title="AI Models">
+            <span class="dot"></span>
+            <span><span data-i18n="models_ready">Models ready</span> <span class="mono" id="modelsLoadedText">9/9</span></span>
+          </button>
+
+          <div data-lpr-lang></div>
+          <div id="auth-topbar-container" class="auth-user-container"></div>
+        </div>
+      </header>
+
+      <main class="page-body">
+        <div class="main-container">
+
+          <!-- Mode tabs -->
+          <div class="mode-tabs" role="tablist">
+            <button class="tab-btn active" id="tabUpload" role="tab">
+              <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+              <span data-i18n="tab_upload">Image / Video</span>
+            </button>
+            <button class="tab-btn" id="tabLive" role="tab">
+              <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+              <span data-i18n="tab_live">Live Camera (RTSP)</span>
+            </button>
+          </div>
+
+          <div class="dashboard-grid">
+
+            <!-- LEFT: input -->
+            <section class="glass-card">
+
+              <!-- Upload panel -->
+              <div id="uploadPanel">
+                <div class="card-header">
+                  <h2 class="card-title">
+                    <svg fill="currentColor" viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/></svg>
+                    <span data-i18n="upload_title">Upload Files</span>
+                  </h2>
+                  <span class="pill" id="uploadCountPill">0 <span data-i18n="files_unit">files</span></span>
+                </div>
+
+                <div class="dropzone" id="dropzone" role="button" tabindex="0" aria-label="Upload">
+                  <div class="dropzone-icon">
+                    <svg width="26" height="26" fill="currentColor" viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg>
+                  </div>
+                  <div class="dropzone-title" data-i18n="drop_title">Drag &amp; drop files here, or click to browse</div>
+                  <div class="dropzone-subtitle" data-i18n="drop_sub">Supports .jpg .png .webp images and .mp4 videos (multiple files)</div>
+                  <input type="file" id="fileInput" multiple accept="image/*,video/*" style="display: none;">
+                </div>
+
+                <!-- Video stream player -->
+                <div id="videoStreamPlayerWrapper" class="video-stream-player-wrapper" style="display: none;">
+                  <div class="stream-player-header">
+                    <div class="stream-player-title" style="display: flex; align-items: center; gap: 7px;">
+                      <span class="live-dot" style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #10b981; animation: pulse-live 1.5s infinite;"></span>
+                      <span style="font-weight: 600; font-size: 0.85rem;" data-i18n="vstream_title">Real-time video processing</span>
+                      <span class="pill-stream-mode" data-i18n="vstream_mode">File Test</span>
+                    </div>
+                    <div style="display: flex; gap: 6px; align-items: center;">
+                      <span class="pill" id="streamFpsBadge" style="font-size: 0.7rem;">-- FPS</span>
+                      <span class="pill" id="streamMotionStatusBadge" style="font-size: 0.72rem;" data-i18n="vstream_idle">Gate idle</span>
+                    </div>
+                  </div>
+
+                  <div class="stream-container" id="videoStreamContainer" data-i18n-title="zoom_hint" title="Zoom &amp; pan">
+                    <img id="videoStreamViewer" class="stream-image" src="" alt="Real-time video">
+                    <span class="stream-zoom-hint" data-i18n="zoom_hint">Zoom &amp; pan</span>
+                    <span class="stream-zoom-level" id="videoStreamZoomLabel" style="position:absolute; top:10px; right:10px; z-index:12; background:rgba(2,6,23,0.78); border:1px solid var(--border-subtle); color:var(--text-secondary); font-size:11px; font-weight:600; padding:3px 9px; border-radius:9999px; pointer-events:none;">100%</span>
+                  </div>
+
+                  <div class="stream-player-controls" style="display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap;">
+                    <button type="button" class="btn-secondary" id="btnRestartVideoStream" style="padding: 7px 13px; font-size: 0.78rem;">
+                      <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                      <span data-i18n="vstream_replay">Replay</span>
+                    </button>
+                    <button type="button" class="btn-secondary" id="btnRunBatchVideo" style="padding: 7px 13px; font-size: 0.78rem;">
+                      <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h7"/></svg>
+                      <span data-i18n="vstream_scan">Scan All Frames</span>
+                    </button>
+                    <button type="button" class="btn-secondary" id="btnCloseVideoStream" style="padding: 7px 13px; font-size: 0.78rem; color: #fca5a5; border-color: rgba(239, 68, 68, 0.3);">
+                      <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12"/></svg>
+                      <span data-i18n="vstream_close">Close</span>
+                    </button>
+                  </div>
+
+                  <div class="stream-settings-bar" style="display: flex; align-items: center; justify-content: space-between; background: rgba(148, 163, 184, 0.06); border: 1px solid var(--border-subtle); border-radius: 10px; padding: 8px 12px; margin-top: 10px; flex-wrap: wrap; gap: 8px;">
+                    <div style="display: flex; align-items: center; gap: 7px; flex-wrap: wrap;">
+                      <span style="font-size: 0.78rem; color: var(--text-secondary); font-weight: 600;" data-i18n="conf_min">Min. confidence:</span>
+                      <span id="streamConfVal" class="mono" style="font-size: 0.82rem; font-weight: 700; color: var(--accent);">80%</span>
+                      <span style="font-size: 0.7rem; color: var(--text-muted);" data-i18n="conf_hint">Higher = stricter</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px; flex: 1; min-width: 180px; max-width: 300px;">
+                      <span style="font-size: 0.68rem; color: var(--text-muted);">40%</span>
+                      <input type="range" id="streamConfSlider" min="40" max="95" value="80" step="5" style="flex: 1; accent-color: var(--accent); cursor: pointer;">
+                      <span style="font-size: 0.68rem; color: var(--text-muted);">95%</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Batch gallery -->
+                <div class="batch-gallery-wrapper" id="batchGalleryWrapper" style="display: none;">
+                  <div class="batch-gallery-title" data-i18n="batch_title">Uploaded files (click to view result)</div>
+                  <div class="batch-gallery" id="batchGallery"></div>
+                </div>
+              </div>
+
+              <!-- Live RTSP panel -->
+              <div id="livePanel" style="display: none;">
+                <div class="card-header">
+                  <h2 class="card-title">
+                    <svg fill="currentColor" viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+                    <span data-i18n="rtsp_title">Live Camera (RTSP)</span>
+                  </h2>
+                  <span class="pill" id="streamStatusPill" data-i18n="rtsp_standby">Standby</span>
+                </div>
+
+                <div class="rtsp-control-box">
+                  <div class="input-group">
+                    <input type="text" class="input-field" id="rtspInput" placeholder="rtsp://user:pass@ip:port/stream or 0" value="0">
+                    <button class="btn-primary" id="btnConnectStream"><span data-i18n="rtsp_connect">Connect</span></button>
+                  </div>
+
+                  <div class="stream-container" id="rtspStreamContainer" data-i18n-title="zoom_hint" title="Zoom &amp; pan">
+                    <div class="stream-overlay-badge">
+                      <span class="live-dot"></span>
+                      <span id="streamBadgeText">LIVE</span>
+                    </div>
+                    <img id="streamViewer" class="stream-image" src="" alt="Live feed" style="display: none;">
+                    <div class="empty-state" id="streamPlaceholder">
+                      <svg width="38" height="38" fill="currentColor" viewBox="0 0 24 24" style="opacity: 0.4;"><path d="M18 10.48V6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2v-4.48l4 3.98v-11l-4 3.5z"/></svg>
+                      <span data-i18n="rtsp_placeholder">Enter an RTSP address or camera index, then connect</span>
+                    </div>
+                    <span class="stream-zoom-level" id="rtspZoomLabel" style="position:absolute; top:10px; right:10px; z-index:12; background:rgba(2,6,23,0.78); border:1px solid var(--border-subtle); color:var(--text-secondary); font-size:11px; font-weight:600; padding:3px 9px; border-radius:9999px; pointer-events:none;">100%</span>
+                  </div>
+                </div>
+              </div>
+
+            </section>
+
+            <!-- RIGHT: pipeline -->
+            <section class="glass-card">
+              <div class="card-header">
+                <h2 class="card-title">
+                  <svg fill="currentColor" viewBox="0 0 24 24"><path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/></svg>
+                  <span data-i18n="pipe_title">Pipeline Breakdown</span>
+                </h2>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                  <span class="badge-country thai" id="badgeCountry">🇹🇭 <span data-i18n="country_th">Thai</span></span>
+                  <div class="pill" id="totalLatencyPill"><span data-i18n="pipe_latency">Latency:</span> <span class="mono">-- ms</span></div>
+                </div>
+              </div>
+
+              <div class="pipeline-section">
+                <div class="pipeline-flow">
+
+                  <!-- Stage 0 -->
+                  <div class="stage-card">
+                    <div class="stage-header">
+                      <span class="stage-badge badge-raw" data-i18n="th_raw">Raw Input</span>
+                      <span class="stage-time" id="timeRaw">--</span>
+                    </div>
+                    <div class="stage-preview">
+                      <img id="cropRaw" src="" alt="Raw input" style="display: none;" data-lpr-viewer data-title="Raw input">
+                      <div class="empty-state" id="cropRawPlaceholder" style="padding: 16px; font-size: 12.5px;" data-i18n="waiting_file">Waiting for file...</div>
+                    </div>
+                    <div class="stage-footer">
+                      <div class="stage-meta-row"><span data-i18n="meta_resolution">Resolution</span><span id="metaRes">--</span></div>
+                      <div class="stage-meta-row"><span data-i18n="meta_status">Status</span><span id="metaStatus" style="color: var(--accent-green);" data-i18n="ready_status">Ready</span></div>
+                    </div>
+                  </div>
+
+                  <!-- Stage 1 -->
+                  <div class="stage-card">
+                    <div class="stage-header">
+                      <div class="stage-title-wrap">
+                        <span class="stage-badge badge-m1" data-i18n="th_m1">Plate Detection</span>
+                        <span class="stage-model-tag cyan" id="tagModel1">--</span>
+                      </div>
+                      <span class="stage-time" id="timeM1">-- ms</span>
+                    </div>
+                    <div class="stage-preview">
+                      <img id="cropM1" src="" alt="Rectified plate" style="display: none;" data-lpr-viewer data-title="Rectified plate (Stage 1)">
+                      <div class="empty-state" id="cropM1Placeholder" style="padding: 16px; font-size: 12.5px;" data-i18n="no_plate_yet">No plate yet</div>
+                    </div>
+                    <div class="stage-footer">
+                      <div class="stage-meta-row"><span data-i18n="meta_country">Country</span><span id="countryMeta" style="color: var(--accent);">--</span></div>
+                      <div class="stage-meta-row"><span data-i18n="meta_confidence">Confidence</span><span id="confPlate">--</span></div>
+                    </div>
+                  </div>
+
+                  <!-- Stage 2 -->
+                  <div class="stage-card">
+                    <div class="stage-header">
+                      <div class="stage-title-wrap">
+                        <span class="stage-badge badge-m2" data-i18n="th_m2">Text Zone Split</span>
+                        <span class="stage-model-tag amber" id="tagModel2">--</span>
+                      </div>
+                      <span class="stage-time" id="timeM2">-- ms</span>
+                    </div>
+                    <div class="stage-dual-preview">
+                      <div class="dual-item">
+                        <img id="cropChar" src="" alt="Char zone" style="display: none;" data-lpr-viewer data-title="Character zone">
+                        <span class="dual-label" id="labelCharBox" data-i18n="lbl_char">Characters</span>
+                      </div>
+                      <div class="dual-item">
+                        <img id="cropProv" src="" alt="Province zone" style="display: none;" data-lpr-viewer data-title="Province zone">
+                        <span class="dual-label" id="labelProvBox" data-i18n="lbl_prov">Province</span>
+                      </div>
+                    </div>
+                    <div class="stage-footer">
+                      <div class="stage-meta-row"><span data-i18n="meta_layout">Layout</span><span id="layoutMeta" style="font-size: 11px; color: var(--accent-amber);" data-i18n="layout_std">Standard</span></div>
+                      <div class="stage-meta-row"><span data-i18n="meta_confidence">Confidence</span><span id="confCharProv">--</span></div>
+                    </div>
+                  </div>
+
+                  <!-- Stage 3 -->
+                  <div class="stage-card">
+                    <div class="stage-header">
+                      <div class="stage-title-wrap">
+                        <span class="stage-badge badge-m3" data-i18n="th_m3">Recognition</span>
+                        <span class="stage-model-tag purple" id="tagModel3">--</span>
+                      </div>
+                      <span class="stage-time" id="timeM3">-- ms</span>
+                    </div>
+
+                    <div class="result-hero-box">
+                      <div class="result-plate-text" id="resultPlate">--</div>
+                      <div class="result-province-text" id="resultProvince">--</div>
+                      <span class="result-format-badge" id="resultBadge" data-i18n="res_wait">Awaiting result</span>
+
+                      <div class="dlt-truck-pill" id="dltTruckContainer" style="display: none; margin-top: 6px; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; background: rgba(234, 179, 8, 0.15); border: 1px solid rgba(234, 179, 8, 0.4); color: #facc15; gap: 6px; align-items: center; justify-content: center;">
+                        <span style="font-size: 10px; opacity: 0.85;" data-i18n="dlt_label">DLT truck code:</span>
+                        <span id="dltTruckCode">--</span>
+                        <span style="opacity: 0.6; font-size: 10px;">•</span>
+                        <span id="dltTruckProvince">--</span>
+                      </div>
+
+                      <div class="alt-plate-pill" id="altPlateContainer" style="display: none;">
+                        <span class="alt-badge" data-i18n="alt_badge">ALTERNATIVE CANDIDATE</span>
+                        <span class="alt-val" id="altPlateText">--</span>
+                        <span class="alt-reason" id="altPlateReason">--</span>
+                      </div>
+                    </div>
+
+                    <div class="stage-footer">
+                      <div class="stage-meta-row"><span data-i18n="meta_pattern">Plate pattern</span><span id="patternText" style="color: var(--accent);">--</span></div>
+                      <div class="stage-meta-row"><span data-i18n="meta_provconf">Province confidence</span><span id="confProvProb">--</span></div>
+                    </div>
+                  </div>
+
+                </div>
+
+                <!-- Debug drawer -->
+                <div class="debug-drawer" id="debugDrawer">
+                  <div class="debug-header">
+                    <div class="debug-title">
+                      <svg width="18" height="18" fill="currentColor" viewBox="0 0 24 24"><path d="M20 8h-2.81c-.45-.78-1.07-1.45-1.82-1.96L17 4.41 15.59 3l-2.17 2.17C12.96 5.06 12.49 5 12 5c-.49 0-.96.06-1.41.17L8.41 3 7 4.41l1.62 1.63C7.88 6.55 7.26 7.22 6.81 8H4v2h2.09c-.05.33-.09.66-.09 1v1H4v2h2v1c0 .34.04.67.09 1H4v2h2.81c1.04 1.79 2.97 3 5.19 3s4.15-1.21 5.19-3H20v-2h-2.09c.05-.33.09-.66.09-1v-1h2v-2h-2v-1c0-.34-.04-.67-.09-1H20V8zm-6 8h-4v-2h4v2zm0-4h-4v-2h4v2z"/></svg>
+                      <span data-i18n="dbg_title">Pipeline Inspection (Debug Mode)</span>
+                    </div>
+                    <span class="pill" data-i18n="dbg_fordev">Developer tool</span>
+                  </div>
+
+                  <div class="debug-grid">
+                    <div class="debug-card">
+                      <div class="debug-card-title"><span data-i18n="dbg_1">Stage 1: Plate box &amp; corners</span><span class="debug-model-tag" id="dbgTagM1">--</span></div>
+                      <img id="dbgPoly" class="debug-card-img" src="" alt="Polygon overlay" data-lpr-viewer data-title="Plate box &amp; 4 corners">
+                    </div>
+                    <div class="debug-card">
+                      <div class="debug-card-title"><span data-i18n="dbg_1b">Stage 1: Deskewed plate</span><span class="debug-model-tag" id="dbgTagDeskew">Homography Deskew</span></div>
+                      <img id="dbgDeskew" class="debug-card-img" src="" alt="Deskewed plate" data-lpr-viewer data-title="Deskewed plate">
+                    </div>
+                    <div class="debug-card">
+                      <div class="debug-card-title"><span data-i18n="dbg_2">Stage 2: Char/province zones</span><span class="debug-model-tag" id="dbgTagM2">--</span></div>
+                      <img id="dbgComp" class="debug-card-img" src="" alt="Component overlay" data-lpr-viewer data-title="Char &amp; province zones">
+                    </div>
+                    <div class="debug-card">
+                      <div class="debug-card-title"><span data-i18n="dbg_3">Stage 3: Pre-OCR image</span><span class="debug-model-tag" id="dbgTagOcr">--</span></div>
+                      <img id="dbgOcr" class="debug-card-img" src="" alt="OCR input" data-lpr-viewer data-title="Pre-OCR image">
+                    </div>
+                    <div class="debug-card">
+                      <div class="debug-card-title"><span data-i18n="dbg_3b">Stage 3: Top provinces</span><span class="debug-model-tag" id="dbgTagProv">--</span></div>
+                      <div class="prob-bars" id="dbgProvBars"><div class="empty-state">--</div></div>
+                    </div>
+                    <div class="debug-card" id="cardDbgCharBoxes">
+                      <div class="debug-card-title"><span id="dbgCharBoxesTitle" data-i18n="dbg_3c">Stage 3: Per-character boxes</span><span class="debug-model-tag" id="dbgTagCharBox">--</span></div>
+                      <img id="dbgCharBoxes" class="debug-card-img" src="" alt="Char boxes" data-lpr-viewer data-title="Per-character boxes">
+                      <div id="dbgCharBoxesNote" class="debug-status-note"></div>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            </section>
+
+          </div>
+        </div>
+      </main>
     </div>
+  </div>
 
-    <!-- Dashboard 2-Column Grid -->
-    <div class="dashboard-grid">
-
-      <!-- LEFT COLUMN: Input Control Panel -->
-      <section class="glass-card">
-        
-        <!-- Upload Mode Panel -->
-        <div id="uploadPanel">
-          <div class="card-header">
-            <h2 class="card-title">
-              <svg fill="currentColor" viewBox="0 0 24 24">
-                <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/>
-              </svg>
-              Upload Test Files
-            </h2>
-            <span class="pill" id="uploadCountPill">0 files</span>
-          </div>
-
-          <!-- Dropzone -->
-          <div class="dropzone" id="dropzone">
-            <div class="dropzone-icon">
-              <svg width="28" height="28" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/>
-              </svg>
-            </div>
-            <div class="dropzone-title">Drag & drop license plate images or videos</div>
-            <div class="dropzone-subtitle">Supports single/multiple .jpg, .png, .webp or .mp4 videos</div>
-            <input type="file" id="fileInput" multiple accept="image/*,video/*" style="display: none;">
-          </div>
-
-          <!-- Real-Time Video Stream Simulation Player (Appears when video is uploaded) -->
-          <div id="videoStreamPlayerWrapper" class="video-stream-player-wrapper" style="display: none;">
-            <div class="stream-player-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-              <div class="stream-player-title" style="display: flex; align-items: center; gap: 6px;">
-                <span class="live-dot" style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #10b981; animation: pulse-live 1.5s infinite;"></span>
-                <span style="font-weight: 600; font-size: 0.85rem; color: var(--text-primary);">RTSP Stream Mock</span>
-                <span class="pill-stream-mode" style="background: rgba(0, 240, 255, 0.15); color: #00f0ff; border: 1px solid rgba(0, 240, 255, 0.3); font-size: 0.7rem; padding: 2px 6px; border-radius: 4px;">Motion Gated</span>
-              </div>
-              <div style="display: flex; gap: 6px; align-items: center;">
-                <span class="pill" id="streamFpsBadge" style="font-size: 0.7rem;">-- FPS</span>
-                <span class="pill" id="streamMotionStatusBadge" style="font-size: 0.72rem; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3);">Gate Idle (0ms)</span>
-              </div>
-            </div>
-            
-            <div class="stream-container" style="position: relative; overflow: hidden; border-radius: 8px; background: #070a0f; border: 1px solid var(--border-glass);">
-              <img id="videoStreamViewer" class="stream-image" src="" alt="Real-Time Video Stream Feed" style="width: 100%; display: block; border-radius: 8px;">
-            </div>
-
-            <!-- Stream Simulation Controls -->
-            <div class="stream-player-controls" style="display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap;">
-              <button type="button" class="btn-secondary" id="btnRestartVideoStream" style="padding: 6px 12px; font-size: 0.75rem; display: flex; align-items: center; gap: 4px;">
-                <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-                Restart / Loop
-              </button>
-              <button type="button" class="btn-secondary" id="btnRunBatchVideo" style="padding: 6px 12px; font-size: 0.75rem; display: flex; align-items: center; gap: 4px;">
-                <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h7"/></svg>
-                Batch Scan All Frames
-              </button>
-              <button type="button" class="btn-secondary" id="btnCloseVideoStream" style="padding: 6px 12px; font-size: 0.75rem; color: var(--accent-red); border-color: rgba(239, 68, 68, 0.3); display: flex; align-items: center; gap: 4px;">
-                <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12"/></svg>
-                Close Stream
-              </button>
-            </div>
-
-            <!-- Model 1 Stream Sensitivity & False Positive Rejection Control -->
-            <div class="stream-settings-bar" style="display: flex; align-items: center; justify-content: space-between; background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-glass); border-radius: 8px; padding: 7px 12px; margin-top: 8px; flex-wrap: wrap; gap: 8px;">
-              <div style="display: flex; align-items: center; gap: 6px;">
-                <span style="font-size: 0.74rem; color: var(--text-secondary); font-weight: 500;">Model 1 Plate Threshold:</span>
-                <span id="streamConfVal" style="font-size: 0.78rem; font-weight: 700; color: var(--accent-cyan);">80%</span>
-                <span style="font-size: 0.68rem; color: var(--text-muted);">(Rejects empty road/barrier textures)</span>
-              </div>
-              <div style="display: flex; align-items: center; gap: 8px; flex: 1; min-width: 200px; max-width: 320px;">
-                <span style="font-size: 0.68rem; color: var(--text-muted);">40%</span>
-                <input type="range" id="streamConfSlider" min="40" max="95" value="80" step="5" style="flex: 1; accent-color: var(--accent-cyan); cursor: pointer;">
-                <span style="font-size: 0.68rem; color: var(--text-muted);">95%</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Sample Plates Quick Test Row -->
-          <div class="sample-plates-row" style="margin-top: 12px; display: flex; gap: 8px; align-items: center; justify-content: center; flex-wrap: wrap;">
-            <span style="font-size: 0.8rem; color: var(--text-muted); font-weight: 500;">Quick Test Samples:</span>
-            <button class="btn-sample" id="btnSample0071" type="button" data-sample="/static/samples/0071.jpg" data-name="0071.jpg" style="background: rgba(59, 130, 246, 0.15); border: 1px solid rgba(59, 130, 246, 0.35); color: #60a5fa; border-radius: 6px; padding: 4px 10px; font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: all 0.2s;">
-              Plate 0071 (ฎอ 9720)
-            </button>
-            <button class="btn-sample" id="btnSample0007" type="button" data-sample="/static/samples/0007.jpg" data-name="0007.jpg" style="background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.35); color: #34d399; border-radius: 6px; padding: 4px 10px; font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: all 0.2s;">
-              Plate 0007 (ฮร 9960)
-            </button>
-            <button class="btn-sample" id="btnSample0002" type="button" data-sample="/static/samples/0002.jpg" data-name="0002.jpg" style="background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.35); color: #fbbf24; border-radius: 6px; padding: 4px 10px; font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: all 0.2s;">
-              Plate 0002 (82-6990)
-            </button>
-            <button class="btn-sample" id="btnSample0527" type="button" data-sample="/static/samples/0527.jpg" data-name="0527.jpg" style="background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.35); color: #c084fc; border-radius: 6px; padding: 4px 10px; font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: all 0.2s;">
-              Plate 0527 (ผว 7697 / Noise)
-            </button>
-          </div>
-
-          <!-- Batch Thumbnails Gallery (Visible when multiple images uploaded) -->
-          <div class="batch-gallery-wrapper" id="batchGalleryWrapper" style="display: none;">
-            <div class="batch-gallery-title">Batch Test Set (Select image to view breakdown)</div>
-            <div class="batch-gallery" id="batchGallery"></div>
-          </div>
-        </div>
-
-        <!-- Live RTSP / Webcam Panel (Hidden by default) -->
-        <div id="livePanel" style="display: none;">
-          <div class="card-header">
-            <h2 class="card-title">
-              <svg fill="currentColor" viewBox="0 0 24 24">
-                <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
-              </svg>
-              RTSP Live Stream / Port
-            </h2>
-            <span class="pill" id="streamStatusPill">Standby</span>
-          </div>
-
-          <div class="rtsp-control-box">
-            <div class="input-group">
-              <input type="text" class="input-field" id="rtspInput" placeholder="rtsp://user:pass@ip:port/stream or 0" value="0">
-              <button class="btn-primary" id="btnConnectStream">
-                <span>Connect</span>
-              </button>
-            </div>
-
-            <div class="stream-container">
-              <div class="stream-overlay-badge">
-                <span class="live-dot"></span>
-                <span id="streamBadgeText">LIVE FEED</span>
-              </div>
-              <img id="streamViewer" class="stream-image" src="" alt="Stream Feed" style="display: none;">
-              <div class="empty-state" id="streamPlaceholder">
-                <svg width="40" height="40" fill="currentColor" viewBox="0 0 24 24" style="opacity: 0.4;">
-                  <path d="M18 10.48V6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2v-4.48l4 3.98v-11l-4 3.5z"/>
-                </svg>
-                <span>Enter RTSP stream address or camera index and click Connect</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-      </section>
-
-      <!-- RIGHT COLUMN: 3-Stage Visual Pipeline Breakdown -->
-      <section class="glass-card">
-        <div class="card-header">
-          <h2 class="card-title">
-            <svg fill="currentColor" viewBox="0 0 24 24">
-              <path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/>
-            </svg>
-            Multi-Country Pipeline (Model 1 &rarr; 1.5 &rarr; 2 &rarr; 3)
-          </h2>
-          <div style="display: flex; gap: 8px; align-items: center;">
-            <span class="badge-country thai" id="badgeCountry">🇹🇭 THAILAND</span>
-            <div class="pill" id="totalLatencyPill">Latency: -- ms</div>
-          </div>
-        </div>
-
-        <div class="pipeline-section">
-          
-          <!-- 4-Stage Visual Cards Grid -->
-          <div class="pipeline-flow">
-            
-            <!-- STAGE 0: Raw Vehicle Input -->
-            <div class="stage-card">
-              <div class="stage-header">
-                <span class="stage-badge badge-raw">Raw Input</span>
-                <span class="stage-time" id="timeRaw">--</span>
-              </div>
-              <div class="stage-preview">
-                <img id="cropRaw" src="" alt="Raw Input Image" style="display: none;">
-                <div class="empty-state" id="cropRawPlaceholder">Waiting for file...</div>
-              </div>
-              <div class="stage-footer">
-                <div class="stage-meta-row">
-                  <span>Input Resolution</span>
-                  <span id="metaRes">--</span>
-                </div>
-                <div class="stage-meta-row">
-                  <span>Detection Status</span>
-                  <span id="metaStatus" style="color: var(--accent-green);">Ready</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- STAGE 1: Model 1 Rectified Car Plate -->
-            <div class="stage-card">
-              <div class="stage-header">
-                <div class="stage-title-wrap">
-                  <span class="stage-badge badge-m1">Model 1: Plate</span>
-                  <span class="stage-model-tag cyan" id="tagModel1">YOLO11-seg</span>
-                </div>
-                <span class="stage-time" id="timeM1">-- ms</span>
-              </div>
-              <div class="stage-preview">
-                <img id="cropM1" src="" alt="Model 1 Rectified Plate" style="display: none;">
-                <div class="empty-state" id="cropM1Placeholder">No plate crop</div>
-              </div>
-              <div class="stage-footer">
-                <div class="stage-meta-row">
-                  <span>Country (Model 1.5)</span>
-                  <span id="countryMeta" style="color: var(--accent-cyan);">--</span>
-                </div>
-                <div class="stage-meta-row">
-                  <span>Plate Confidence</span>
-                  <span id="confPlate">--</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- STAGE 2: Model 2 Component Crops -->
-            <div class="stage-card">
-              <div class="stage-header">
-                <div class="stage-title-wrap">
-                  <span class="stage-badge badge-m2">Model 2: Components</span>
-                  <span class="stage-model-tag amber" id="tagModel2">YOLO11-Comp</span>
-                </div>
-                <span class="stage-time" id="timeM2">-- ms</span>
-              </div>
-              <div class="stage-dual-preview">
-                <div class="dual-item">
-                  <img id="cropChar" src="" alt="Character Crop" style="display: none;">
-                  <span class="dual-label" id="labelCharBox">plate_char</span>
-                </div>
-                <div class="dual-item">
-                  <img id="cropProv" src="" alt="Province Crop" style="display: none;">
-                  <span class="dual-label" id="labelProvBox">province</span>
-                </div>
-              </div>
-              <div class="stage-footer">
-                <div class="stage-meta-row">
-                  <span>Layout</span>
-                  <span id="layoutMeta" style="font-size: 10px; color: var(--accent-amber);">Standard</span>
-                </div>
-                <div class="stage-meta-row">
-                  <span>Char / Prov Conf</span>
-                  <span id="confCharProv">--</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- STAGE 3: Model 3 Recognition Result (Text + Province) -->
-            <div class="stage-card">
-              <div class="stage-header">
-                <div class="stage-title-wrap">
-                  <span class="stage-badge badge-m3">Model 3: Recognition</span>
-                  <span class="stage-model-tag purple" id="tagModel3">MobileNetV2</span>
-                </div>
-                <span class="stage-time" id="timeM3">-- ms</span>
-              </div>
-              
-              <div class="result-hero-box">
-                <div class="result-plate-text" id="resultPlate">--</div>
-                <div class="result-province-text" id="resultProvince">--</div>
-                <span class="result-format-badge" id="resultBadge">STANDARDIZED</span>
-                
-                <div class="dlt-truck-pill" id="dltTruckContainer" style="display: none; margin-top: 6px; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; background: rgba(234, 179, 8, 0.15); border: 1px solid rgba(234, 179, 8, 0.4); color: #facc15; gap: 6px; align-items: center; justify-content: center;">
-                  <span style="font-size: 10px; opacity: 0.85;">🚚 DLT CODE:</span>
-                  <span id="dltTruckCode">--</span>
-                  <span style="opacity: 0.6; font-size: 10px;">&bull;</span>
-                  <span id="dltTruckProvince">--</span>
-                </div>
-
-                <div class="alt-plate-pill" id="altPlateContainer" style="display: none;">
-                  <span class="alt-badge">ALTERNATIVE CANDIDATE</span>
-                  <span class="alt-val" id="altPlateText">--</span>
-                  <span class="alt-reason" id="altPlateReason">--</span>
-                </div>
-              </div>
-
-              <div class="stage-footer">
-                <div class="stage-meta-row">
-                  <span>Plate Pattern</span>
-                  <span id="patternText" style="color: var(--accent-cyan);">--</span>
-                </div>
-                <div class="stage-meta-row">
-                  <span>Prov Probability</span>
-                  <span id="confProvProb">--</span>
-                </div>
-              </div>
-            </div>
-
-          </div>
-
-          <!-- DEBUG INSPECTION DRAWER (Only rendered & expanded if debug is ON) -->
-          <div class="debug-drawer" id="debugDrawer">
-            <div class="debug-header">
-              <div class="debug-title">
-                <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M20 8h-2.81c-.45-.78-1.07-1.45-1.82-1.96L17 4.41 15.59 3l-2.17 2.17C12.96 5.06 12.49 5 12 5c-.49 0-.96.06-1.41.17L8.41 3 7 4.41l1.62 1.63C7.88 6.55 7.26 7.22 6.81 8H4v2h2.09c-.05.33-.09.66-.09 1v1H4v2h2v1c0 .34.04.67.09 1H4v2h2.81c1.04 1.79 2.97 3 5.19 3s4.15-1.21 5.19-3H20v-2h-2.09c.05-.33.09-.66.09-1v-1h2v-2h-2v-1c0-.34-.04-.67-.09-1H20V8zm-6 8h-4v-2h4v2zm0-4h-4v-2h4v2z"/>
-                </svg>
-                Model Diagnostic Breakdowns (Debug Mode Active)
-              </div>
-              <span class="pill" style="color: var(--accent-purple); border-color: rgba(168, 85, 247, 0.4);">
-                Resource Inspection
-              </span>
-            </div>
-
-            <div class="debug-grid">
-              
-              <!-- Debug 1: Model 1 Polygon Contour Overlay -->
-              <div class="debug-card">
-                <div class="debug-card-title">
-                  <span>Model 1: Polygon & Quad Corners</span>
-                  <span class="debug-model-tag" id="dbgTagM1">YOLO11-seg</span>
-                </div>
-                <img id="dbgPoly" class="debug-card-img" src="" alt="Polygon Overlay">
-              </div>
-
-              <!-- Debug 2: Model 1 Raw Warp vs Deskewed -->
-              <div class="debug-card">
-                <div class="debug-card-title">
-                  <span>Model 1: Fine Deskew Result</span>
-                  <span class="debug-model-tag" id="dbgTagDeskew">Homography Deskew</span>
-                </div>
-                <img id="dbgDeskew" class="debug-card-img" src="" alt="Fine Deskewed Plate">
-              </div>
-
-              <!-- Debug 3: Model 2 Component Bounding Boxes -->
-              <div class="debug-card">
-                <div class="debug-card-title">
-                  <span>Model 2: Component Bounding Boxes</span>
-                  <span class="debug-model-tag" id="dbgTagM2">YOLO11-Comp</span>
-                </div>
-                <img id="dbgComp" class="debug-card-img" src="" alt="Component Boxes Overlay">
-              </div>
-
-              <!-- Debug 4: Model 3A OCR Autocontrast Preprocessing -->
-              <div class="debug-card">
-                <div class="debug-card-title">
-                  <span>Model 3A: OCR Grayscale Enhanced</span>
-                  <span class="debug-model-tag" id="dbgTagOcr">EasyOCR</span>
-                </div>
-                <img id="dbgOcr" class="debug-card-img" src="" alt="OCR Grayscale Input">
-              </div>
-
-              <!-- Debug 5: Model 3B Province Classification Top-5 Probabilities -->
-              <div class="debug-card">
-                <div class="debug-card-title">
-                  <span>Model 3B: Top Provinces Probabilities</span>
-                  <span class="debug-model-tag" id="dbgTagProv">ResNet18 (Thai 77 Prov)</span>
-                </div>
-                <div class="prob-bars" id="dbgProvBars">
-                  <div class="empty-state">No probabilities</div>
-                </div>
-              </div>
-
-              <!-- Debug 6: Model 3A Character Box Detection & Per-Box Classification -->
-              <div class="debug-card" id="cardDbgCharBoxes">
-                <div class="debug-card-title">
-                  <span id="dbgCharBoxesTitle">Model 3A: Character Box Classifier</span>
-                  <span class="debug-model-tag" id="dbgTagCharBox">RT-DETR-L + MobileNetV2</span>
-                </div>
-                <img id="dbgCharBoxes" class="debug-card-img" src="" alt="Character Boxes Overlay">
-                <div id="dbgCharBoxesNote" class="debug-status-note"></div>
-              </div>
-
-            </div>
-          </div>
-
-        </div>
-
-      </section>
-
-    </div>
-
-  <!-- Models Architecture Modal -->
+  <!-- Models modal -->
   <div id="modelsModal" class="auth-modal-overlay" style="display: none;">
     <div class="models-modal-card">
       <div class="auth-modal-header" style="text-align: left; display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
         <div>
           <div style="display: flex; align-items: center; gap: 8px;">
             <span class="dot" style="width: 8px; height: 8px; border-radius: 50%; background: var(--accent-green); box-shadow: 0 0 8px var(--accent-green);"></span>
-            <h3 style="margin: 0; font-size: 1.15rem; color: #f8fafc;">Active AI Model Pipeline</h3>
+            <h3 style="margin: 0; font-size: 1.1rem; color: #f8fafc;" data-i18n="mm_title">Active AI Models</h3>
           </div>
-          <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px;">4-Stage Deep Learning Pipeline for Multi-Country License Plate Recognition</div>
+          <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px;" data-i18n="mm_sub">Thai &amp; Lao plate recognition in 4 pipeline stages</div>
         </div>
         <button id="closeModelsModalBtn" class="auth-modal-close" style="position: static; padding: 2px 6px;">&times;</button>
       </div>
 
       <div class="models-list" id="modelsModalList">
-        <!-- Stage 1: Plate Detection -->
         <div class="stage-pipeline-card">
           <div class="stage-card-top">
-            <span class="stage-tag stage-1">STAGE 1</span>
+            <span class="stage-tag stage-1">1</span>
             <div class="stage-heading">
-              <span class="stage-title">License Plate Detection & Rectification</span>
-              <span class="stage-subtitle">Quad perspective warp & rotated bounding box localization</span>
+              <span class="stage-title" data-i18n="mm_s1_t">License Plate Detection &amp; Rectification</span>
+              <span class="stage-subtitle" data-i18n="mm_s1_s">Quad perspective warp &amp; rotated box localization</span>
             </div>
-            <span class="stage-status-badge"><span class="pulse-dot"></span> ACTIVE</span>
+            <span class="stage-status-badge"><span class="pulse-dot"></span> <span data-i18n="mm_active">ACTIVE</span></span>
           </div>
           <div class="stage-model-binding">
-            <span class="binding-label">➔ Model:</span>
-            <code class="model-code-pill" id="mInfo1">plate_detector_dfine_nano.pt</code>
-            <span class="model-arch-badge" id="mArch1">D-FINE Nano (MIT)</span>
+            <span class="binding-label" data-i18n="mm_model">Model:</span>
+            <code class="model-code-pill" id="mInfo1">--</code>
+            <span class="model-arch-badge" id="mArch1">--</span>
           </div>
         </div>
 
-        <!-- Stage 1.5: Country Identification -->
         <div class="stage-pipeline-card">
           <div class="stage-card-top">
-            <span class="stage-tag stage-15">STAGE 1.5</span>
+            <span class="stage-tag stage-15">1.5</span>
             <div class="stage-heading">
-              <span class="stage-title">Country Standard Classifier</span>
-              <span class="stage-subtitle">Dual-country routing: 🇹🇭 Thailand vs 🇱🇦 Laos PDR plates</span>
+              <span class="stage-title" data-i18n="mm_s15_t">Country Classifier</span>
+              <span class="stage-subtitle" data-i18n="mm_s15_s">Routes Thai vs Lao plates to the right pipeline</span>
             </div>
-            <span class="stage-status-badge"><span class="pulse-dot"></span> ACTIVE</span>
+            <span class="stage-status-badge"><span class="pulse-dot"></span> <span data-i18n="mm_active">ACTIVE</span></span>
           </div>
           <div class="stage-model-binding">
-            <span class="binding-label">➔ Model:</span>
-            <code class="model-code-pill" id="mInfo15">country_classifier.pth</code>
-            <span class="model-arch-badge" id="mArch15">MobileNetV3-Small</span>
+            <span class="binding-label" data-i18n="mm_model">Model:</span>
+            <code class="model-code-pill" id="mInfo15">--</code>
+            <span class="model-arch-badge" id="mArch15">--</span>
           </div>
         </div>
 
-        <!-- Stage 2: Layout Component Detection -->
         <div class="stage-pipeline-card">
           <div class="stage-card-top">
-            <span class="stage-tag stage-2">STAGE 2</span>
+            <span class="stage-tag stage-2">2</span>
             <div class="stage-heading">
-              <span class="stage-title">Layout Component Localization</span>
-              <span class="stage-subtitle">Adaptive layout segmentation: Character Plate area & Province banner</span>
+              <span class="stage-title" data-i18n="mm_s2_t">Layout Component Localization</span>
+              <span class="stage-subtitle" data-i18n="mm_s2_s">Splits character row and province banner</span>
             </div>
-            <span class="stage-status-badge"><span class="pulse-dot"></span> ACTIVE</span>
+            <span class="stage-status-badge"><span class="pulse-dot"></span> <span data-i18n="mm_active">ACTIVE</span></span>
           </div>
           <div class="stage-model-binding">
-            <span class="binding-label">➔ Model:</span>
-            <code class="model-code-pill" id="mInfo2">component_detector_dfine_nano.pt</code>
-            <span class="model-arch-badge" id="mArch2">D-FINE Nano (MIT)</span>
+            <span class="binding-label" data-i18n="mm_model">Model:</span>
+            <code class="model-code-pill" id="mInfo2">--</code>
+            <span class="model-arch-badge" id="mArch2">--</span>
           </div>
         </div>
 
-        <!-- Stage 3: Character Recognition Engine -->
         <div class="stage-pipeline-card">
           <div class="stage-card-top">
-            <span class="stage-tag stage-3">STAGE 3</span>
+            <span class="stage-tag stage-3">3</span>
             <div class="stage-heading">
-              <span class="stage-title">Character Recognition (Dual-Engine OCR)</span>
-              <span class="stage-subtitle">Individual character BBox localization + Multi-class Classification + CTC Fallback</span>
+              <span class="stage-title" data-i18n="mm_s3_t">Character Recognition (Dual-Engine)</span>
+              <span class="stage-subtitle" data-i18n="mm_s3_s">Per-character classification + CTC fallback</span>
             </div>
-            <span class="stage-status-badge"><span class="pulse-dot"></span> ACTIVE</span>
+            <span class="stage-status-badge"><span class="pulse-dot"></span> <span data-i18n="mm_active">ACTIVE</span></span>
           </div>
           <div class="stage-submodels-grid">
             <div class="stage-submodel-row">
-              <span class="submodel-type">➔ Char BBox:</span>
-              <code class="model-code-pill" id="mInfo3a">character_box_detector_rfdetr.pt</code>
-              <span class="model-arch-badge" id="mArch3a">RF-DETR Base</span>
+              <span class="submodel-type" data-i18n="mm_charbox">Char BBox:</span>
+              <code class="model-code-pill" id="mInfo3a">--</code>
+              <span class="model-arch-badge" id="mArch3a">--</span>
             </div>
             <div class="stage-submodel-row">
-              <span class="submodel-type">➔ 🇹🇭 Thai Cls:</span>
-              <code class="model-code-pill" id="mInfo3aCls">character_classifier.pth</code>
-              <span class="model-arch-badge" id="mArch3aCls">MobileNetV2 (50 Consonants/Digits)</span>
+              <span class="submodel-type" data-i18n="mm_thai_cls">Thai Cls:</span>
+              <code class="model-code-pill" id="mInfo3aCls">--</code>
+              <span class="model-arch-badge" id="mArch3aCls">--</span>
             </div>
             <div class="stage-submodel-row">
-              <span class="submodel-type">➔ 🇱🇦 Lao Cls:</span>
-              <code class="model-code-pill" id="mInfo3aLaoCls">character_classifier_lao.pth</code>
-              <span class="model-arch-badge" id="mArch3aLaoCls">MobileNetV2 (34 Lao Classes)</span>
+              <span class="submodel-type" data-i18n="mm_lao_cls">Lao Cls:</span>
+              <code class="model-code-pill" id="mInfo3aLaoCls">--</code>
+              <span class="model-arch-badge" id="mArch3aLaoCls">--</span>
             </div>
             <div class="stage-submodel-row">
-              <span class="submodel-type">➔ CTC Engine:</span>
-              <code class="model-code-pill" id="mInfo3aOcr">ocr_model.pth</code>
-              <span class="model-arch-badge" id="mArch3aOcr">ResNetCRNN CTC Sequence</span>
+              <span class="submodel-type" data-i18n="mm_ctc">CTC Engine:</span>
+              <code class="model-code-pill" id="mInfo3aOcr">--</code>
+              <span class="model-arch-badge" id="mArch3aOcr">--</span>
             </div>
           </div>
         </div>
 
-        <!-- Stage 4: Province Classification -->
         <div class="stage-pipeline-card">
           <div class="stage-card-top">
-            <span class="stage-tag stage-4">STAGE 4</span>
+            <span class="stage-tag stage-4">4</span>
             <div class="stage-heading">
-              <span class="stage-title">Province Classification</span>
-              <span class="stage-subtitle">Multi-country province routing: 77 Thai Provinces + 18 Lao Provinces</span>
+              <span class="stage-title" data-i18n="mm_s4_t">Province Classification</span>
+              <span class="stage-subtitle" data-i18n="mm_s4_s">77 Thai + 18 Lao provinces</span>
             </div>
-            <span class="stage-status-badge"><span class="pulse-dot"></span> ACTIVE</span>
+            <span class="stage-status-badge"><span class="pulse-dot"></span> <span data-i18n="mm_active">ACTIVE</span></span>
           </div>
           <div class="stage-submodels-grid">
             <div class="stage-submodel-row">
-              <span class="submodel-type">➔ 🇹🇭 Thailand:</span>
-              <code class="model-code-pill" id="mInfo3b">province_model_grayscale_thai.pth</code>
-              <span class="model-arch-badge" id="mArch3b">ResNet18 (77 Provinces)</span>
+              <span class="submodel-type" data-i18n="mm_thai_prov">Thai:</span>
+              <code class="model-code-pill" id="mInfo3b">--</code>
+              <span class="model-arch-badge" id="mArch3b">--</span>
             </div>
             <div class="stage-submodel-row">
-              <span class="submodel-type">➔ 🇱🇦 Laos:</span>
-              <code class="model-code-pill" id="mInfo3bLao">province_model_grayscale_lao.pth</code>
-              <span class="model-arch-badge" id="mArch3bLao">ResNet18 (18 Provinces)</span>
+              <span class="submodel-type" data-i18n="mm_lao_prov">Lao:</span>
+              <code class="model-code-pill" id="mInfo3bLao">--</code>
+              <span class="model-arch-badge" id="mArch3bLao">--</span>
             </div>
           </div>
         </div>
       </div>
 
       <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 1.2rem; padding-top: 1rem; border-top: 1px solid rgba(255, 255, 255, 0.08);">
-        <div id="mDeviceTag" style="font-family: var(--font-mono); font-size: 0.78rem; color: var(--accent-cyan);">
-          ⚡ Device: CPU (OMP Multi-threaded)
-        </div>
-        <button id="modalDismissBtn" class="btn-secondary" style="padding: 6px 16px; font-size: 0.82rem;">Close</button>
+        <div id="mDeviceTag" class="mono" style="font-size: 0.78rem; color: var(--accent);">--</div>
+        <button id="modalDismissBtn" class="btn-secondary" style="padding: 6px 16px; font-size: 0.82rem;" data-i18n="mm_close">Close</button>
       </div>
     </div>
   </div>
 
-  <!-- Client-side Application Scripts -->
-  <script src="/static/js/auth.js?v=1"></script>
-  <script src="/static/js/app.js?v=7"></script>
+  <!-- Client scripts -->
+  <script src="/static/js/i18n.js?v=2"></script>
+  <script src="/static/js/viewer.js?v=1"></script>
+  <script src="/static/js/auth.js?v=3"></script>
+  <script src="/static/js/app.js?v=10"></script>
 </body>
 </html>
-
