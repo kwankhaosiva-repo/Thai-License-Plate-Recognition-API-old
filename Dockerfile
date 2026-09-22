@@ -27,12 +27,15 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copy application source and web static assets.
-# NOTE: weights/ is NOT baked into the image (the full dir is ~6 GB).
-# The container downloads ONLY the production files from GCS at boot via
-# src/download_weights.py (bucket: GCS_WEIGHTS_BUCKET) — keeps the image
-# small and Cloud Run cold starts fast.
+# Weights: the 19 production files (~285 MB) are BAKED into the image — this
+# removes the per-instance GCS download at boot (~50s cold-start penalty).
+# .dockerignore whitelists exactly those files, so the ~6 GB of experimental
+# checkpoints in weights/ never enter the build context. NOTE: deploying via
+# `gcloud builds submit` uploads the local context straight to Cloud Build —
+# NOTHING is pushed to GitHub (.gitignore already excludes weights/).
 COPY src/ ./src/
 COPY static/ ./static/
+COPY weights/ ./weights/
 
 # Expose Cloud Run default port
 EXPOSE 8080
@@ -41,5 +44,6 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:' + ('${PORT}' or '8080') + '/health')" || exit 1
 
-# Download weights from GCS bucket on container boot, then start Uvicorn
+# Download weights from GCS as a FALLBACK for any baked file that is missing
+# (skips files already present), then start Uvicorn
 CMD ["sh", "-c", "python3 src/download_weights.py && exec uvicorn src.api_server:app --host 0.0.0.0 --port ${PORT:-8080} --workers 1"]

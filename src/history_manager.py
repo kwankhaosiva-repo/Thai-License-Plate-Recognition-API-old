@@ -35,6 +35,9 @@ DB_PATH = DATA_DIR / "lpr_history.db"
 
 _lock = threading.Lock()
 
+# Active history backend ("firestore" | "sqlite"), resolved lazily by _get_history_store()
+_history_backend: Optional[str] = None
+
 
 def get_db_connection() -> sqlite3.Connection:
     """Returns a thread-safe connection to the SQLite history database."""
@@ -273,9 +276,15 @@ def save_recognition(
         cloud_payload["record_id"] = record_id
         cloud_payload["timestamp"] = now_dt.isoformat()
         cloud_payload["thumbnail"] = thumbnail_b64
+        cloud_payload["raw_image"] = raw_b64
         cloud_payload["total_latency_ms"] = total_latency_ms
         cloud_payload["province_prob"] = province_prob
         cloud_payload["pattern"] = pattern
+        cloud_payload["char_box_text"] = char_box_text
+        cloud_payload["ctc_text"] = ctc_text
+        cloud_payload["char_box_status"] = char_box_status
+        cloud_payload["user_id"] = user_id
+        cloud_payload["user_email"] = user_email
         cloud_storage_manager.sync_recognition(cloud_payload, user_profile=user_info)
     except Exception as e:
         logger.warning(f"[CloudSync Dispatch Error] {e}")
@@ -283,7 +292,141 @@ def save_recognition(
     return record_id
 
 
+def _coerce_timestamp(value: Any) -> str:
+    """Normalizes Firestore timestamps (datetime/Z-ISO/local-naive) to 'YYYY-MM-DD HH:MM:SS' local strings."""
+    if isinstance(value, datetime):
+        return value.astimezone(TZ_BANGKOK).strftime("%Y-%m-%d %H:%M:%S")
+    s = str(value or "")
+    try:
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(TZ_BANGKOK)
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return str(value or "")
+
+
+# ---------------------------------------------------------------------------
+# Firestore-first history layer
+#
+# Cloud Run containers are ephemeral (per-instance SQLite dies on redeploy and
+# diverges across instances), so history APIs read the durable Firestore store
+# first and fall back to local SQLite ONLY when Firestore is unavailable
+# (e.g. running locally without GCP credentials).
+# ---------------------------------------------------------------------------
+
+
+def _firestore_available() -> bool:
+    """True if the cloud sync manager can reach Firestore (checks cached client + ping)."""
+    try:
+        from src.cloud_storage_manager import cloud_storage_manager as csm
+        status = csm.get_status()
+        return bool(status.get("firestore", {}).get("connected"))
+    except Exception:
+        return False
+
+
+def _normalize_firestore_record(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """Maps a Firestore document to the SQLite record shape the dashboard expects."""
+    return {
+        "record_id": doc.get("record_id") or doc.get("id") or "",
+        "timestamp": _coerce_timestamp(doc.get("timestamp")),
+        "plate_text": doc.get("plate_text", ""),
+        "country": doc.get("country", "Thai"),
+        "province": doc.get("province", ""),
+        "province_prob": float(doc.get("province_prob") or 0.0),
+        "pattern": doc.get("pattern", ""),
+        "is_valid": 1 if doc.get("is_valid", True) else 0,
+        "char_box_text": doc.get("char_box_text", ""),
+        "ctc_text": doc.get("ctc_text", ""),
+        "char_box_status": doc.get("char_box_status", "complete"),
+        "char_box_note": "",
+        "total_latency_ms": int(doc.get("total_latency_ms") or doc.get("latency_ms") or 0),
+        "model_latencies": {},
+        # UI reads `thumbnail` / `raw_image` as data URLs
+        "thumbnail": doc.get("thumbnail", ""),
+        "raw_image": doc.get("raw_image", ""),
+        "user_id": doc.get("user_id", "guest"),
+        "user_email": doc.get("user_email", ""),
+        "user_name": doc.get("user_name", ""),
+    }
+
+
+def _get_history_store() -> str:
+    """Decides the active history backend once per process (cached)."""
+    global _history_backend
+    if _history_backend is None:
+        import os
+        if os.environ.get("K_SERVICE") or os.environ.get("HISTORY_BACKEND") == "firestore":
+            _history_backend = "firestore"
+        elif os.environ.get("HISTORY_BACKEND") == "sqlite":
+            _history_backend = "sqlite"
+        else:
+            # Local default: probe Firestore, use it if reachable, else SQLite
+            _history_backend = "firestore" if _firestore_available() else "sqlite"
+        logger.info(f"[History] Active backend: {_history_backend}")
+    return _history_backend
+
+
 def query_history(
+    page: int = 1,
+    page_size: int = 50,
+    date_from: str = "",
+    date_to: str = "",
+    country: str = "",
+    pattern: str = "",
+    status: str = "",
+    search: str = "",
+    sort_by: str = "timestamp",
+    sort_order: str = "desc",
+) -> Dict[str, Any]:
+    """Queries paginated historical records (Firestore-first, SQLite fallback)."""
+    if _get_history_store() == "firestore":
+        try:
+            from src.cloud_storage_manager import cloud_storage_manager as csm
+            docs = csm.query_firestore_filtered(
+                limit=page_size,
+                date_from=date_from,
+                date_to=date_to,
+                country=country,
+                pattern=pattern,
+                status=status,
+                search=search,
+            )
+            records = [_normalize_firestore_record(d) for d in docs]
+            reverse = sort_order.lower() != "asc"
+            key_map = {
+                "timestamp": lambda r: r["timestamp"],
+                "plate_text": lambda r: r["plate_text"],
+                "country": lambda r: r["country"],
+                "province": lambda r: r["province"],
+                "total_latency_ms": lambda r: r["total_latency_ms"],
+                "is_valid": lambda r: r["is_valid"],
+            }
+            records.sort(key=key_map.get(sort_by, key_map["timestamp"]), reverse=reverse)
+            total = csm.count_firestore_records()
+            total_pages = max(1, (total + page_size - 1) // page_size)
+            return {
+                "records": records,
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": total_pages,
+                "source": "firestore",
+            }
+        except Exception as e:
+            logger.warning(f"[History] Firestore query failed, falling back to SQLite: {e}")
+
+    return _query_history_sqlite(
+        page=page, page_size=page_size, date_from=date_from, date_to=date_to,
+        country=country, pattern=pattern, status=status, search=search,
+        sort_by=sort_by, sort_order=sort_order,
+    )
+
+
+def _query_history_sqlite(
     page: int = 1,
     page_size: int = 50,
     date_from: str = "",
@@ -376,13 +519,44 @@ def query_history(
             "page": page,
             "page_size": page_size,
             "total_pages": total_pages,
+            "source": "sqlite",
         }
     finally:
         conn.close()
 
 
 def get_history_stats(days: int = 7) -> Dict[str, Any]:
-    """Computes summary KPI stats over the given window."""
+    """Computes summary KPI stats over the given window (Firestore-first)."""
+    if _get_history_store() == "firestore":
+        try:
+            from src.cloud_storage_manager import cloud_storage_manager as csm
+            cutoff = (datetime.now(TZ_BANGKOK) - timedelta(days=days)).strftime("%Y-%m-%d 00:00:00")
+            docs = csm.query_firestore_filtered(limit=500)
+            recent = [d for d in docs if str(d.get("timestamp", "")) >= cutoff]
+            total = len(recent)
+            thai = sum(1 for d in recent if d.get("country") == "Thai")
+            lao = sum(1 for d in recent if d.get("country") == "Laos")
+            valid = sum(1 for d in recent if d.get("is_valid", True))
+            lats = [float(d.get("total_latency_ms") or 0) for d in recent if d.get("total_latency_ms")]
+            latest = max((str(d.get("timestamp", "")) for d in recent), default="None")
+            return {
+                "window_days": days,
+                "total_detections": total,
+                "thai_count": thai,
+                "lao_count": lao,
+                "valid_count": valid,
+                "valid_pct": round(valid / total * 100.0, 1) if total else 100.0,
+                "avg_latency_ms": round(sum(lats) / len(lats), 1) if lats else 0.0,
+                "latest_detection": latest,
+                "source": "firestore",
+            }
+        except Exception as e:
+            logger.warning(f"[History] Firestore stats failed, falling back to SQLite: {e}")
+    return _get_history_stats_sqlite(days=days)
+
+
+def _get_history_stats_sqlite(days: int = 7) -> Dict[str, Any]:
+    """Computes summary KPI stats over the given window (SQLite)."""
     conn = get_db_connection()
     try:
         cur = conn.cursor()
@@ -473,21 +647,33 @@ def export_history_csv(
 
 
 def clear_history(older_than_days: Optional[int] = None) -> int:
-    """Deletes historical logs (either older than N days or completely)."""
-    with _lock:
-        conn = get_db_connection()
+    """Deletes historical logs (Firestore-first; SQLite fallback, mirrored when primary)."""
+    deleted = 0
+    store = _get_history_store()
+    if store == "firestore":
         try:
-            with conn:
-                if older_than_days is not None:
-                    cutoff = (datetime.now() - timedelta(days=older_than_days)).strftime("%Y-%m-%d 00:00:00")
-                    cur = conn.execute("DELETE FROM recognition_history WHERE timestamp < ?", (cutoff,))
-                else:
-                    cur = conn.execute("DELETE FROM recognition_history")
-                with _recent_saves_lock:
-                    _recent_saves.clear()
-                return cur.rowcount
-        finally:
-            conn.close()
+            from src.cloud_storage_manager import cloud_storage_manager as csm
+            deleted = csm.delete_firestore_records(older_than_days=older_than_days)
+        except Exception as e:
+            logger.warning(f"[History] Firestore clear failed, falling back to SQLite: {e}")
+            store = "sqlite"
+            deleted = 0
+    if store == "sqlite":
+        with _lock:
+            conn = get_db_connection()
+            try:
+                with conn:
+                    if older_than_days is not None:
+                        cutoff = (datetime.now() - timedelta(days=older_than_days)).strftime("%Y-%m-%d 00:00:00")
+                        cur = conn.execute("DELETE FROM recognition_history WHERE timestamp < ?", (cutoff,))
+                    else:
+                        cur = conn.execute("DELETE FROM recognition_history")
+                    deleted = cur.rowcount
+            finally:
+                conn.close()
+    with _recent_saves_lock:
+        _recent_saves.clear()
+    return deleted
 
 
 # Auto-initialize database tables on module import

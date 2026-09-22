@@ -190,6 +190,10 @@ class CloudStorageManager:
             "total_latency_ms": int(record_dict.get("total_latency_ms") or record_dict.get("timing", {}).get("total_ms", 0)),
             "timestamp": record_dict.get("timestamp") or datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "thumbnail": record_dict.get("thumbnail") or record_dict.get("crops", {}).get("plate_rectified", ""),
+            "raw_image": record_dict.get("raw_image", ""),
+            "char_box_text": record_dict.get("char_box_text", ""),
+            "ctc_text": record_dict.get("ctc_text", ""),
+            "char_box_status": record_dict.get("char_box_status", "complete"),
             "source_mode": record_dict.get("source_mode") or ("rtsp_stream" if record_dict.get("stream_id") else "image_upload"),
         }
 
@@ -225,6 +229,12 @@ class CloudStorageManager:
                     "total_latency_ms": record.get("total_latency_ms", 0),
                     "timestamp": record.get("timestamp"),
                     "thumbnail": record.get("thumbnail", ""),
+                    # Full-frame capture (data URL) for history lightbox zoom
+                    "raw_image": record.get("raw_image", ""),
+                    # Dual-engine outputs + integrity note
+                    "char_box_text": record.get("char_box_text", ""),
+                    "ctc_text": record.get("ctc_text", ""),
+                    "char_box_status": record.get("char_box_status", "complete"),
                     "source_mode": record.get("source_mode", "image_upload"),
                     "user_id": user.get("user_id", "guest"),
                     "user_email": user.get("user_email", ""),
@@ -343,6 +353,110 @@ class CloudStorageManager:
         except Exception as e:
             logger.error(f"[Firestore Query Error] {e}")
             return []
+
+    def query_firestore_filtered(
+        self,
+        limit: int = 50,
+        date_from: str = "",
+        date_to: str = "",
+        country: str = "",
+        pattern: str = "",
+        status: str = "",
+        search: str = "",
+    ) -> List[Dict[str, Any]]:
+        """
+        Filtered, paginated Firestore history query mirroring the SQLite filters
+        in history_manager.query_history (single-country filter + string search).
+        """
+        fs = self._get_firestore()
+        if fs is None:
+            return []
+
+        try:
+            from google.cloud import firestore
+
+            q = fs.collection(self.firestore_collection)
+            if country and country.upper() != "ALL":
+                q = q.where("country", "==", country)
+            if status and status.upper() not in ("ALL", ""):
+                if status.upper() in ("VALID", "1"):
+                    q = q.where("is_valid", "==", True)
+                elif status.upper() in ("INVALID", "0"):
+                    q = q.where("is_valid", "==", False)
+            if pattern and pattern.upper() != "ALL":
+                q = q.where("pattern", ">=", pattern).where("pattern", "<=", pattern + "\uf8ff")
+
+            # Free-text search cannot run server-side (Firestore lacks LIKE):
+            # over-fetch ordered docs and filter in-memory.
+            fetch_n = min(max(limit * 20 if search else limit, limit), 500)
+            q = q.order_by("timestamp", direction=firestore.Query.DESCENDING).limit(fetch_n)
+            docs = [d.to_dict() for d in q.stream()]
+
+            if search:
+                s = search.strip().lower()
+                if s:
+                    docs = [
+                        d for d in docs
+                        if s in str(d.get("plate_text", "")).lower()
+                        or s in str(d.get("province", "")).lower()
+                        or s in str(d.get("pattern", "")).lower()
+                        or s in str(d.get("record_id", "")).lower()
+                    ]
+
+            if date_from:
+                docs = [d for d in docs if str(d.get("timestamp", "")) >= f"{date_from} 00:00:00"]
+            if date_to:
+                docs = [d for d in docs if str(d.get("timestamp", "")) <= f"{date_to} 23:59:59"]
+
+            return docs[:limit]
+        except Exception as e:
+            logger.error(f"[Firestore Filtered Query Error] {e}")
+            return []
+
+    def count_firestore_records(self) -> int:
+        """Best-effort total document count for pagination (precise up to 1000 docs)."""
+        fs = self._get_firestore()
+        if fs is None:
+            return 0
+        try:
+            from google.cloud.firestore_v1.base_aggregation import AggregateQuery
+            agg = fs.collection(self.firestore_collection).count()
+            return int(agg.get()[0][0].value)
+        except Exception:
+            # Fallback: count via streaming (capped)
+            try:
+                return sum(1 for _ in fs.collection(self.firestore_collection).limit(1000).stream())
+            except Exception:
+                return 0
+
+    def delete_firestore_records(self, older_than_days: Optional[int] = None) -> int:
+        """Deletes Firestore history documents (older than N days, or all if None)."""
+        fs = self._get_firestore()
+        if fs is None:
+            return 0
+        deleted = 0
+        try:
+            from google.cloud import firestore
+            q = fs.collection(self.firestore_collection)
+            if older_than_days is not None:
+                cutoff = (datetime.datetime.now() - datetime.timedelta(days=older_than_days)).isoformat()
+                q = q.where("timestamp", "<", cutoff)
+            batch = fs.batch()
+            count_in_batch = 0
+            for doc in q.stream():
+                batch.delete(doc.reference)
+                count_in_batch += 1
+                deleted += 1
+                if count_in_batch >= 400:  # Firestore batch limit is 500
+                    batch.commit()
+                    batch = fs.batch()
+                    count_in_batch = 0
+            if count_in_batch > 0:
+                batch.commit()
+            return deleted
+        except Exception as e:
+            logger.error(f"[Firestore Delete Error] {e}")
+            return deleted
 
     def get_status(self) -> Dict[str, Any]:
         """Returns live GCP connection health and collection metadata."""

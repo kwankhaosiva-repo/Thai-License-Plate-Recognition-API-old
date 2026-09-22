@@ -249,9 +249,13 @@ document.addEventListener("DOMContentLoaded", () => {
       const userTag = r.user_name || r.user_email || "Guest";
       const latency = r.total_latency_ms || r.latency_ms || 0;
 
-      // Crop image from Firestore (base64)
-      const cropSrc = r.plate_crop_base64
-        ? `data:image/jpeg;base64,${r.plate_crop_base64}`
+      // Crop image: API returns the `thumbnail` column (full data URL) —
+      // accept legacy key `plate_crop_base64` and bare base64 as fallbacks.
+      const cropRaw = r.thumbnail || r.plate_crop_base64 || "";
+      const cropSrc = cropRaw
+        ? cropRaw.startsWith("data:")
+          ? cropRaw
+          : `data:image/jpeg;base64,${cropRaw}`
         : null;
       const cropHtml = cropSrc
         ? `<img src="${cropSrc}" style="width:90px; height:38px; object-fit:cover; border-radius:5px; border:1px solid rgba(56,189,248,0.25);" />`

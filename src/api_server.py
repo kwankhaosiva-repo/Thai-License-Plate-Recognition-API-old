@@ -47,6 +47,12 @@ import cv2
 import numpy as np
 from PIL import Image, ImageOps, ImageDraw, ImageFont
 import torch
+# Silence NNPACK warnings on CPUs without NNPACK support (e.g. Cloud Run) —
+# PyTorch already falls back to standard kernels; this is log noise only.
+try:
+    torch._C._set_nnpack_enabled(False)
+except Exception:
+    pass
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import models, transforms
