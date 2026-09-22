@@ -13,6 +13,7 @@
 
 class ThaiLPRAuthManager {
     constructor() {
+        this.t = (key, fallback) => (window.I18N ? I18N.t(key, fallback) : fallback || key);
         this.currentUser = null;
         this.token = null;
         this.authConfig = null;
@@ -142,21 +143,13 @@ class ThaiLPRAuthManager {
                 window.dispatchEvent(new CustomEvent("thailpr:auth-success", { detail: { user: this.currentUser, token: this.token } }));
                 return { success: true };
             } else {
-                const msg = data.detail || data.message || "Invalid Email/ID or Password";
-                if (errorBox) {
-                    errorBox.textContent = msg;
-                    errorBox.style.display = "block";
-                } else {
-                    alert(msg);
-                }
+                const msg = data.detail || data.message || this.t("auth_bad_creds", "Invalid email/username or password");
+                this.showAuthError(msg);
                 return { success: false, message: msg };
             }
         } catch (err) {
-            const msg = "Network error: " + err.message;
-            if (errorBox) {
-                errorBox.textContent = msg;
-                errorBox.style.display = "block";
-            }
+            const msg = this.t("auth_net_err", "Network error") + ": " + err.message;
+            this.showAuthError(msg);
             return { success: false, message: msg };
         }
     }
@@ -179,27 +172,18 @@ class ThaiLPRAuthManager {
                     sessionStorage.setItem("thailpr_token", this.token);
                     sessionStorage.setItem("thailpr_user", JSON.stringify(this.currentUser));
                 } catch (e) { }
-                alert(`Account successfully created for ${data.user.name || data.user.email}!`);
                 this.hideLoginModal();
                 this.renderAuthUI();
                 window.dispatchEvent(new CustomEvent("thailpr:auth-success", { detail: { user: this.currentUser, token: this.token } }));
                 return { success: true };
             } else {
-                const msg = data.detail || data.message || "Registration failed";
-                if (errorBox) {
-                    errorBox.textContent = msg;
-                    errorBox.style.display = "block";
-                } else {
-                    alert(msg);
-                }
+                const msg = data.detail || data.message || this.t("auth_reg_fail", "Registration failed");
+                this.showAuthError(msg);
                 return { success: false, message: msg };
             }
         } catch (err) {
-            const msg = "Network error: " + err.message;
-            if (errorBox) {
-                errorBox.textContent = msg;
-                errorBox.style.display = "block";
-            }
+            const msg = this.t("auth_net_err", "Network error") + ": " + err.message;
+            this.showAuthError(msg);
             return { success: false, message: msg };
         }
     }
@@ -253,6 +237,7 @@ class ThaiLPRAuthManager {
         if (modal) {
             modal.style.display = "flex";
             this.switchModalTab(initialTab);
+            if (window.I18N) I18N.apply(modal);
         }
     }
 
@@ -273,89 +258,72 @@ class ThaiLPRAuthManager {
         if (errorBox) errorBox.style.display = "none";
 
         if (tab === "register") {
-            if (tabLogin) { tabLogin.style.borderBottom = "2px solid transparent"; tabLogin.style.color = "#94a3b8"; }
-            if (tabRegister) { tabRegister.style.borderBottom = "2px solid #06b6d4"; tabRegister.style.color = "#fff"; }
+            if (tabLogin) { tabLogin.style.borderBottom = "2px solid transparent"; tabLogin.style.color = ""; tabLogin.classList.remove("active"); }
+            if (tabRegister) { tabRegister.classList.add("active"); }
             if (groupName) groupName.style.display = "block";
             if (groupRole) groupRole.style.display = "block";
-            if (btnSubmit) btnSubmit.textContent = "Create Account";
-            if (modalTitle) modalTitle.textContent = "Create New LPR Operator Account";
+            if (btnSubmit) btnSubmit.textContent = this.t("btn_register", "Create Account");
+            if (modalTitle) modalTitle.textContent = this.t("auth_title_register", "Create an LPR operator account");
             btnSubmit.dataset.mode = "register";
         } else {
-            if (tabRegister) { tabRegister.style.borderBottom = "2px solid transparent"; tabRegister.style.color = "#94a3b8"; }
-            if (tabLogin) { tabLogin.style.borderBottom = "2px solid #06b6d4"; tabLogin.style.color = "#fff"; }
+            if (tabRegister) { tabRegister.style.borderBottom = "2px solid transparent"; tabRegister.style.color = ""; tabRegister.classList.remove("active"); }
+            if (tabLogin) { tabLogin.classList.add("active"); }
             if (groupName) groupName.style.display = "none";
             if (groupRole) groupRole.style.display = "none";
-            if (btnSubmit) btnSubmit.textContent = "Sign In to LPR System";
-            if (modalTitle) modalTitle.textContent = "Sign In to Thai LPR Dashboard";
+            if (btnSubmit) btnSubmit.textContent = this.t("btn_signin", "Sign In");
+            if (modalTitle) modalTitle.textContent = this.t("auth_title_login", "Sign in to the LPR dashboard");
             btnSubmit.dataset.mode = "login";
         }
     }
 
     createLoginModal() {
-        const dbType = this.authConfig?.db_provider === "firestore" ? "Cloud Firestore" : "SQLite Database";
         const html = `
         <div id="auth-login-modal" class="auth-modal-overlay" style="display:none;">
             <div class="auth-modal-card">
-                <!-- Close Button -->
-                <button type="button" id="btn-auth-close-modal" class="auth-modal-close" aria-label="Close">&times;</button>
+                <button type="button" id="btn-auth-close-modal" class="auth-modal-close" aria-label="ปิด">&times;</button>
 
-                <!-- Header Branding -->
                 <div class="auth-modal-header">
                     <div class="auth-brand-badge">
                         <span class="auth-brand-dot"></span>
-                        <h2 class="auth-brand-title">Thai <span style="color:var(--accent-cyan, #06b6d4);">LPR</span></h2>
+                        <h2 class="auth-brand-title">LPR</h2>
                     </div>
-                    <p id="auth-modal-title" class="auth-modal-subtitle">Sign In to Thai LPR Dashboard</p>
-                    <div class="auth-db-tag">
-                        <span>Database:</span> <strong>${dbType}</strong>
-                    </div>
+                    <p id="auth-modal-title" class="auth-modal-subtitle">Sign in to the LPR dashboard</p>
                 </div>
 
-                <!-- Tabs: Sign In vs Register -->
                 <div class="auth-modal-tabs">
-                    <button type="button" id="tab-auth-login" class="auth-tab-btn active">Sign In</button>
-                    <button type="button" id="tab-auth-register" class="auth-tab-btn">Create Account</button>
+                    <button type="button" id="tab-auth-login" class="auth-tab-btn active" data-i18n="signin_tab">Sign In</button>
+                    <button type="button" id="tab-auth-register" class="auth-tab-btn" data-i18n="register_tab">Register</button>
                 </div>
 
-                <!-- Error Container -->
                 <div id="auth-modal-error" class="auth-modal-error" style="display:none;"></div>
 
-                <!-- Form Inputs -->
                 <div class="auth-form-fields">
                     <div id="group-auth-name" style="display:none;">
-                        <label class="auth-label">Full Name</label>
-                        <input type="text" id="auth-name-input" class="auth-input" placeholder="e.g. Kwankhao Sivasomboon" autocomplete="name">
+                        <label class="auth-label" data-i18n="lbl_name">Full name</label>
+                        <input type="text" id="auth-name-input" class="auth-input" autocomplete="name">
                     </div>
 
                     <div id="group-auth-role" style="display:none;">
-                        <label class="auth-label">User Role</label>
+                        <label class="auth-label" data-i18n="lbl_role">User role</label>
                         <select id="auth-role-input" class="auth-input">
-                            <option value="admin">Administrator (Full Access)</option>
-                            <option value="operator">Operator (Monitor & Review)</option>
-                            <option value="viewer">Viewer (Read Only)</option>
+                            <option value="admin" data-i18n="role_admin">Administrator (full access)</option>
+                            <option value="operator" data-i18n="role_operator">Operator (monitor &amp; review)</option>
+                            <option value="viewer" data-i18n="role_viewer">Viewer (read only)</option>
                         </select>
                     </div>
 
                     <div>
-                        <label class="auth-label">Email or User ID</label>
-                        <input type="text" id="auth-email-input" class="auth-input" placeholder="admin@thailpr.local or username" autocomplete="username">
+                        <label class="auth-label" data-i18n="lbl_email">Email or username</label>
+                        <input type="text" id="auth-email-input" class="auth-input" placeholder="admin@thailpr.local" autocomplete="username">
                     </div>
 
                     <div>
-                        <label class="auth-label">Password</label>
+                        <label class="auth-label" data-i18n="lbl_password">Password</label>
                         <input type="password" id="auth-password-input" class="auth-input" placeholder="••••••••" autocomplete="current-password">
                     </div>
 
-                    <button type="button" id="btn-auth-submit" class="auth-btn-primary" data-mode="login">
-                        Sign In to LPR System
-                    </button>
-
-                    <div class="auth-divider">
-                        <span>OR</span>
-                    </div>
-
-                    <button type="button" id="btn-auth-dev-admin" class="auth-btn-secondary">
-                        ⚡ Quick Login (Localhost Admin)
+                    <button type="button" id="btn-auth-submit" class="auth-btn-primary" data-mode="login" data-i18n="btn_signin">
+                        Sign In
                     </button>
                 </div>
             </div>
@@ -363,10 +331,8 @@ class ThaiLPRAuthManager {
         `;
         document.body.insertAdjacentHTML("beforeend", html);
 
-        // Bind events
         document.getElementById("tab-auth-login")?.addEventListener("click", () => this.switchModalTab("login"));
         document.getElementById("tab-auth-register")?.addEventListener("click", () => this.switchModalTab("register"));
-        document.getElementById("btn-auth-dev-admin")?.addEventListener("click", () => this.loginWithDevAdmin());
         document.getElementById("btn-auth-close-modal")?.addEventListener("click", () => this.hideLoginModal());
 
         document.getElementById("btn-auth-submit")?.addEventListener("click", async () => {
@@ -376,50 +342,50 @@ class ThaiLPRAuthManager {
             const name = document.getElementById("auth-name-input")?.value.trim() || "";
             const role = document.getElementById("auth-role-input")?.value || "admin";
 
-            if (!emailOrId) {
-                alert("Please enter your Email or User ID");
-                return;
-            }
-            if (!password) {
-                alert("Please enter your Password");
-                return;
-            }
+            if (!emailOrId) { this.showAuthError(this.t("lbl_email", "Email or username")); return; }
+            if (!password) { this.showAuthError(this.t("lbl_password", "Password")); return; }
 
-            if (mode === "register") {
-                await this.registerUser(emailOrId, password, name, role);
-            } else {
-                await this.loginWithPassword(emailOrId, password);
-            }
+            if (mode === "register") await this.registerUser(emailOrId, password, name, role);
+            else await this.loginWithPassword(emailOrId, password);
         });
 
         const handleEnterKey = (e) => {
-            if (e.key === "Enter") {
-                document.getElementById("btn-auth-submit")?.click();
-            }
+            if (e.key === "Enter") document.getElementById("btn-auth-submit")?.click();
         };
         document.getElementById("auth-email-input")?.addEventListener("keydown", handleEnterKey);
         document.getElementById("auth-password-input")?.addEventListener("keydown", handleEnterKey);
         document.getElementById("auth-name-input")?.addEventListener("keydown", handleEnterKey);
     }
 
+    showAuthError(msg) {
+        const errorBox = document.getElementById("auth-modal-error");
+        if (errorBox) { errorBox.textContent = msg; errorBox.style.display = "block"; }
+        else toast(msg, "error");
+    }
+
     renderAuthUI() {
         const userContainer = document.getElementById("auth-user-container");
         if (!userContainer) return;
 
+        const gearSvg = `<svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>`;
+        const keySvg = `<svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>`;
+        const plusSvg = `<svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"/></svg>`;
+
         if (this.currentUser) {
-            const rawName = this.currentUser.name || this.currentUser.email || "Operator";
+            const rawName = this.currentUser.name || this.currentUser.email || this.t("guest", "Guest");
             const initial = rawName.charAt(0).toUpperCase();
             const role = (this.currentUser.role || "admin").toUpperCase();
+            const roleLabel = { ADMIN: this.t("role_admin_short", "Admin"), OPERATOR: this.t("role_operator_short", "Operator"), VIEWER: this.t("role_viewer_short", "Viewer") }[role] || role;
 
             userContainer.innerHTML = `
-                <div class="auth-profile-badge" title="Logged in as ${rawName} (${role})">
+                <div class="auth-profile-badge" title="${rawName} (${roleLabel})">
                     <div class="auth-avatar-circle">${initial}</div>
                     <div class="auth-user-info">
                         <span class="auth-name-text">${rawName}</span>
-                        <span class="auth-role-pill ${role.toLowerCase()}">${role}</span>
+                        <span class="auth-role-pill ${role.toLowerCase()}">${roleLabel}</span>
                     </div>
-                    <button id="btn-auth-settings" class="auth-icon-btn" title="User Settings & Preferences">⚙️</button>
-                    <button id="btn-auth-logout" class="auth-logout-btn" title="Sign Out">Logout</button>
+                    <button id="btn-auth-settings" class="auth-icon-btn" data-i18n-title="nav_settings" title="My Settings">${gearSvg}</button>
+                    <button id="btn-auth-logout" class="auth-logout-btn" data-i18n="nav_logout" title="Sign Out">Sign Out</button>
                 </div>
             `;
 
@@ -428,17 +394,41 @@ class ThaiLPRAuthManager {
         } else {
             userContainer.innerHTML = `
                 <div class="auth-guest-actions">
-                    <button id="btn-auth-open-login" class="auth-nav-btn login-btn">
-                        🔑 Sign In
-                    </button>
-                    <button id="btn-auth-open-register" class="auth-nav-btn register-btn">
-                        + Register
-                    </button>
+                    <button id="btn-auth-open-login" class="auth-nav-btn login-btn">${keySvg} <span data-i18n="nav_login">Sign In</span></button>
+                    <button id="btn-auth-open-register" class="auth-nav-btn register-btn">${plusSvg} <span data-i18n="register_tab">Register</span></button>
                 </div>
             `;
             document.getElementById("btn-auth-open-login")?.addEventListener("click", () => this.showLoginModal("login"));
             document.getElementById("btn-auth-open-register")?.addEventListener("click", () => this.showLoginModal("register"));
         }
+
+        // Sidebar user menu
+        const sidebarUser = document.getElementById("sidebar-nav-user");
+        if (sidebarUser) {
+            if (this.currentUser) {
+                sidebarUser.innerHTML = `
+                    <button type="button" class="nav-item" id="navSettingsBtn">
+                        ${gearSvg}
+                        <span class="nav-label" data-i18n="nav_settings">My Settings</span>
+                    </button>
+                    <button type="button" class="nav-item" id="navLogoutBtn">
+                        <svg width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+                        <span class="nav-label" data-i18n="nav_logout">Sign Out</span>
+                    </button>
+                `;
+                document.getElementById("navSettingsBtn")?.addEventListener("click", () => this.showUserSettingsModal());
+                document.getElementById("navLogoutBtn")?.addEventListener("click", () => this.logout());
+            } else {
+                sidebarUser.innerHTML = `
+                    <button type="button" class="nav-item" id="navLoginBtn">
+                        ${keySvg}
+                        <span class="nav-label" data-i18n="nav_login">Sign In</span>
+                    </button>
+                `;
+                document.getElementById("navLoginBtn")?.addEventListener("click", () => this.showLoginModal("login"));
+            }
+        }
+        if (window.I18N) I18N.apply();
     }
 
     showUserSettingsModal() {
@@ -449,34 +439,35 @@ class ThaiLPRAuthManager {
                 <div class="auth-modal-card" style="max-width:440px;">
                     <button type="button" id="btn-settings-close" class="auth-modal-close">&times;</button>
                     <div class="auth-modal-header">
-                        <h2 class="auth-brand-title">User <span style="color:var(--accent-cyan, #06b6d4);">Settings</span></h2>
-                        <p class="auth-modal-subtitle">Saved in database for account: <strong>${this.currentUser?.email || ""}</strong></p>
+                        <h2 class="auth-brand-title"><span data-i18n="settings_title_1">User</span> <span style="color:var(--accent);" data-i18n="settings_title_2">Settings</span></h2>
+                        <p class="auth-modal-subtitle"><span data-i18n="set_saved_for">Saved to account:</span> <strong>${this.currentUser?.email || ""}</strong></p>
                     </div>
 
                     <div class="auth-form-fields" style="margin-top:1rem;">
                         <div>
-                            <label class="auth-label">Default Confidence Threshold</label>
+                            <label class="auth-label" data-i18n="set_conf">Default confidence threshold (0.1 - 0.99)</label>
                             <input type="number" id="setting-confidence" class="auth-input" min="0.1" max="0.99" step="0.05" value="${this.currentUser?.settings?.confidence_threshold || 0.50}">
+                            <div style="font-size:0.72rem; color:var(--text-muted); margin-top:4px;" data-i18n="set_conf_hint">Higher = stricter</div>
                         </div>
 
                         <div>
-                            <label class="auth-label">Auto Refresh History Feed</label>
+                            <label class="auth-label" data-i18n="set_refresh">Auto-refresh history</label>
                             <select id="setting-auto-refresh" class="auth-input">
-                                <option value="true" ${this.currentUser?.settings?.auto_refresh_history !== false ? "selected" : ""}>Enabled (Real-time updates)</option>
-                                <option value="false" ${this.currentUser?.settings?.auto_refresh_history === false ? "selected" : ""}>Disabled (Manual refresh only)</option>
+                                <option value="true" ${this.currentUser?.settings?.auto_refresh_history !== false ? "selected" : ""} data-i18n="set_refresh_on">Enabled (real-time)</option>
+                                <option value="false" ${this.currentUser?.settings?.auto_refresh_history === false ? "selected" : ""} data-i18n="set_refresh_off">Disabled (manual)</option>
                             </select>
                         </div>
 
                         <div>
-                            <label class="auth-label">Default Debug Breakdown</label>
+                            <label class="auth-label" data-i18n="set_debug">Default debug inspection</label>
                             <select id="setting-debug-view" class="auth-input">
-                                <option value="false" ${!this.currentUser?.settings?.debug_view_default ? "selected" : ""}>Off (Saves bandwidth & CPU)</option>
-                                <option value="true" ${this.currentUser?.settings?.debug_view_default ? "selected" : ""}>On (Inspect all intermediate crops)</option>
+                                <option value="false" ${!this.currentUser?.settings?.debug_view_default ? "selected" : ""} data-i18n="set_debug_off">Off (recommended)</option>
+                                <option value="true" ${this.currentUser?.settings?.debug_view_default ? "selected" : ""} data-i18n="set_debug_on">On (inspect all AI steps)</option>
                             </select>
                         </div>
 
-                        <button type="button" id="btn-save-settings" class="auth-btn-primary" style="margin-top:0.5rem;">
-                            Save Settings to Database
+                        <button type="button" id="btn-save-settings" class="auth-btn-primary" style="margin-top:0.5rem;" data-i18n="set_save">
+                            Save Settings
                         </button>
                     </div>
                 </div>
@@ -510,13 +501,13 @@ class ThaiLPRAuthManager {
                             this.currentUser.settings = data.settings;
                             sessionStorage.setItem("thailpr_user", JSON.stringify(this.currentUser));
                         }
-                        alert("Settings successfully saved to database!");
                         modal.style.display = "none";
+                        if (window.LPRToast) window.LPRToast(this.t("toast_set_saved", "Settings saved"), "success");
                     } else {
-                        alert("Failed to save settings.");
+                        if (window.LPRToast) window.LPRToast(this.t("toast_set_fail", "Failed to save settings"), "error");
                     }
                 } catch (e) {
-                    alert("Error saving settings: " + e.message);
+                    alert(this.t("toast_set_fail", "Failed to save settings") + ": " + e.message);
                 }
             });
         }

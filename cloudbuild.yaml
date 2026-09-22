@@ -41,15 +41,23 @@ steps:
   # ---------------------------------------------------------------
   # 2. Build the image (Dockerfile remains the image definition).
   #    Tagged with both the commit SHA (immutable) and :latest.
+  #    --cache-from reuses layers of the previous :latest image in
+  #    Artifact Registry, so pip install (torch ~250 MB) is skipped
+  #    whenever requirements.txt and the base image are unchanged.
+  #    (First build after adding this warms the cache; the next ones
+  #    drop from ~5 min to ~1-2 min.)
   # ---------------------------------------------------------------
   - name: 'gcr.io/cloud-builders/docker'
+    entrypoint: bash
     args:
-      - build
-      - -t
-      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:$COMMIT_SHA
-      - -t
-      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:latest
-      - .
+      - -c
+      - |
+        docker pull ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:latest || true
+        docker build \
+          --cache-from ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:latest \
+          -t ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:$COMMIT_SHA \
+          -t ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:latest \
+          .
 
   # ---------------------------------------------------------------
   # 3. Push to Artifact Registry.

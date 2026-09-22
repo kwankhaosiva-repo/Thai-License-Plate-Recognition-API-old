@@ -1,9 +1,11 @@
 /**
  * static/js/history.js
- * Frontend controller for Thai & Laos LPR Recognition History & Analytics Dashboard.
+ * Frontend controller for ประวัติการอ่านป้ายทะเบียน (Recognition History).
+ * Uses shared LPRViewer (viewer.js) for full-screen zoom/pan inspection.
  */
-
 document.addEventListener("DOMContentLoaded", () => {
+  const t = (key, fallback) => (window.I18N ? I18N.t(key, fallback) : fallback || key);
+
   // State
   let currentPage = 1;
   const pageSize = 25;
@@ -12,7 +14,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let autoRefreshTimer = null;
   let isLive = true;
 
-  // DOM Elements
+  // DOM
   const statTotal = document.getElementById("statTotal");
   const statThai = document.getElementById("statThai");
   const statLao = document.getElementById("statLao");
@@ -31,6 +33,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const lblLive = document.getElementById("lblLive");
 
   const historyTableBody = document.getElementById("historyTableBody");
+  const historyTableHead = document.getElementById("historyTableHead");
   const lblShowing = document.getElementById("lblShowing");
   const lblTotal = document.getElementById("lblTotal");
   const lblCurrentPage = document.getElementById("lblCurrentPage");
@@ -41,14 +44,12 @@ document.addEventListener("DOMContentLoaded", () => {
   const btnExportCsv = document.getElementById("btnExportCsv");
   const btnClearHistory = document.getElementById("btnClearHistory");
 
-  // Data Source & Cloud Elements
   const histSourceSwitcher = document.getElementById("histSourceSwitcher");
   const btnSourceLocal = document.getElementById("btnSourceLocal");
   const btnSourceBigQuery = document.getElementById("btnSourceBigQuery");
-  const historyTableHead = document.getElementById("historyTableHead");
-  let currentSource = "local"; // "local" | "cloud"
+  let currentSource = "local";
 
-  // Modal Elements
+  // Modal
   const histModal = document.getElementById("histModal");
   const btnCloseModal = document.getElementById("btnCloseModal");
   const modalPlateText = document.getElementById("modalPlateText");
@@ -67,39 +68,39 @@ document.addEventListener("DOMContentLoaded", () => {
   const modalLatencyBars = document.getElementById("modalLatencyBars");
   const modalLatencyChips = document.getElementById("modalLatencyChips");
 
-  // Lightbox Zoom Modal Elements
-  const lightboxModal = document.getElementById("lightboxModal");
-  const lightboxTitle = document.getElementById("lightboxTitle");
-  const lightboxSubtitle = document.getElementById("lightboxSubtitle");
-  const lightboxBody = document.getElementById("lightboxBody");
-  const lightboxImg = document.getElementById("lightboxImg");
-  const btnZoomIn = document.getElementById("btnZoomIn");
-  const btnZoomOut = document.getElementById("btnZoomOut");
-  const btnZoomReset = document.getElementById("btnZoomReset");
-  const btnZoomFit = document.getElementById("btnZoomFit");
-  const btnCloseLightbox = document.getElementById("btnCloseLightbox");
-  const lblZoomLevel = document.getElementById("lblZoomLevel");
-
-  // Lightbox Pan & Zoom State
-  let zoomLevel = 1.0;
-  let panX = 0;
-  let panY = 0;
-  let isDragging = false;
-  let dragStartX = 0;
-  let dragStartY = 0;
-
-  // Active record in inspection modal
   let activeModalRecord = null;
-  let activeModalImageType = "plate"; // "plate" | "scene"
-
-  // Cache for records currently loaded
+  let activeModalImageType = "plate";
   let currentRecordsMap = {};
 
-  // Compute date range from quick filter
+  // --- Helpers ---
+  function escapeHtml(str) {
+    if (!str) return "";
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  function toast(message, type = "info", duration = 3500) {
+    let el = document.getElementById("lpr-toast");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "lpr-toast";
+      el.className = "lpr-toast";
+      document.body.appendChild(el);
+    }
+    el.textContent = message;
+    el.className = `lpr-toast show ${type === "error" ? "error" : type === "success" ? "success" : ""}`;
+    clearTimeout(el._timer);
+    el._timer = setTimeout(() => { el.className = "lpr-toast"; }, duration);
+  }
+
+  // Thai date quick filter
   function getDateRange() {
     const quick = filterDateQuick.value;
     const now = new Date();
-
     const formatDate = (d) => {
       const year = d.getFullYear();
       const month = String(d.getMonth() + 1).padStart(2, "0");
@@ -107,33 +108,31 @@ document.addEventListener("DOMContentLoaded", () => {
       return `${year}-${month}-${day}`;
     };
 
-    if (quick === "today") {
-      const s = formatDate(now);
-      return { from: s, to: s };
-    } else if (quick === "yesterday") {
+    if (quick === "today") return { from: formatDate(now), to: formatDate(now) };
+    if (quick === "yesterday") {
       const y = new Date(now.getTime() - 24 * 60 * 60 * 1000);
       const s = formatDate(y);
       return { from: s, to: s };
-    } else if (quick === "7d") {
+    }
+    if (quick === "7d") {
       const past = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
       return { from: formatDate(past), to: formatDate(now) };
-    } else if (quick === "30d") {
+    }
+    if (quick === "30d") {
       const past = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
       return { from: formatDate(past), to: formatDate(now) };
-    } else if (quick === "custom") {
-      return { from: filterDateFrom.value, to: filterDateTo.value };
     }
+    if (quick === "custom") return { from: filterDateFrom.value, to: filterDateTo.value };
     return { from: "", to: "" };
   }
 
-  // Load KPI Stats
+  // --- Data loading ---
   async function loadStats() {
     try {
       const days = filterDateQuick.value === "30d" ? 30 : 7;
       const res = await fetch(`/api/history/stats?days=${days}`);
       if (!res.ok) return;
       const data = await res.json();
-
       statTotal.textContent = Number(data.total_detections || 0).toLocaleString();
       statThai.textContent = Number(data.thai_count || 0).toLocaleString();
       statLao.textContent = Number(data.lao_count || 0).toLocaleString();
@@ -144,22 +143,17 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // Load Paginated History Table
   async function loadHistory() {
     try {
       if (currentSource === "cloud") {
         historyTableBody.innerHTML = `
-          <tr>
-            <td colspan="6" style="text-align: center; padding: 40px; color: var(--accent-cyan);">
-              ☁️ Loading Cloud History from Firestore (lpr-db)...
-            </td>
-          </tr>
-        `;
+          <tr><td colspan="10" style="text-align: center; padding: 40px; color: var(--accent);">
+            ${t("cloud_loading", "Loading cloud data...")}
+          </td></tr>`;
         const res = await fetch(`/api/cloud/firestore/records?limit=50`);
-        if (!res.ok) throw new Error("Firestore API returned " + res.status);
+        if (!res.ok) throw new Error("API returned " + res.status);
         const data = await res.json();
         renderCloudTable(data.records || []);
-
         lblShowing.textContent = data.records?.length || 0;
         lblTotal.textContent = data.count || 0;
         lblCurrentPage.textContent = 1;
@@ -169,7 +163,6 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      // Local SQLite Mode
       const dateRange = getDateRange();
       const params = new URLSearchParams({
         page: currentPage,
@@ -188,242 +181,186 @@ document.addEventListener("DOMContentLoaded", () => {
       const data = await res.json();
 
       renderTable(data.records || []);
-
       lblShowing.textContent = data.records?.length || 0;
       lblTotal.textContent = data.total || 0;
       lblCurrentPage.textContent = data.page || 1;
       lblTotalPages.textContent = data.total_pages || 1;
-
       btnPrevPage.disabled = (data.page || 1) <= 1;
       btnNextPage.disabled = (data.page || 1) >= (data.total_pages || 1);
     } catch (err) {
       historyTableBody.innerHTML = `
-        <tr>
-          <td colspan="10" style="text-align: center; padding: 40px; color: var(--accent-red);">
-            Failed to load recognition history: ${err.message}
-          </td>
-        </tr>
-      `;
+        <tr><td colspan="10" style="text-align: center; padding: 40px; color: var(--accent-red);">
+          ${t("load_fail", "Failed to load history")}: ${escapeHtml(err.message)}
+        </td></tr>`;
     }
   }
 
-  // Render Cloud (Firestore) History Table Rows
+  // --- Cloud table ---
   function renderCloudTable(records) {
     if (historyTableHead) {
       historyTableHead.innerHTML = `
         <tr>
-          <th style="width: 110px;">Crop</th>
-          <th style="width: 170px;">Timestamp (UTC+7)</th>
-          <th style="width: 100px;">Country</th>
-          <th style="width: 170px;">Plate Number</th>
-          <th style="width: 160px;">Province</th>
-          <th style="width: 160px;">Pattern</th>
-          <th style="width: 90px;">Validity</th>
-          <th style="width: 150px;">Captured By</th>
-          <th style="width: 90px;">Latency</th>
-        </tr>
-      `;
+          <th style="width: 110px;">${t("col_crop", "Crop")}</th>
+          <th style="width: 170px;">${t("col_time_utc7", "Time (UTC+7)")}</th>
+          <th style="width: 100px;">${t("col_country", "Country")}</th>
+          <th style="width: 170px;">${t("col_plate", "Plate No.")}</th>
+          <th style="width: 160px;">${t("col_province", "Province")}</th>
+          <th style="width: 160px;">${t("col_pattern", "Pattern")}</th>
+          <th style="width: 90px;">${t("col_validity", "Validity")}</th>
+          <th style="width: 150px;">${t("col_by", "Read by")}</th>
+          <th style="width: 90px;">${t("col_latency", "Latency")}</th>
+        </tr>`;
     }
 
     if (!records || records.length === 0) {
       historyTableBody.innerHTML = `
-        <tr>
-          <td colspan="9" style="text-align: center; padding: 48px; color: var(--text-muted);">
-            No records found in Cloud Firestore (lpr-db).
-          </td>
-        </tr>
-      `;
+        <tr><td colspan="10" style="text-align: center; padding: 48px; color: var(--text-muted);">
+          ${t("cloud_empty", "No records in cloud")}
+        </td></tr>`;
       return;
     }
 
-    const rowsHtml = records.map((r) => {
+    historyTableBody.innerHTML = records.map((r) => {
       const isThai = (r.country || "Thai") === "Thai";
       const countryBadge = isThai
-        ? `<span class="badge-country thai">🇹🇭 Thai</span>`
-        : `<span class="badge-country laos">🇱🇦 Laos</span>`;
-
+        ? `<span class="badge-country thai">🇹🇭 ${t("country_th", "Thai")}</span>`
+        : `<span class="badge-country laos">🇱🇦 ${t("country_lao", "Lao")}</span>`;
       const validBadge = r.is_valid
-        ? `<span class="badge-valid">VALID</span>`
-        : `<span class="badge-invalid">INVALID</span>`;
-
-      const userTag = r.user_name || r.user_email || "Guest";
+        ? `<span class="badge-valid">${t("valid_short", "VALID")}</span>`
+        : `<span class="badge-invalid">${t("invalid_short", "INVALID")}</span>`;
+      const userTag = r.user_name || r.user_email || t("guest", "Guest");
       const latency = r.total_latency_ms || r.latency_ms || 0;
 
-      // Crop image: API returns the `thumbnail` column (full data URL) —
-      // accept legacy key `plate_crop_base64` and bare base64 as fallbacks.
       const cropRaw = r.thumbnail || r.plate_crop_base64 || "";
       const cropSrc = cropRaw
-        ? cropRaw.startsWith("data:")
-          ? cropRaw
-          : `data:image/jpeg;base64,${cropRaw}`
+        ? cropRaw.startsWith("data:") ? cropRaw : `data:image/jpeg;base64,${cropRaw}`
         : null;
       const cropHtml = cropSrc
-        ? `<img src="${cropSrc}" style="width:90px; height:38px; object-fit:cover; border-radius:5px; border:1px solid rgba(56,189,248,0.25);" />`
-        : `<span style="font-size:0.7rem; color:var(--text-muted);">No image</span>`;
-
-      const ts = r.timestamp || "-";
+        ? `<img src="${cropSrc}" style="width:90px; height:38px; object-fit:cover; border-radius:5px; border:1px solid rgba(56,189,248,0.25);" data-lpr-viewer data-title="${escapeHtml(r.plate_text || "-")}" data-subtitle="${escapeHtml(r.timestamp || "")}">`
+        : `<span style="font-size:0.7rem; color:var(--text-muted);">${t("no_image", "No image")}</span>`;
 
       return `
         <tr>
           <td>${cropHtml}</td>
-          <td style="font-family: var(--font-mono); font-size: 0.8rem; color: #38bdf8;">${escapeHtml(ts)}</td>
+          <td class="hist-mono" style="font-size: 0.8rem; color: var(--accent);">${escapeHtml(r.timestamp || "-")}</td>
           <td>${countryBadge}</td>
           <td><span class="hist-plate-badge" style="font-size: 0.92rem;">${escapeHtml(r.plate_text || r.plate_number || "-")}</span></td>
-          <td style="font-weight: 600; color: #f8fafc;">${escapeHtml(r.province || "-")}</td>
+          <td style="font-weight: 600; color: var(--text-primary);">${escapeHtml(r.province || "-")}</td>
           <td style="font-size: 0.8rem; color: var(--text-secondary);">${escapeHtml(r.pattern || "-")}</td>
           <td>${validBadge}</td>
-          <td>
-            <span style="font-size: 0.74rem; font-family: var(--font-mono); color: #94a3b8; background: rgba(255,255,255,0.06); padding: 2px 7px; border-radius: 4px;">
-              👤 ${escapeHtml(userTag)}
-            </span>
-          </td>
-          <td style="font-family: var(--font-mono); font-weight: 600; color: var(--accent-cyan); font-size: 0.8rem;">${latency} ms</td>
-        </tr>
-      `;
+          <td><span class="hist-user-tag">${escapeHtml(userTag)}</span></td>
+          <td class="hist-mono" style="font-weight: 600; color: var(--accent); font-size: 0.8rem;">${latency} ms</td>
+        </tr>`;
     }).join("");
-
-    historyTableBody.innerHTML = rowsHtml;
   }
 
-  // Render Table Rows (Local SQLite)
+  // --- Local table ---
   function renderTable(records) {
     if (historyTableHead) {
       historyTableHead.innerHTML = `
         <tr>
-          <th style="width: 110px;">Crop</th>
-          <th class="sortable" data-sort="timestamp" style="width: 170px;">
-            Timestamp <span id="sortIconTimestamp">▼</span>
-          </th>
-          <th style="width: 120px;">Country</th>
-          <th class="sortable" data-sort="plate_text" style="width: 180px;">
-            Plate Number <span id="sortIconPlate"></span>
-          </th>
-          <th class="sortable" data-sort="province" style="width: 170px;">
-            Province <span id="sortIconProvince"></span>
-          </th>
-          <th style="width: 180px;">Pattern</th>
-          <th style="width: 100px;">Validity</th>
-          <th style="width: 140px;">Captured By</th>
-          <th class="sortable" data-sort="total_latency_ms" style="width: 110px;">
-            Latency <span id="sortIconLatency"></span>
-          </th>
-          <th style="width: 90px; text-align: center;">Action</th>
-        </tr>
-      `;
+          <th style="width: 110px;">${t("col_crop", "Crop")}</th>
+          <th class="sortable" data-sort="timestamp" style="width: 170px;">${t("col_time", "Time")} <span id="sortIconTimestamp">▼</span></th>
+          <th style="width: 110px;">${t("col_country", "Country")}</th>
+          <th class="sortable" data-sort="plate_text" style="width: 170px;">${t("col_plate", "Plate No.")} <span id="sortIconPlate"></span></th>
+          <th class="sortable" data-sort="province" style="width: 150px;">${t("col_province", "Province")} <span id="sortIconProvince"></span></th>
+          <th style="width: 150px;">${t("col_pattern", "Pattern")}</th>
+          <th style="width: 100px;">${t("col_validity", "Validity")}</th>
+          <th style="width: 130px;">${t("col_by", "Read by")}</th>
+          <th class="sortable" data-sort="total_latency_ms" style="width: 100px;">${t("col_latency", "Latency")} <span id="sortIconLatency"></span></th>
+          <th style="width: 90px; text-align: center;">${t("col_detail", "Details")}</th>
+        </tr>`;
     }
 
     currentRecordsMap = {};
     if (!records || records.length === 0) {
       historyTableBody.innerHTML = `
-        <tr>
-          <td colspan="10" style="text-align: center; padding: 48px; color: var(--text-muted);">
-            No license plate recognition logs found matching current filters.
-          </td>
-        </tr>
-      `;
+        <tr><td colspan="10" style="text-align: center; padding: 48px; color: var(--text-muted);">
+          ${t("no_records", "No records match the current filters")}
+        </td></tr>`;
       return;
     }
 
-    const rowsHtml = records.map((r) => {
+    historyTableBody.innerHTML = records.map((r) => {
       currentRecordsMap[r.record_id] = r;
       const isThai = (r.country || "Thai") === "Thai";
       const countryBadge = isThai
-        ? `<span class="badge-country thai">🇹🇭 Thai</span>`
-        : `<span class="badge-country laos">🇱🇦 Laos</span>`;
-
+        ? `<span class="badge-country thai">🇹🇭 ${t("country_th", "Thai")}</span>`
+        : `<span class="badge-country laos">🇱🇦 ${t("country_lao", "Lao")}</span>`;
       const validBadge = r.is_valid
-        ? `<span class="badge-valid">VALID</span>`
-        : `<span class="badge-invalid">INVALID</span>`;
-
+        ? `<span class="badge-valid">${t("valid_short", "VALID")}</span>`
+        : `<span class="badge-invalid">${t("invalid_short", "INVALID")}</span>`;
       const thumbImg = r.thumbnail
-        ? `<img src="${r.thumbnail}" alt="Crop" class="hist-thumb btn-thumb-zoom" data-record-id="${r.record_id}" title="🔍 Click to zoom / expand image">`
-        : `<div class="hist-thumb" style="display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:10px;">NO CROP</div>`;
-
-      const userTag = r.user_email || r.user_id || "Guest";
+        ? `<img src="${r.thumbnail}" alt="crop" class="hist-thumb btn-thumb-zoom" data-record-id="${r.record_id}" title="${t("click_expand", "Click to expand")}">`
+        : `<div class="hist-thumb" style="display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:10px;">${t("no_image", "No image")}</div>`;
+      const userTag = r.user_email || r.user_id || t("guest", "Guest");
 
       return `
         <tr data-record-id="${r.record_id}">
           <td>${thumbImg}</td>
-          <td style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-secondary);">${r.timestamp}</td>
+          <td class="hist-mono" style="font-size: 0.8rem; color: var(--text-secondary);">${escapeHtml(r.timestamp)}</td>
           <td>${countryBadge}</td>
           <td><span class="hist-plate-badge">${escapeHtml(r.plate_text)}</span></td>
-          <td style="font-weight: 600; color: #fff;">${escapeHtml(r.province || "-")}</td>
+          <td style="font-weight: 600; color: var(--text-primary);">${escapeHtml(r.province || "-")}</td>
           <td style="font-size: 0.8rem; color: var(--text-secondary);">${escapeHtml(r.pattern || "-")}</td>
           <td>${validBadge}</td>
-          <td>
-            <span style="font-size: 0.74rem; font-family: var(--font-mono); color: #94a3b8; background: rgba(255,255,255,0.06); padding: 2px 7px; border-radius: 4px;" title="User: ${escapeHtml(userTag)}">
-              👤 ${escapeHtml(userTag)}
-            </span>
-          </td>
-          <td style="font-family: var(--font-mono); font-weight: 600; color: var(--accent-cyan);">${r.total_latency_ms || 0} ms</td>
+          <td><span class="hist-user-tag" title="${escapeHtml(userTag)}">${escapeHtml(userTag)}</span></td>
+          <td class="hist-mono" style="font-weight: 600; color: var(--accent);">${r.total_latency_ms || 0} ms</td>
           <td style="text-align: center;">
-            <button type="button" class="btn-hist btn-inspect" data-record-id="${r.record_id}" style="padding: 4px 10px; font-size: 0.74rem; background: rgba(0, 240, 255, 0.12); color: var(--accent-cyan); border-color: rgba(0, 240, 255, 0.3);">
-              Inspect
-            </button>
+            <button type="button" class="btn-hist btn-inspect" data-record-id="${r.record_id}">${t("btn_inspect", "Inspect")}</button>
           </td>
-        </tr>
-      `;
+        </tr>`;
     }).join("");
 
-    historyTableBody.innerHTML = rowsHtml;
+    bindRowActions();
+  }
 
-    // Attach click listener for thumbnail zoom
+  function bindRowActions() {
     document.querySelectorAll(".btn-thumb-zoom").forEach((img) => {
       img.addEventListener("click", (e) => {
         e.stopPropagation();
-        const rid = img.getAttribute("data-record-id");
-        const rec = currentRecordsMap[rid];
-        if (rec) {
-          const title = `${rec.plate_text || "Plate"} - ${rec.province || ""}`;
-          const subtitle = `${rec.timestamp} • ${rec.country || "Thai"} • ${rec.pattern || ""}`;
-          // Prefer full raw image if available, else thumbnail
-          const imgSrc = rec.raw_image || rec.thumbnail;
-          openLightbox(imgSrc, title, subtitle);
+        const rec = currentRecordsMap[img.getAttribute("data-record-id")];
+        if (rec && window.LPRViewer) {
+          LPRViewer.open({
+            src: rec.raw_image || rec.thumbnail,
+            title: `${rec.plate_text || "-"} • ${rec.province || ""}`,
+            subtitle: `${rec.timestamp} • ${rec.country === "Laos" ? t("country_lao", "Lao") : t("country_th", "Thai")} • ${rec.pattern || ""}`,
+          });
         }
       });
     });
 
-    // Attach click listener for Inspect buttons
     document.querySelectorAll(".btn-inspect").forEach((btn) => {
       btn.addEventListener("click", () => {
-        const rid = btn.getAttribute("data-record-id");
-        if (currentRecordsMap[rid]) {
-          openInspectionModal(currentRecordsMap[rid]);
-        }
+        const rec = currentRecordsMap[btn.getAttribute("data-record-id")];
+        if (rec) openInspectionModal(rec);
       });
     });
   }
 
-  // Open Detailed Modal
+  // --- Inspection modal ---
   function openInspectionModal(record) {
     activeModalRecord = record;
     activeModalImageType = "plate";
 
-    modalPlateText.textContent = record.plate_text || "UNKNOWN";
+    modalPlateText.textContent = record.plate_text || t("no_unknown", "UNKNOWN");
     const isThai = (record.country || "Thai") === "Thai";
 
     modalCountryBadge.className = isThai ? "badge-country thai" : "badge-country laos";
-    modalCountryBadge.textContent = isThai ? "🇹🇭 Thailand" : "🇱🇦 Laos";
-
+    modalCountryBadge.textContent = isThai ? `🇹🇭 ${t("country_th", "Thai")}` : `🇱🇦 ${t("country_lao", "Lao")}`;
     modalProvinceText.textContent = record.province || "-";
     modalValidBadge.className = record.is_valid ? "badge-valid" : "badge-invalid";
-    modalValidBadge.textContent = record.is_valid ? "VALID FORMAT" : "INVALID FORMAT";
+    modalValidBadge.textContent = record.is_valid ? t("res_valid", "VALID FORMAT") : t("res_invalid", "NON-STANDARD");
 
-    modalPattern.textContent = record.pattern || "Custom / Unstandardized";
+    modalPattern.textContent = record.pattern || t("pattern_nonstd", "Non-standard pattern");
     modalProvProb.textContent = `${record.province_prob || 0}%`;
-    modalBoxText.textContent = record.char_box_text || "(None)";
-    modalCtcText.textContent = record.ctc_text || "(None)";
+    modalBoxText.textContent = record.char_box_text || `(${t("none", "None")})`;
+    modalCtcText.textContent = record.ctc_text || `(${t("none", "None")})`;
     modalTotalLatency.textContent = `${record.total_latency_ms || 0} ms`;
 
-    // Handle Image Switcher Tabs
     tabCropPlate.classList.add("active");
     tabCropScene.classList.remove("active");
-
-    if (record.raw_image) {
-      tabCropScene.style.display = "inline-block";
-    } else {
-      tabCropScene.style.display = "none";
-    }
+    tabCropScene.style.display = record.raw_image ? "inline-block" : "none";
 
     if (record.thumbnail) {
       modalPlateImg.src = record.thumbnail;
@@ -435,7 +372,7 @@ document.addEventListener("DOMContentLoaded", () => {
       modalPlateImg.style.display = "none";
     }
 
-    // Render Latency Waterfall Blocks & Chips
+    // Latency waterfall
     const lat = record.model_latencies || {};
     const total = Math.max(1, record.total_latency_ms || 1);
     const m1 = lat.m1_ms || 0;
@@ -444,186 +381,56 @@ document.addEventListener("DOMContentLoaded", () => {
     const m3 = lat.m3_ms || (lat.m3_ocr_ms || 0) + (lat.m3_prov_ms || 0);
 
     modalLatencyBars.innerHTML = `
-      <div style="width: ${(m1 / total) * 100}%; background: #38bdf8;" title="Model 1 (Plate Det): ${m1}ms"></div>
-      <div style="width: ${(countryMs / total) * 100}%; background: #06b6d4;" title="Country Cls: ${countryMs}ms"></div>
-      <div style="width: ${(m2 / total) * 100}%; background: #f59e0b;" title="Model 2 (Warp/Layout): ${m2}ms"></div>
-      <div style="width: ${(m3 / total) * 100}%; background: #a855f7;" title="Model 3 (OCR & Province): ${m3}ms"></div>
-    `;
+      <div style="width: ${(m1 / total) * 100}%; background: #38bdf8;" title="${t("lat_m1", "Plate det")}: ${m1}ms"></div>
+      <div style="width: ${(countryMs / total) * 100}%; background: #06b6d4;" title="${t("lat_country", "Country")}: ${countryMs}ms"></div>
+      <div style="width: ${(m2 / total) * 100}%; background: #f59e0b;" title="${t("lat_m2", "Zone split")}: ${m2}ms"></div>
+      <div style="width: ${(m3 / total) * 100}%; background: #a78bfa;" title="${t("lat_m3", "Recognition")}: ${m3}ms"></div>`;
 
-    if (modalLatencyChips) {
-      modalLatencyChips.innerHTML = `
-        <span style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 4px; padding: 2px 8px;">M1 Det: <b>${m1}ms</b></span>
-        <span style="background: rgba(6, 182, 212, 0.15); color: #06b6d4; border: 1px solid rgba(6, 182, 212, 0.3); border-radius: 4px; padding: 2px 8px;">Country: <b>${countryMs}ms</b></span>
-        <span style="background: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 4px; padding: 2px 8px;">M2 Warp: <b>${m2}ms</b></span>
-        <span style="background: rgba(168, 85, 247, 0.15); color: #a855f7; border: 1px solid rgba(168, 85, 247, 0.3); border-radius: 4px; padding: 2px 8px;">M3 Recog: <b>${m3}ms</b></span>
-      `;
-    }
+    modalLatencyChips.innerHTML = `
+      <span class="lat-chip" style="--c: 56, 189, 248;">${t("lat_m1", "Plate det")} <b>${m1}ms</b></span>
+      <span class="lat-chip" style="--c: 6, 182, 212;">${t("lat_country", "Country")} <b>${countryMs}ms</b></span>
+      <span class="lat-chip" style="--c: 245, 158, 11;">${t("lat_m2", "Zone split")} <b>${m2}ms</b></span>
+      <span class="lat-chip" style="--c: 167, 139, 250;">${t("lat_m3", "Recognition")} <b>${m3}ms</b></span>`;
 
     histModal.style.display = "flex";
   }
 
-  // Modal Image Tabs click handlers
   tabCropPlate.addEventListener("click", () => {
     tabCropPlate.classList.add("active");
     tabCropScene.classList.remove("active");
     activeModalImageType = "plate";
-    if (activeModalRecord && activeModalRecord.thumbnail) {
-      modalPlateImg.src = activeModalRecord.thumbnail;
-    }
+    if (activeModalRecord && activeModalRecord.thumbnail) modalPlateImg.src = activeModalRecord.thumbnail;
   });
 
   tabCropScene.addEventListener("click", () => {
     tabCropScene.classList.add("active");
     tabCropPlate.classList.remove("active");
     activeModalImageType = "scene";
-    if (activeModalRecord && activeModalRecord.raw_image) {
-      modalPlateImg.src = activeModalRecord.raw_image;
-    }
+    if (activeModalRecord && activeModalRecord.raw_image) modalPlateImg.src = activeModalRecord.raw_image;
   });
 
-  // Clicking image in inspection modal opens Lightbox Zoom!
   modalImgBox.addEventListener("click", () => {
-    if (!activeModalRecord) return;
+    if (!activeModalRecord || !window.LPRViewer) return;
     const isPlate = activeModalImageType === "plate";
-    const src = isPlate ? (activeModalRecord.thumbnail || activeModalRecord.raw_image) : (activeModalRecord.raw_image || activeModalRecord.thumbnail);
-    const title = `${activeModalRecord.plate_text} (${isPlate ? "Plate Crop" : "Full Vehicle Scene"})`;
-    const subtitle = `${activeModalRecord.timestamp} • ${activeModalRecord.country} • ${activeModalRecord.province || ""}`;
-    openLightbox(src, title, subtitle);
+    const src = isPlate
+      ? (activeModalRecord.thumbnail || activeModalRecord.raw_image)
+      : (activeModalRecord.raw_image || activeModalRecord.thumbnail);
+    LPRViewer.open({
+      src,
+      title: `${activeModalRecord.plate_text} (${isPlate ? t("tab_plate_img", "Plate image") : t("tab_scene_img", "Full scene")})`,
+      subtitle: `${activeModalRecord.timestamp} • ${activeModalRecord.country === "Laos" ? t("country_lao", "Lao") : t("country_th", "Thai")} • ${activeModalRecord.province || ""}`,
+    });
   });
 
-  function closeModal() {
-    histModal.style.display = "none";
-  }
-
+  function closeModal() { histModal.style.display = "none"; }
   btnCloseModal.addEventListener("click", closeModal);
-  histModal.addEventListener("click", (e) => {
-    if (e.target === histModal) closeModal();
-  });
+  histModal.addEventListener("click", (e) => { if (e.target === histModal) closeModal(); });
 
-  // --- Lightbox Pan & Zoom Controller ---
-  function updateLightboxTransform() {
-    lightboxImg.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`;
-    lblZoomLevel.textContent = `${Math.round(zoomLevel * 100)}%`;
-    if (zoomLevel > 1.05) {
-      lightboxBody.classList.add("zoomed");
-    } else {
-      lightboxBody.classList.remove("zoomed");
-    }
-  }
-
-  function openLightbox(src, title, subtitle) {
-    if (!src) return;
-    lightboxImg.src = src;
-    lightboxTitle.textContent = title || "Image Inspection";
-    lightboxSubtitle.textContent = subtitle || "";
-    zoomLevel = 1.0;
-    panX = 0;
-    panY = 0;
-    updateLightboxTransform();
-    lightboxModal.style.display = "flex";
-  }
-
-  function closeLightbox() {
-    lightboxModal.style.display = "none";
-    zoomLevel = 1.0;
-    panX = 0;
-    panY = 0;
-    updateLightboxTransform();
-  }
-
-  btnCloseLightbox.addEventListener("click", closeLightbox);
-  lightboxModal.addEventListener("click", (e) => {
-    if (e.target === lightboxModal) closeLightbox();
-  });
-
-  btnZoomIn.addEventListener("click", () => {
-    zoomLevel = Math.min(4.0, zoomLevel + 0.3);
-    updateLightboxTransform();
-  });
-
-  btnZoomOut.addEventListener("click", () => {
-    zoomLevel = Math.max(0.4, zoomLevel - 0.3);
-    if (zoomLevel <= 1.0) {
-      panX = 0;
-      panY = 0;
-    }
-    updateLightboxTransform();
-  });
-
-  btnZoomReset.addEventListener("click", () => {
-    zoomLevel = 1.0;
-    panX = 0;
-    panY = 0;
-    updateLightboxTransform();
-  });
-
-  btnZoomFit.addEventListener("click", () => {
-    zoomLevel = 1.0;
-    panX = 0;
-    panY = 0;
-    updateLightboxTransform();
-  });
-
-  // Mouse wheel zoom inside lightbox
-  lightboxBody.addEventListener("wheel", (e) => {
-    e.preventDefault();
-    const delta = e.deltaY < 0 ? 0.2 : -0.2;
-    zoomLevel = Math.max(0.4, Math.min(4.5, zoomLevel + delta));
-    if (zoomLevel <= 1.0) {
-      panX = 0;
-      panY = 0;
-    }
-    updateLightboxTransform();
-  }, { passive: false });
-
-  // Click image to toggle zoom (1x <-> 2.2x)
-  lightboxImg.addEventListener("click", (e) => {
-    e.stopPropagation();
-    if (zoomLevel > 1.05) {
-      zoomLevel = 1.0;
-      panX = 0;
-      panY = 0;
-    } else {
-      zoomLevel = 2.2;
-    }
-    updateLightboxTransform();
-  });
-
-  // Pan dragging when zoomed
-  lightboxBody.addEventListener("mousedown", (e) => {
-    if (zoomLevel <= 1.05) return;
-    isDragging = true;
-    dragStartX = e.clientX - panX;
-    dragStartY = e.clientY - panY;
-    lightboxBody.classList.add("grabbing");
-  });
-
-  window.addEventListener("mousemove", (e) => {
-    if (!isDragging) return;
-    panX = e.clientX - dragStartX;
-    panY = e.clientY - dragStartY;
-    updateLightboxTransform();
-  });
-
-  window.addEventListener("mouseup", () => {
-    if (isDragging) {
-      isDragging = false;
-      lightboxBody.classList.remove("grabbing");
-    }
-  });
-
-  // Global ESC key listener
   window.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") {
-      if (lightboxModal.style.display === "flex") {
-        closeLightbox();
-      } else if (histModal.style.display === "flex") {
-        closeModal();
-      }
-    }
+    if (e.key === "Escape" && histModal.style.display === "flex") closeModal();
   });
 
-  // Filter Event Handlers
+  // --- Filters ---
   filterDateQuick.addEventListener("change", () => {
     if (filterDateQuick.value === "custom") {
       customDateWrap.style.display = "inline-flex";
@@ -635,32 +442,20 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  btnApplyFilter.addEventListener("click", () => {
-    currentPage = 1;
-    loadStats();
-    loadHistory();
-  });
-
+  btnApplyFilter.addEventListener("click", () => { currentPage = 1; loadStats(); loadHistory(); });
   filterSearch.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      currentPage = 1;
-      loadHistory();
-    }
+    if (e.key === "Enter") { currentPage = 1; loadHistory(); }
   });
 
   // Sorting
-  document.querySelectorAll(".hist-table th.sortable").forEach((th) => {
-    th.addEventListener("click", () => {
-      const field = th.getAttribute("data-sort");
-      if (sortBy === field) {
-        sortOrder = sortOrder === "desc" ? "asc" : "desc";
-      } else {
-        sortBy = field;
-        sortOrder = "desc";
-      }
-      updateSortIcons();
-      loadHistory();
-    });
+  document.addEventListener("click", (e) => {
+    const th = e.target.closest("th.sortable");
+    if (!th) return;
+    const field = th.getAttribute("data-sort");
+    if (sortBy === field) sortOrder = sortOrder === "desc" ? "asc" : "desc";
+    else { sortBy = field; sortOrder = "desc"; }
+    updateSortIcons();
+    loadHistory();
   });
 
   function updateSortIcons() {
@@ -675,54 +470,36 @@ document.addEventListener("DOMContentLoaded", () => {
       total_latency_ms: "sortIconLatency",
     };
     const activeIcon = document.getElementById(activeMap[sortBy]);
-    if (activeIcon) {
-      activeIcon.textContent = sortOrder === "desc" ? "▼" : "▲";
-    }
+    if (activeIcon) activeIcon.textContent = sortOrder === "desc" ? "▼" : "▲";
   }
 
-  // Pagination Controls
-  btnPrevPage.addEventListener("click", () => {
-    if (currentPage > 1) {
-      currentPage -= 1;
-      loadHistory();
-    }
-  });
+  // Pagination
+  btnPrevPage.addEventListener("click", () => { if (currentPage > 1) { currentPage -= 1; loadHistory(); } });
+  btnNextPage.addEventListener("click", () => { currentPage += 1; loadHistory(); });
 
-  btnNextPage.addEventListener("click", () => {
-    currentPage += 1;
-    loadHistory();
-  });
-
-  // Live Auto-Refresh Toggle
+  // Auto refresh
   btnToggleRefresh.addEventListener("click", () => {
     isLive = !isLive;
     if (isLive) {
       btnToggleRefresh.className = "btn-hist btn-hist-live active";
-      lblLive.textContent = "Live: ON (10s)";
+      lblLive.textContent = t("on", "ON");
       startAutoRefresh();
     } else {
       btnToggleRefresh.className = "btn-hist btn-hist-live";
-      lblLive.textContent = "Live: OFF";
+      lblLive.textContent = t("off", "OFF");
       stopAutoRefresh();
     }
   });
 
   function startAutoRefresh() {
     stopAutoRefresh();
-    autoRefreshTimer = setInterval(() => {
-      loadStats();
-      loadHistory();
-    }, 10000);
+    autoRefreshTimer = setInterval(() => { loadStats(); loadHistory(); }, 10000);
   }
-
   function stopAutoRefresh() {
-    if (autoRefreshTimer) {
-      clearInterval(autoRefreshTimer);
-      autoRefreshTimer = null;
-    }
+    if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; }
   }
 
-  // Export CSV
+  // Export
   btnExportCsv.addEventListener("click", () => {
     const dateRange = getDateRange();
     const params = new URLSearchParams({
@@ -732,42 +509,32 @@ document.addEventListener("DOMContentLoaded", () => {
       search: filterSearch.value.trim(),
     });
     window.location.href = `/api/history/export?${params.toString()}`;
+    toast(t("exporting", "Preparing export..."), "success");
   });
 
-  // Clear History
+  // Clear
   btnClearHistory.addEventListener("click", async () => {
-    if (!confirm("Are you sure you want to clear historical recognition records? This cannot be undone.")) {
-      return;
-    }
+    if (!confirm(t("confirm_clear", "Delete all history?"))) return;
     try {
       const res = await fetch("/api/history/clear", { method: "POST" });
       const data = await res.json();
-      alert(`Cleared ${data.deleted_records || 0} historical records.`);
+      toast(t("cleared", "Deleted {n} records").replace("{n}", data.deleted_records || 0), "success");
       currentPage = 1;
       loadStats();
       loadHistory();
     } catch (err) {
-      alert("Failed to clear history: " + err.message);
+      toast(t("clear_fail", "Failed to clear history") + ": " + err.message, "error");
     }
   });
 
-  function escapeHtml(str) {
-    if (!str) return "";
-    return String(str)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#039;");
-  }
-
+  // Source switcher
   async function setupSourceSwitcher() {
     if (btnSourceLocal && btnSourceBigQuery) {
       btnSourceLocal.addEventListener("click", () => {
         if (currentSource === "local") return;
         currentSource = "local";
-        btnSourceLocal.style.background = "var(--accent-cyan)";
-        btnSourceLocal.style.color = "#020617";
+        btnSourceLocal.style.background = "var(--accent-strong)";
+        btnSourceLocal.style.color = "#fff";
         btnSourceLocal.style.fontWeight = "600";
         btnSourceBigQuery.style.background = "transparent";
         btnSourceBigQuery.style.color = "var(--text-secondary)";
@@ -778,8 +545,8 @@ document.addEventListener("DOMContentLoaded", () => {
       btnSourceBigQuery.addEventListener("click", () => {
         if (currentSource === "cloud") return;
         currentSource = "cloud";
-        btnSourceBigQuery.style.background = "var(--accent-cyan)";
-        btnSourceBigQuery.style.color = "#020617";
+        btnSourceBigQuery.style.background = "var(--accent-strong)";
+        btnSourceBigQuery.style.color = "#fff";
         btnSourceBigQuery.style.fontWeight = "600";
         btnSourceLocal.style.background = "transparent";
         btnSourceLocal.style.color = "var(--text-secondary)";
@@ -788,30 +555,34 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     }
 
-    // Auto-detect GCP Cloud Run environment
     try {
       const resp = await fetch("/api/cloud/status");
       if (resp.ok) {
         const st = await resp.json();
         if (st.is_cloud_run) {
-          // On Cloud Run: hide Local SQLite switcher and force Cloud Firestore records
-          if (histSourceSwitcher) {
-            histSourceSwitcher.style.display = "none";
-          }
-          if (currentSource !== "cloud") {
-            currentSource = "cloud";
-            loadHistory();
-          }
+          if (histSourceSwitcher) histSourceSwitcher.style.display = "none";
+          if (currentSource !== "cloud") { currentSource = "cloud"; loadHistory(); }
         }
       }
-    } catch (e) {
-      console.warn("GCP deployment check warning:", e);
-    }
+    } catch (e) { /* not on cloud */ }
   }
 
-  // Initial Load
+  // Help (sidebar) — simple onboarding dialog for first-time users
+  const navHelpBtn = document.getElementById("navHelpBtn");
+  if (navHelpBtn) {
+    navHelpBtn.addEventListener("click", () => {
+      alert(t("help_text", "Quick guide"));
+    });
+  }
+
   setupSourceSwitcher();
   loadStats();
   loadHistory();
   startAutoRefresh();
+
+  // Re-render dynamic content when the user switches language
+  window.addEventListener("lpr:lang-changed", () => {
+    updateSortIcons();
+    loadHistory();
+  });
 });

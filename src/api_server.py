@@ -2810,6 +2810,57 @@ class LPRPipelineService:
         }
 
         self.latest_stream_detection = result_dict
+
+        # --- Confidence Gating: Model 1 × 2 × 3 consensus -------------------
+        # Both M2 (component split) and M3 (province read) below floor -> the
+        # final read is untrustworthy. M1 breaks the tie:
+        #   M1 high  -> keep the crop, flag LOW CONFIDENCE for review
+        #               (e.g. white plates with colored text M2/M3 struggle on)
+        #   M1 low   -> discard: false positive / not actually a plate
+        if getattr(cfg, "CONF_GATE_ENABLED", False):
+            try:
+                m2_score = max(char_conf or 0.0, prov_conf or 0.0)
+                m3_score = float(top_prov_prob or 0.0)
+                m2_ok = (m2_score > getattr(cfg, "CONF_GATE_M2_MIN", 0.50)) and (char_crop is not None)
+                m3_ok = (m3_score >= getattr(cfg, "CONF_GATE_M3_MIN", 0.30))
+
+                if not (m2_ok and m3_ok):
+                    if plate_conf >= getattr(cfg, "CONF_GATE_M1_KEEP", 0.60):
+                        result_dict["low_confidence"] = True
+                        result_dict["gating"] = {
+                            "decision": "keep_for_review",
+                            "m1": round(plate_conf, 3),
+                            "m2": round(m2_score, 3),
+                            "m3": round(m3_score, 3),
+                            "reason": "M2/M3 confidence low but M1 detected a plate clearly — saved for manual review",
+                        }
+                        result_dict["is_valid"] = False
+                        result_dict.setdefault("confidence", {})["overall"] = round(min(plate_conf, 0.5), 3)
+                        if record_history:
+                            try:
+                                thumb_g = rectified_plate if (rectified_plate is not None and rectified_plate.size > 0) else plate_crop
+                                save_recognition(result_dict, thumbnail_bgr=thumb_g, raw_bgr=raw_display, user=user)
+                            except Exception as e:
+                                logger.warning(f"Failed to record LOW-CONFIDENCE recognition: {e}")
+                        return result_dict
+                    else:
+                        return {
+                            "detected": False,
+                            "message": "Plate candidates rejected by confidence gating (M1/M2/M3 all low)",
+                            "gating": {
+                                "decision": "discard",
+                                "m1": round(plate_conf, 3),
+                                "m2": round(m2_score, 3),
+                                "m3": round(m3_score, 3),
+                                "reason": "All three models lack confidence — likely not a plate or unreadable",
+                            },
+                            "timing": result_dict.get("timing", {}),
+                            "raw_preview": mat_to_base64(preview_bgr),
+                            "debug": None,
+                        }
+            except Exception as e:
+                logger.warning(f"Confidence gating skipped due to error: {e}")
+
         # Automatically record to recognition history (for static uploads / standalone calls)
         if record_history:
             try:
@@ -2881,6 +2932,8 @@ def api_health():
         "service": "Multi-Country (Thai & Laos) LPR Recognition Engine",
         "device": str(cfg.DEVICE),
         "debug_mode": cfg.DEBUG_MODE,
+        "models_loaded": 9,
+        "models_total": 9,
         "models": {
             "model_1": f"{cfg.ACTIVE_MODEL_1_PATH.name} (Plate Detection)",
             "model_1_5": "country_classifier.pth (Thai vs Laos Classifier)",
