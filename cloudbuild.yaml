@@ -15,10 +15,9 @@
 
 substitutions:
   _REGION: asia-southeast1
-  _AR_REPO: lpr-repo
-  _IMAGE_NAME: thai-lpr-api
+  _AR_REPO: cloud-run-source-deploy
+  _IMAGE_NAME: thai-license-plate-recognition-api-old/thai-lpr-api
   _WEIGHTS_BUCKET: lpr-weight
-  _CLOUD_RUN_SERVICE: thai-lpr-api
 
 steps:
   # ---------------------------------------------------------------
@@ -64,27 +63,8 @@ steps:
       - push
       - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:latest
 
-  # ---------------------------------------------------------------
-  # 4. Deploy to Cloud Run (matches GPC_Powershell.txt settings).
-  # ---------------------------------------------------------------
-  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
-    entrypoint: gcloud
-    args:
-      - run
-      - deploy
-      - ${_CLOUD_RUN_SERVICE}
-      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:$COMMIT_SHA
-      - --region=${_REGION}
-      - --platform=managed
-      - --allow-unauthenticated
-      - --cpu=2
-      - --memory=2Gi
-      - --concurrency=8
-      - --timeout=60s
-      - --min-instances=0
-      - --max-instances=1
-      - --cpu-throttling
-      - --port=8080
+# NOTE: No Cloud Run deploy step here — Cloud Run's continuous deployment
+# (the trigger this file is wired to) deploys the built image itself.
 
 images:
   - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:$COMMIT_SHA
@@ -110,13 +90,6 @@ options:
 #          --format='value(projectNumber)')@cloudbuild.gserviceaccount.com" \
 #        --role=roles/artifactregistry.writer
 #
-# 4. Grant the Cloud Build SA permission to deploy to Cloud Run (the deploy
-#    step in step 4 of the pipeline needs this):
-#      gcloud projects add-iam-policy-binding lpr-car-plate \
-#        --member="serviceAccount:$(gcloud projects describe lpr-car-plate \
-#          --format='value(projectNumber)')@cloudbuild.gserviceaccount.com" \
-#        --role=roles/run.admin
-#      (repeat with --role=roles/iam.serviceAccountUser)
 #
 # 4. Create the trigger: Cloud Build -> Triggers -> Create
 #      Event: Push to branch "main"
