@@ -1,0 +1,32 @@
+# weights-baked.txt
+#
+# The 19 production weight/mapping files baked into the Docker image
+# (mirrors deploy/upload_weights_to_gcs.sh). ~285 MB total.
+#
+# The actual image filtering is done by .dockerignore (whitelist mode):
+#   COPY weights/ ./weights/  in the Dockerfile only sees these files,
+#   because .dockerignore excludes everything under weights/ EXCEPT this list.
+#
+# If you add a new production model file:
+#   1. Add it to .dockerignore whitelist section
+#   2. Add it to deploy/upload_weights_to_gcs.sh (for the GCS fallback copy)
+#   3. (Optional) add it here for documentation
+char_classifier_map.json
+char_classifier_map_lao.json
+character_box_detector_dfine_nano_v2.pt
+character_classifier.pth
+character_classifier_lao.pth
+component_detector_picodet_s_v2.pt
+country_classifier.pth
+digit_classifier.pth
+int_to_char.json
+int_to_char_lao.json
+ocr_model.pth
+plate_character_detector.pt
+plate_corner_regressor.pth
+plate_detector_picodet_s_v2.pt
+province_abbr_map.json
+province_map.json
+province_map_lao.json
+province_model_grayscale_lao.pth
+province_model_grayscale_thai.pth

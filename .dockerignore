@@ -1,7 +1,16 @@
-# Git & Env
+# Docker build context — WHITELIST MODE
+# Everything not explicitly whitelisted below is EXCLUDED from the build
+# context. This is what lets `COPY weights/ ./weights/` bake ONLY the 19
+# production files (~285 MB) into the image, while the local weights/ dir
+# holds ~6 GB of experimental checkpoints (kept out of the build payload).
+#
+# Security: service account key stays excluded (see explicit rule at bottom).
+
+# ============================================================
+# Global excludes — heavy/secret/sensitive, NEVER in the image
+# ============================================================
 .git
 .gitignore
-.dockerignore
 .env
 .venv
 env/
@@ -12,13 +21,10 @@ __pycache__/
 *.so
 .DS_Store
 Thumbs.db
-
-# IDE
 .vscode/
 .idea/
 
-# Root models & dataset artifacts
-*.pt
+# Datasets & training artifacts (huge, not needed at runtime)
 datasets/
 yolo_datasets/
 crops_all/
@@ -29,44 +35,41 @@ yolo_train_runs/
 CarPlateDetect_DATASETs/
 data/
 scratch/
-
-# Debug, Logs & Documentation
 debug_api/
 debug_images/
-test_evaluation_results.csv
 *.log
+*.db
+*.sqlite
+
+# Docs & personal files
 README.md
 presentation_briefing.md
 RESUME.docx
 rules.txt
+test_evaluation_results.csv
 
-# Weights: Exclude bulky experimental & unused model checkpoints
-# Saves ~1.2GB for lightning-fast Cloud Run cold-starts & lean container push
-weights/*.lock
-weights/*.download*
-weights/*backup*
-weights/last.pt
-weights/best_epoch_*.pt
-weights/*obb*
-weights/*rtdetr*
-weights/component_detector_rfdetr*
-weights/plate_detector_*rfdetr*
-weights/character_box_detector_rfdetr_small*
-weights/plate_detector_lao_rfdetr*
-weights/Libre*
-weights/*dfine_small*
-weights/*picodet*
-weights/plate_polygon_detector*
-weights/plate_quad_detector*
-weights/character_box_detector.pt
-weights/component_detector.pt
-weights/plate_character_detector.pt
-weights/province_detector_yolo_*
-weights/digit_classifier.pth
-weights/libre_yolov9_t.onnx
-weights/province_model.pth
-weights/province_model_lao.pth
-weights/province_model_resnet34_grayscale_thai.pth
+# ---- Weights: blacklist everything, then whitelist the 19 production files ----
+weights/*
+!weights/char_classifier_map.json
+!weights/char_classifier_map_lao.json
+!weights/character_box_detector_dfine_nano_v2.pt
+!weights/character_classifier.pth
+!weights/character_classifier_lao.pth
+!weights/component_detector_picodet_s_v2.pt
+!weights/country_classifier.pth
+!weights/digit_classifier.pth
+!weights/int_to_char.json
+!weights/int_to_char_lao.json
+!weights/ocr_model.pth
+!weights/plate_character_detector.pt
+!weights/plate_corner_regressor.pth
+!weights/plate_detector_picodet_s_v2.pt
+!weights/province_abbr_map.json
+!weights/province_map.json
+!weights/province_map_lao.json
+!weights/province_model_grayscale_lao.pth
+!weights/province_model_grayscale_thai.pth
 
-# Security: Never bake private service account keys into image
+# Security: never bake the private service account key into the image
 lpr-car-plate-e4c1f71338f3.json
+*.json.key
