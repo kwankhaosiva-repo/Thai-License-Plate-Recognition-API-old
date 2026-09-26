@@ -21,6 +21,7 @@ The entire pipeline is built with **100% commercially permissive architectures (
 - [Configuration Guide (`src/config.py`)](#-configuration-guide)
 - [Google Cloud Platform Integration (Firestore & BigQuery)](#-google-cloud-platform-integration-firestore--bigquery)
 - [Training Pipeline](#-unified-candidate-training-pipeline)
+- [V2 Recognition Retrain Pipeline](#-v2-recognition-retrain-pipeline-trainserve-distribution-match--leak-free-split)
 - [Benchmarking Suite](#-automated-benchmarking-suite)
 - [Cross-Platform C# (.NET) Integration](#-cross-platform-c-deployment-net)
 - [License Plate Standards & DLT Validation](#-license-plate-pattern-standards--validation)
@@ -380,6 +381,7 @@ python src/train_rfdetr_nano_lao_plate.py  --epochs 30 --export-onnx  # Lao: Lao
 | `--patience` | `12` | Early stopping threshold: stops if validation loss fails to improve for $N$ epochs |
 | `--device` | `mps` | Compute device: `mps` (Apple Silicon GPU), `cuda`, or `cpu` |
 | `--no-onnx` | `False` | Skip automatic standalone ONNX export |
+| `--data-dir` / `--tag` / `--save-name` | `None` | Classifier & province trainers: point at any split root and version output weights (`*_v2.pth`) without overwriting production weights |
 
 > [!NOTE]
 > **Hardware Acceleration & Weights Isolation:**
@@ -397,7 +399,44 @@ python src/balance_and_augment_split_dataset.py
 
 # 2. Train 50-Class MobileNetV2 with Cosine Annealing (35 Epochs -> 99.58% Val Top-1)
 python src/train_character_classifier.py --epochs 35 --batch-size 64
+
+# 3. Train on a custom split directory and version the output weights (won't overwrite the original)
+python src/train_character_classifier.py --data-dir datasets/Thai/recognition_v2/char_crops_v2 --tag v2
 ```
+
+### 🆕 V2 Recognition Retrain Pipeline (Train/Serve Distribution Match + Leak-Free Split)
+
+The v2 pipeline fixes the two root causes of production mis-reads: **train/serve crop mismatch** and **split leakage**.
+
+| Step | Script | What it does |
+| :--- | :--- | :--- |
+| **Step 1 — Extraction** | `src/extract_recognition_crops_v2.py` | Re-extracts province / character crops with the **exact serve-time crop rules** (`api_server.py` insets, padding, min-y gating) so training crops are the same distribution as production crops. Sources: the v5i YOLO11 province dataset and the character-box dataset, joined via `thai_character_crops/metadata.csv`. Output: `datasets/Thai/recognition_v2/` with `manifest.csv` (full provenance + label per crop) and `rejected.csv` (exact rejection reason per crop). |
+| **Step 2 — Leak-Free Split** | `src/split_recognition_dataset_v2.py` | Audits found real leakage in the old splits (same capture second in train & valid; byte-identical province crops; per-crop random assignment). The v2 splitter assigns **per source image** (`key` column), greedy stratified rarest-first, seeded & deterministic — all crops from one plate land in exactly one split. `train/`/`valid/` are symlinks into `all/` (zero data duplication). |
+| **Step 3 — Curation** | `src/curate_recognition_v2.py` | Safe label corrections: operate on the **real file** in `all/` and update `manifest.csv` in the same step (never move/delete through train/valid symlinks). Subcommands: `find`, `move --to <class>`, `delete --yes`, `restore` (from `plate_crops_v2` / `char_row_crops_v2` originals). Every write takes a timestamped manifest backup first. |
+
+```bash
+# 1. Extract crops with serve-identical rules (Step 1)
+python src/extract_recognition_crops_v2.py
+
+# 2. Build a leak-free, source-image-grouped split (Step 2)
+python src/split_recognition_dataset_v2.py --task all --seed 42 --valid-ratio 0.2
+
+# 3. Audit / curate label errors safely (Step 3)
+python src/curate_recognition_v2.py find --name <partial-filename>
+python src/curate_recognition_v2.py move --name <file> --to 32_พังงา   # province class (or bare char, e.g. --to ฑ)
+python src/curate_recognition_v2.py delete --name <file> --yes
+python src/curate_recognition_v2.py restore --name <file>
+
+# 4. Retrain on the v2 dataset (tag keeps old weights intact)
+python src/train_character_classifier.py --data-dir datasets/Thai/recognition_v2/char_crops_v2 --tag v2
+python src/train_grayscale_province_thai.py --data-dir datasets/Thai/recognition_v2/province_crops_v2 --tag v2
+```
+
+> [!TIP]
+> **Versioned weights without overwriting:** both trainer scripts now accept
+> `--tag v2` (writes `character_classifier_v2.pth` / `province_model_grayscale_thai_v2.pth`)
+> or an explicit `--save-name`. Combined with `--data-dir` you can train a new
+> variant on any split root while keeping the production weights untouched.
 
 ---
 

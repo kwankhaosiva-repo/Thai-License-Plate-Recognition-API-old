@@ -117,11 +117,32 @@ def evaluate(model, loader, device):
     return val_loss / val_total, val_correct_1 / val_total, val_correct_3 / val_total
 
 
-def train_character_classifier(epochs=15, batch_size=64, lr=3e-4):
+def train_character_classifier(
+    epochs=15,
+    batch_size=64,
+    lr=3e-4,
+    data_dir=None,
+    save_name=None,
+    tag=None,
+):
+    if data_dir is not None:
+        raw_dir = Path(data_dir)
+        splits_dir = raw_dir / "splits" if (raw_dir / "splits").is_dir() else raw_dir
+    else:
+        splits_dir = SPLITS_DIR
+
+    if save_name is not None:
+        model_save_path = WEIGHTS_DIR / save_name
+    elif tag is not None:
+        model_save_path = WEIGHTS_DIR / f"character_classifier_{tag}.pth"
+    else:
+        model_save_path = MODEL_SAVE_PATH
+
     print(f"\n=======================================================")
     print(f"--- Training Character Classifier (MobileNetV2 Balanced) ---")
     print(f"Device: {DEVICE}")
-    print(f"Dataset Splits: {SPLITS_DIR}")
+    print(f"Dataset Splits: {splits_dir}")
+    print(f"Output Weights: {model_save_path}")
     print(f"Epochs: {epochs}, Batch Size: {batch_size}, LR: {lr}")
     print(f"=======================================================\n")
 
@@ -150,8 +171,8 @@ def train_character_classifier(epochs=15, batch_size=64, lr=3e-4):
     ])
 
     # 3. Datasets
-    train_ds = CharacterDataset(SPLITS_DIR / "train", class_to_idx, transform=train_tf)
-    val_ds = CharacterDataset(SPLITS_DIR / "valid", class_to_idx, transform=val_tf)
+    train_ds = CharacterDataset(splits_dir / "train", class_to_idx, transform=train_tf)
+    val_ds = CharacterDataset(splits_dir / "valid", class_to_idx, transform=val_tf)
 
     print(f"Loaded: Train = {len(train_ds)} samples, Valid = {len(val_ds)} samples")
 
@@ -226,7 +247,7 @@ def train_character_classifier(epochs=15, batch_size=64, lr=3e-4):
                 "best_acc_top1": best_val_top1,
                 "best_acc_top3": best_val_top3,
                 "epoch": best_epoch,
-            }, str(MODEL_SAVE_PATH))
+            }, str(model_save_path))
             print(f"   --> New Best Checkpoint saved! (Val Top-1: {val_top1*100:.2f}%, Top-3: {val_top3*100:.2f}%)")
 
     print(f"\n=======================================================")
@@ -234,16 +255,26 @@ def train_character_classifier(epochs=15, batch_size=64, lr=3e-4):
     print(f"Best Epoch: {best_epoch}")
     print(f"Best Validation Top-1 Accuracy: {best_val_top1*100:.2f}%")
     print(f"Best Validation Top-3 Accuracy: {best_val_top3*100:.2f}%")
-    print(f"Saved weights to: {MODEL_SAVE_PATH}")
+    print(f"Saved weights to: {model_save_path}")
     print(f"=======================================================\n")
 
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="Train MobileNetV2 Character Classifier (50 classes)")
     parser.add_argument("--epochs", type=int, default=15)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=3e-4)
+    parser.add_argument("--data-dir", type=str, default=None, help="Path to character dataset split root (default: thai_character_crops/splits)")
+    parser.add_argument("--save-name", type=str, default=None, help="Explicit filename to save in weights/ (e.g. character_classifier_v2.pth)")
+    parser.add_argument("--tag", type=str, default=None, help="Tag suffix for output weights (e.g. v2 -> character_classifier_v2.pth)")
     args = parser.parse_args()
 
-    train_character_classifier(epochs=args.epochs, batch_size=args.batch_size, lr=args.lr)
+    train_character_classifier(
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        lr=args.lr,
+        data_dir=args.data_dir,
+        save_name=args.save_name,
+        tag=args.tag,
+    )
