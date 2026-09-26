@@ -145,16 +145,22 @@ def evaluate(model, loader, device, top_k=5):
     return val_loss / val_total, val_correct_1 / val_total, val_correct_k / val_total
 
 
-def train_grayscale_thai(epochs=15, batch_size=32, lr=2e-4, backbone="resnet34", save_name=None):
-    if save_name is None:
-        save_name = f"province_model_{backbone}_grayscale_thai.pth" if backbone == "resnet34" else "province_model_grayscale_thai.pth"
-    model_save_path = WEIGHTS_DIR / save_name
+def train_grayscale_thai(epochs=15, batch_size=32, lr=2e-4, backbone="resnet34", data_dir=None, save_name=None, tag=None):
+    data_path = Path(data_dir) if data_dir is not None else DATA_DIR
+    if save_name is not None:
+        model_save_path = WEIGHTS_DIR / save_name
+    elif tag is not None:
+        base_name = f"province_model_{backbone}_grayscale_thai" if backbone == "resnet34" else "province_model_grayscale_thai"
+        model_save_path = WEIGHTS_DIR / f"{base_name}_{tag}.pth"
+    else:
+        model_save_path = WEIGHTS_DIR / (f"province_model_{backbone}_grayscale_thai.pth" if backbone == "resnet34" else "province_model_grayscale_thai.pth")
 
     print("=" * 70)
     print(f"🇹🇭 TRAINING THAI PROVINCE GRAYSCALE CLASSIFIER ({backbone.upper()})")
     print(f"  Architecture: {backbone.upper()} (Pretrained ImageNet-1K)")
     print(f"  Input Shape : (256, 80) Grayscale (Enhanced with Sharpness & Autocontrast)")
     print(f"  Device      : {DEVICE}")
+    print(f"  Dataset Dir : {data_path}")
     print(f"  Epochs      : {epochs} | Batch Size: {batch_size} | LR: {lr}")
     print(f"  Weights Dest: {model_save_path}")
     print("=" * 70)
@@ -168,9 +174,10 @@ def train_grayscale_thai(epochs=15, batch_size=32, lr=2e-4, backbone="resnet34",
     train_tf = get_grayscale_transforms(is_train=True)
     val_tf = get_grayscale_transforms(is_train=False)
 
-    train_ds = ThaiProvinceDataset(DATA_DIR / "train", class_to_idx, transform=train_tf)
-    val_ds = ThaiProvinceDataset(DATA_DIR / "valid", class_to_idx, transform=val_tf)
-    test_ds = ThaiProvinceDataset(DATA_DIR / "test", class_to_idx, transform=val_tf)
+    train_ds = ThaiProvinceDataset(data_path / "train", class_to_idx, transform=train_tf)
+    val_ds = ThaiProvinceDataset(data_path / "valid", class_to_idx, transform=val_tf)
+    test_path = data_path / "test"
+    test_ds = ThaiProvinceDataset(test_path, class_to_idx, transform=val_tf) if test_path.is_dir() else val_ds
 
     print(f"Dataset splits: Train={len(train_ds)}, Valid={len(val_ds)}, Test={len(test_ds)}")
 
@@ -253,7 +260,17 @@ if __name__ == "__main__":
     parser.add_argument("--batch", type=int, default=32, help="Batch size (default: 32)")
     parser.add_argument("--lr", type=float, default=2e-4, help="Learning rate (default: 2e-4)")
     parser.add_argument("--backbone", type=str, default="resnet34", choices=["resnet18", "resnet34"], help="Backbone architecture (default: resnet34)")
+    parser.add_argument("--data-dir", type=str, default=None, help="Path to province dataset split root (default: thai_province_crops)")
     parser.add_argument("--save-name", type=str, default=None, help="Custom filename to save weights in weights/ (default: auto)")
+    parser.add_argument("--tag", type=str, default=None, help="Tag suffix for output weights (e.g. v2 -> *_v2.pth)")
     args = parser.parse_args()
 
-    train_grayscale_thai(epochs=args.epochs, batch_size=args.batch, lr=args.lr, backbone=args.backbone, save_name=args.save_name)
+    train_grayscale_thai(
+        epochs=args.epochs,
+        batch_size=args.batch,
+        lr=args.lr,
+        backbone=args.backbone,
+        data_dir=args.data_dir,
+        save_name=args.save_name,
+        tag=args.tag,
+    )

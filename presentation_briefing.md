@@ -46,7 +46,7 @@
 | **Model 2 (Component Detector)** | **D-FINE-Nano**<br>(~18 ms CPU, 15 MB) | • RF-DETR-Small (~55 ms)<br>• PicoDet-S (~10 ms) | ทำหน้าที่แยกพื้นที่ระหว่าง `plate_char` (แถวตัวหนังสือ) และ `province` (แถวจังหวัดด้านล่าง) D-FINE-Nano ตัดขอบแบ่งโซนได้คมชัด ไม่กินพื้นที่ทับซ้อนกัน |
 | **Stage 3A (Char Localization)** | **RF-DETR-Base (Box)**<br>(~45 ms CPU, 122 MB .pt) | • **D-FINE-Small** (~35 ms, 165 MB)<br>• **D-FINE-Nano** (~16 ms, 15 MB)<br>• Connected Component Analysis | **ทำไมเลือก RF-DETR-Base?**<br>• ใช้ Multi-scale Deformable Attention ในการสแกนพื้นที่ตัวอักษรโดยตรงโดยไม่มีปัญหา Anchor Box Bias<br>• สามารถตรวจจับขอบเขตตัวอักษรที่ชิดกัน หรือตัวอักษรที่มีสระ/วรรณยุกต์ซ้อน และป้ายที่มีสกรูยึดเจาะทะลุได้อย่างคมชัดและแม่นยำสูงสุด |
 | **Model 3A (Text Recognition)** | **Hybrid Method A+C Dual-Engine**<br>• MobileNetV2 (50-Class Balanced Cls, **99.58% Top-1**)<br>• ResNet18-BiLSTM-CTC<br>• Autocontrast Normalization<br>• Spatial Gap Gating + DLT Syntax Guard | • Tesseract OCR<br>• EasyOCR<br>• 12-Epoch Imbalanced Classifier<br>• Blind Sequence Alignment | **ทำไมต้อง Balanced 50-Class + Method A+C Unified Fusion?**<br>• **Balanced Dataset:** ทำ Augmentation ปรับสมดุลทุกคลาสเป็น $\ge 400$ ตัวอย่าง/คลาส (รวม 29,385 ภาพ) พร้อมใส่ Photometric Shadow Gradients แก้ปัญหาตัวอักษรหายาก (`ผ`, `ณ`, `ฬ`) โดนทายสับสนเป็นตัวเลขทึบอย่าง `8`<br>• **Autocontrast Normalization:** ดึง Contrast ขยาย Dynamic Range ตัวอักษรในเงามืดก่อนเข้า Classifier<br>• **Method A+C Fusion:** ผสานความแม่นยำระดับ **99.58% Top-1 (99.89% Top-3)** ของ Classifier เข้ากับ CTC โดยมี **DLT Syntax Guard** ดักจับ Format ป้ายส่วนบุคคลที่เป็นไปไม่ได้ (เช่น `\d[พยัญชนะ]\d{4}`) |
-| **Model 3B (Province Classifier)** | **ResNet18-Grayscale**<br>(~5.0 ms CPU, 42.9 MB, input $256 \times 80$ ไทย / $256 \times 64$ ลาว) | • ResNet34 Grayscale ($256 \times 80$, 81.5 MB)<br>• ResNet34 RGB<br>• MobileNetV2 RGB | **ทำไมเลือก ResNet18 Grayscale?**<br>• ขนาดไฟล์เล็กลงเกือบ 50% (เหลือเพียง 42.9 MB) และประมวลผลเร็วมากบน CPU (~5 ms) เหมาะสำหรับการทำ Containerization บน Cloud Run<br>• ให้ความแม่นยำสูงถึง **99.46% Val Top-1** ครบทั้ง 77 จังหวัด (ลาว 18 จังหวัด: 99.56%) และทนทานต่อสภาพแสงสะท้อน แดดย้อน หรือเงามืด<br>• ⚠️ Serve ต้อง resize ตรงตามตอนเทรน: ไทย `GrayscaleSmartResize(256,80)` / ลาว `(256,64)` — pad ด้วยโทนพื้นหลังจริงไม่ใช่ดำ |
+| **Model 3B (Province Classifier)** | **ResNet18-Grayscale**<br>(~5.0 ms CPU, 42.9 MB, input $256 \times 80$ ไทย / $256 \times 64$ ลาว) | • ResNet34 Grayscale ($256 \times 80$, 81.5 MB)<br>• ResNet34 RGB<br>• MobileNetV2 RGB | **ทำไมเลือก ResNet18 Grayscale?**<br>• ขนาดไฟล์เล็กลงเกือบ 50% (เหลือเพียง 42.9 MB) และประมวลผลเร็วมากบน CPU (~5 ms) เหมาะสำหรับการทำ Containerization บน Cloud Run<br>• ให้ความแม่นยำสูงถึง **99.46% Val Top-1** ครบทั้ง 77 จังหวัด (ลาว 18 จังหวัด: 99.56%) และทนทานต่อสภาพแสงสะท้อน แดดย้อน หรือเงามืด<br>• ⚠️ Serve ต้อง resize ตรงตามตอนเทรน: ไทย `GrayscaleSmartResize(256,80)` / ลาว `(256,64)` — pad ด้วยโทนพื้นหลังจริงไม่ใช่ดำ<br>• Trainer (`train_grayscale_province_thai.py`) รองรับ `--backbone resnet18|resnet34` (default: resnet34) พร้อม `--data-dir` / `--tag` / `--save-name` สำหรับเทรนจาก dataset v2 แบบไม่ทับ weights เดิม |
 
 ---
 
@@ -163,6 +163,33 @@
 
 ---
 
+## 5.5 🆕 V2 Recognition Retrain Pipeline (จุดขายด้าน Data Engineering)
+
+ปัญหาที่พบในโมเดลรุ่นเดิมไม่ได้อยู่ที่สถาปัตยกรรม แต่อยู่ที่ **ข้อมูล** 2 ประการ:
+
+1. **Train/Serve Crop Mismatch**: dataset เดิมสร้างจากกรอบที่คนวาดบน Roboflow แต่ production (`api_server.py`) ใช้กฎ crop ของตัวเอง (insets / padding / min-y gating) — กระจายข้อมูลต่างกัน ทำให้โมเดลจังหวัดอ่านป้ายจริงบนถนนพลาด
+2. **Split Leakage**: การตรวจสอบด้วยสคริปต์ audit พบ leakage จริง — ภาพจากวินาทีจับเดียวกัน (รถคันเดียวกันจากวิดีโอเดียวกัน) หลุดอยู่ทั้ง train และ valid, province crop ที่ byte-identical อยู่สองฝั่ง, และการสุ่มแบบ per-crop ทำให้ crop ของป้ายเดียวกันกระจายข้าม split — Validation accuracy เดิมจึงสูงเกินจริงและเปรียบเทียบกันไม่ได้
+
+### Pipeline 3 ขั้นตอน (v2 Recognition Retrain)
+
+```mermaid
+flowchart LR
+    A["Step 1: extract_recognition_crops_v2.py\n(crop ด้วยกฎ SERVE เป๊ะๆ\n+ manifest.csv provenance\n+ rejected.csv เหตุผลการตัด)"] --> B["Step 2: split_recognition_dataset_v2.py\n(แบ่ง split ระดับ SOURCE IMAGE\nleak-free + stratified + seeded\ntrain/valid = symlink ไม่ซ้ำข้อมูล)"]
+    B --> C["Step 3: curate_recognition_v2.py\n(แก้ label ปลอดภัย: find / move /\ndelete / restore + manifest backup\nทุกครั้งที่เขียน)"]
+    C --> D["Retrain ด้วย --data-dir ... --tag v2\n(ไม่ทับ weights production)"]
+```
+
+| ขั้นตอน | สคริปต์ | หลักการสำคัญ |
+| :--- | :--- | :--- |
+| **1. Extraction** | `src/extract_recognition_crops_v2.py` | Crop จากแหล่งข้อมูลที่มี label จริง (v5i YOLO11 province + character-box dataset join กับ `metadata.csv`) โดยใช้กฎ crop **บรรทัดเดียวกับ `api_server.py`** ทุกตัวเลข — training crops กับ serve crops เป็น distribution เดียวกัน |
+| **2. Leak-Free Split** | `src/split_recognition_dataset_v2.py` | แบ่ง split ที่ระดับ **ภาพต้นทาง** (คอลัมน์ `key`) — crop ทุกใบที่มาจากภาพเดียวกันอยู่ split เดียวกันหมด ใช้ Greedy Stratified (คลาสหายากก่อน, seed กำหนดได้, deterministic) `train/` `valid/` เป็น symlink เข้า `all/` จึงไม่มีการซ้ำซ้อนของไฟล์ |
+| **3. Curation** | `src/curate_recognition_v2.py` | แก้ label โดยจับ **ไฟล์จริงใน `all/`** พร้อมอัปเดต `manifest.csv` ใน step เดียว (ห้ามย้าย/ลบผ่าน symlink เพราะ manifest จะค้าง label เดิม) — มีคำสั่ง `find` / `move --to <class>` / `delete --yes` / `restore` และสำรอง manifest แบบ timestamped ทุกครั้ง |
+| **4. Retrain** | `train_character_classifier.py` / `train_grayscale_province_thai.py` | รองรับ `--data-dir` (ชี้ dataset ใหม่) และ `--tag v2` / `--save-name` (บันทึก weights เป็นไฟล์ใหม่) ทำให้เทรน variant ใหม่ได้โดย **production weights ไม่ถูกทับ** |
+
+> **จุดขาย:** ทีมงานสามารถตรวจสอบ (trace) ย้อนกลับจาก crop ใดๆ ไปยังภาพต้นทางได้ผ่าน `manifest.csv`, พิสูจน์ได้ว่า validation ไม่มี leakage, และแก้ label ได้อย่างปลอดภัยแบบ versioned — ความน่าเชื่อถือของเมตริกความแม่นยำจึงเทียบเคียงระดับ industrial ได้จริง
+
+---
+
 ## 6. ระบบ Real-Time Stream & Dynamic 5-Second Vehicle Session Aggregator
 - **Rain & Noise-Proof Motion Gating (0 ms Idle Latency):**
   - สตรีมวิดีโอผ่านการกรองแบบ Gaussian Blur ($15 \times 15$) + Background Subtraction (MOG2) + Morphological Opening ($5 \times 5$)
@@ -198,3 +225,29 @@
   - Character Recognition: **~98.5% Sequence Accuracy** (ด้วย Method A+C Spatial Fusion)
   - Province Classification: **99.20% Val Top-1** (ResNet18-Grayscale, 42.9 MB)
   - Average End-to-End Latency: **~75–95 ms บน CPU ทั่วไป**
+- ✅ **Traceable & Leak-Free Dataset Pipeline (v2)**: การ retrain รอบใหม่ใช้ pipeline ที่ crop ด้วยกฎ serve เดียวกัน, แบ่ง split แบบ leak-free ระดับ source image, และ curation ที่ sync กับ manifest เสมอ (ดูหัวข้อ 5.5)
+
+---
+
+## 9. 🧰 สรุป Tech Stack ที่ใช้ทั้งหมด (Technology Stack at a Glance)
+
+| หมวด | เทคโนโลยี | License | บทบาทในระบบ |
+| :--- | :--- | :--- | :--- |
+| **Web API** | FastAPI + Uvicorn | BSD-3 | REST microservice + Swagger docs + Web Dashboard |
+| | Pydantic, python-multipart, python-dotenv, PyJWT | MIT / BSD | Request validation, file upload, config, auth |
+| **ML Core** | PyTorch + TorchVision | BSD-3 | เทรน/เซิร์ฟโมเดลทุก stage (MPS / CUDA / CPU) |
+| | RF-DETR (`rfdetr[train]`) | Apache-2.0 | Char box detector (Stage 3A) + ทางเลือก Stage 1 |
+| | LibreYOLO (D-FINE / PicoDet / RT-DETRv2) | MIT | Plate + component detectors (Stage 1 / 2) |
+| | Ultralytics YOLO / RT-DETR | AGPL-3.0 (เฉพาะเครื่องมือเทรนเทียบ) | Benchmark candidates |
+| **Inference Runtime** | ONNX (Opset 18) + ONNX Runtime + onnxslim | MIT | Standalone export, cross-platform (Python + C# .NET) |
+| **Vision / Data** | OpenCV (`opencv-python-headless`) | Apache-2.0 | Homography warp, flip-and-detect, motion gating |
+| | NumPy / Pandas / scikit-learn | BSD-3 | Box math, imbalance analysis, metrics |
+| | Pillow | MIT-CM | Smart resize, canvas padding |
+| | editdistance / tqdm / requests | MIT | CTC evaluation, progress, data download |
+| **Cloud (GCP)** | Cloud Firestore | GCP ToS | Real-time document store (ประวัติ + base64 crop) |
+| | Cloud BigQuery | GCP ToS | ตาราง analytics / SQL reporting |
+| | Cloud Storage | GCP ToS | คลัง weights / artifacts |
+| **Deployment** | Docker + Google Cloud Run + Cloud Build | — | Containerized serverless deploy, `K_SERVICE` auto-detect |
+| **Dataset Engineering (v2)** | `extract_recognition_crops_v2.py` → `split_recognition_dataset_v2.py` → `curate_recognition_v2.py` | ในโปรเจกต์ | Serve-matched extraction, leak-free source-image split, manifest-synced curation (ดูหัวข้อ 5.5) |
+
+> **โครงสร้างโมเดลทั้งหมดเป็น permissive license**: ไม่มี AGPL ใน weights ที่ใช้จริง (D-FINE = MIT, RF-DETR = Apache-2.0, MobileNet/ResNet = BSD-3) ระบบจึงนำไปใช้เชิงพาณิชย์ได้ 100%
