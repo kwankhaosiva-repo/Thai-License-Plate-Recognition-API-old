@@ -22,6 +22,7 @@ The entire pipeline is built with **100% commercially permissive architectures (
 - [Google Cloud Platform Integration (Firestore & BigQuery)](#-google-cloud-platform-integration-firestore--bigquery)
 - [Training Pipeline](#-unified-candidate-training-pipeline)
 - [V2 Recognition Retrain Pipeline](#-v2-recognition-retrain-pipeline-trainserve-distribution-match--leak-free-split)
+- [Current Accuracy & Full Retrain Plan](#-current-accuracy-snapshot--full-retrain-plan-as-of-2026-09-26)
 - [Benchmarking Suite](#-automated-benchmarking-suite)
 - [Cross-Platform C# (.NET) Integration](#-cross-platform-c-deployment-net)
 - [License Plate Standards & DLT Validation](#-license-plate-pattern-standards--validation)
@@ -437,6 +438,155 @@ python src/train_grayscale_province_thai.py --data-dir datasets/Thai/recognition
 > `--tag v2` (writes `character_classifier_v2.pth` / `province_model_grayscale_thai_v2.pth`)
 > or an explicit `--save-name`. Combined with `--data-dir` you can train a new
 > variant on any split root while keeping the production weights untouched.
+
+---
+
+## 🎯 Current Accuracy Snapshot & Full Retrain Plan (as of 2026-09-26)
+
+> ⚠️ **อ่านก่อน:** ตัวเลขด้านล่างคือ **validation accuracy จาก checkpoint ที่ใช้งานอยู่จริง**
+> (`weights/*.pth`) ซึ่ง geometry/leakage audit (`docs/GEOMETRY_AUDIT_V2.md`) พบว่า
+> **split เก่ามี data leakage** (crop จากแผงเดียวกันหลุดทั้ง train/valid, byte-identical
+> province crops, synthetic augment ~70% ใน train) → ตัวเลขเดิมจึง **สูงเกินจริง**
+> (inflated) และใช้เทียบกับ v2 แบบตรงๆ ไม่ได้ หลัง retrain v2 เสร็จให้กลับมาแก้ตารางนี้
+> ด้วยตัวเลข leak-free ใหม่
+
+### ความแม่นยำปัจจุบัน (จาก checkpoint จริง — ก่อน v2 retrain)
+
+| Model | Weight File | Val Metric (เก่า, มี leakage) | สถานะ |
+| :--- | :--- | :--- | :--- |
+| Thai Char Cls (MobileNetV2, 50 cls) | `character_classifier.pth` | Top-1 **99.58%** / Top-3 99.89% (ep 9) | 🔁 รอ retrain v2 |
+| Thai Province (ResNet18 gray, 77 cls) | `province_model_grayscale_thai.pth` | Top-1 **99.46%** / Top-5 99.64% (ep 10) | 🔁 รอ retrain v2 |
+| Thai Province (ResNet34 gray) | `province_model_resnet34_grayscale_thai.pth` | Top-1 99.10% / Top-5 99.46% (ep 6) | 🔁 รอ retrain v2 |
+| Lao Char Cls (MobileNetV2, 30 cls) | `character_classifier_lao.pth` | Top-1 **99.56%** / Top-3 99.95% (ep 8) | ⚠️ เจอ leakage เล็กน้อย 4/2,043 valid crops (0.20%) จาก 4 source captures — retrain ได้ด้วย `--tag` |
+| Lao Province (ResNet18 gray, 18 cls) | `province_model_grayscale_lao.pth` | Top-1 **99.56%** / Top-3 99.78% (ep 5) | ⚠️ valid/test เป็น synthetic ~90% (synth จาก generator เดียวกับ train, ไม่ byte-identical) — retrain ได้แต่ตีความตัวเลขด้วยความระวัง |
+| Lao OCR Fallback (ResNet18+BiLSTM+CTC) | `ocr_model_lao.pth` (ใหม่) | — | 🆕 เทรนครั้งแรก — dataset leak-free (train∩val filename overlap = 0) |
+| Thai OCR CTC (ResNet18+BiLSTM) | `ocr_model.pth` | CER **0.1368** / Format-Valid 94.94% (ep 47) | 🔁 รอ retrain (train/serve autocontrast fix) |
+| Country Cls (MobileNetV3-S) | `country_classifier.pth` | Top-1 **99.82%** | ✅ ไม่ต้อง retrain |
+| Detector M1 / M2 / M3A-box | `*_v2.pt` | P/R วัดแยกใน `scratch/eval_m3a_*.py` | ✅ ไม่กระทบจาก leakage ชุด recognition |
+
+### 📈 ผล v3 Evaluation จริงบน Valid Sets (วัด 2026-09-27 ด้วย `scratch/eval_v3_all.py`)
+
+> ทุกตัวเลขด้านล่างคือการรัน eval **ใหม่ทั้งหมดบน valid/test split เท่านั้น** (ไม่ใช่ train-set metric)
+> ด้วย dataset class + transform + decode เดียวกับตอนเทรนทุกขั้น (autocontrast, GrayscaleSmartResize,
+> best_path_decode, format/validator) เพื่อให้ v3 vs production เทียบกันแบบ apples-to-apples
+> และไม่มี leakage ของ split เก่า สคริปต์เป็นแบบ read-only — ไม่เขียนทับ weights ใด ๆ
+
+| Model | v3 Weight | v3 ผลจริง (valid) | Production Weight | Production ผลจริง (valid) | สรุป |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| Thai Char Cls (50 cls) | `character_classifier_v3.pth` | Top-1 **89.09%** / Top-3 92.42% (n=541) | `character_classifier.pth` | Top-1 **99.45%** / Top-3 99.82% (n=541) | ⚠️ v3 ตก ~10 จุด — เพราะ v3 เทรนกับ split ใหม่แบบ grouped (ไม่มี leakage) ส่วน production จำ split เก่าได้ ตัวเลข production จึง inflated ให้ดูจาก Top-3 ที่ช่องว่างแคบลง และ v3 คือตัวเลขที่ซื่อสัตย์กว่าบนภาพใหม่ |
+| Thai Province R18 (77 cls) | `province_model_grayscale_thai_v3.pth` | Top-1 **99.68%** / Top-5 99.68% (n=627) | `province_model_grayscale_thai.pth` | Top-1 98.56% / Top-5 99.84% (n=627) | ✅ v3 ชนะชัดเจนบน leak-free valid |
+| Thai Province R34 (77 cls) | `province_model_resnet34_grayscale_thai_v3.pth` | Top-1 **99.84%** / Top-5 99.84% (n=627) | `province_model_resnet34_grayscale_thai.pth` | Top-1 98.88% / Top-5 100% (n=627) | ✅ v3 ชนะ — R34 เป็น best province model ปัจจุบัน |
+| Thai OCR CTC | `ocr_model_v3.pth` | CER **0.0893** / Fmt 98.17% (n=109) | `ocr_model.pth` | CER 0.0457 / Fmt 100% (n=109) | ⚠️ production ชนะบนชุดนี้ แต่ `ocr_model.pth` เคยเห็นภาพกลุ่มนี้ตอนเทรน (split เก่า leak) — v3 คือค่าที่คาดหวังได้จริงบน scene ใหม่ และ train/serve contract ตรงกันแน่นอน |
+| Lao Char Cls (30 cls) | `character_classifier_lao_v3.pth` | Top-1 **99.41%** / Top-3 99.85% (n=2,043) | `character_classifier_lao.pth` | Top-1 99.51% / Top-3 99.90% (n=2,043) | ➖ ใกล้เคียงกัน (ต่าง 0.1 จุด, 2 vs 4 ผิดจาก 2,043) — v3 ตรง serve contract (autocontrast cutoff=2) |
+| Lao Province (18 cls) | `province_model_grayscale_lao_v3.pth` | Top-1 **99.78%** valid / 99.11% test (n=450/450) | `province_model_grayscale_lao.pth` | Top-1 99.56% valid / 99.11% test (n=450/450) | ➖ เท่ากันเกือบสนิท — หมายเหตุ: valid/test ~90% synthetic จาก generator เดียวกับ train |
+| Lao OCR CTC (ใหม่) | `ocr_model_lao_v3.pth` | CER **0.0102** / Fmt 100% (n=1,138) | — (ไม่มี production) | — | 🆕 baseline แรกของ Lao OCR fallback — ผลดีมาก |
+
+**ข้อแนะนำการสลับ weights:** ปลอดภัยที่สุดคือสลับ Province R34 + Lao char/Lao OCR/Lao province เป็น v3 ทันที
+(ชนะหรือเสมอบน valid แบบ leak-free และ v3 ตรง serve contract) ส่วน Thai char + Thai OCR ควรเก็บ
+production ไว้ก่อนแล้วทดสอบ A/B กับภาพจริงนอก dataset ก่อนสลับ เพราะ v3 เทรนด้วยข้อมูลน้อยกว่ามาก
+(Thai OCR v3: 436 train plates เท่านั้น) — ตัวเลข valid ทั้งสองฝั่งของสองโมเดลนี้ไม่เทียบกันตรง ๆ ได้
+
+### ⚙️ สถานะ Config ปัจจุบัน (สลับ v3 → production แล้ว 2026-09-27)
+
+| Stage | `src/config.py` | ไฟล์ที่ serve อยู่ |
+| :--- | :--- | :--- |
+| Thai Char Cls | `CHAR_CLASSIFIER_THAI_FILENAME` | `character_classifier_v3.pth` |
+| Thai OCR | `OCR_FILENAME` | `ocr_model_v3.pth` |
+| Thai Province | `MODEL_3B_THAI_FILENAME` (+`USE_RESNET34_PROVINCE_THAI=True`) | `province_model_resnet34_grayscale_thai_v3.pth` |
+| Lao Char Cls | `CHAR_CLASS_LAO_PATH` | `character_classifier_lao_v3.pth` |
+| Lao Province | `MODEL_3B_LAO_FILENAME` | `province_model_grayscale_lao_v3.pth` |
+| Lao OCR | (ยังไม่ wire เข้า api_server) | `ocr_model_lao_v3.pth` รอ integration |
+
+> **Rollback:** เปลี่ยนชื่อไฟล์ใน config กลับเป็น `character_classifier.pth`,
+> `ocr_model.pth`, `province_model_grayscale_thai.pth` (และตั้ง `USE_RESNET34_PROVINCE_THAI=False`),
+> `character_classifier_lao.pth`, `province_model_grayscale_lao.pth` — weights เดิมทั้งหมดยังอยู่ใน `weights/` ครบ
+>
+> หมายเหตุ: `ACTIVE_PROV_MODEL_THAI_PATH` ถูกแก้ให้ใช้ `MODEL_3B_THAI_FILENAME` เป็น source of truth
+> (เดิม R34 flag ล้ำหน้าแล้วชี้ไฟล์ production ทำให้สลับ tag ไม่ได้)
+
+### 🔍 สาเหตุที่แท้จริงของ error บนภาพ serve (สรุป 2026-09-27)
+
+จากภาพจริง (บร 9797 → บร 59797, 2ขง 4910 → 2ขง4 910, province ผิดบางแผ่น) ไล่โค้ด + วัดข้อมูลแล้ว อันดับสาเหตุคือ:
+
+1. **Class imbalance รุนแรงในชุดเทรน (สาเหตุหลัก)** — Thai char v2 train: ตัวเลขมี ~180-214 crops/คลาส แต่ ง ฟ ธ ค ฐ น พ ป มี **1 crop เท่านั้น** (200:1); province: กรุงเทพ 470 เทียบจังหวัดเล็ก **1 crop** (470:1) → คลาส rare ถูกทายเพี้ยนเมื่อ crop serve ต่างจาก train เล็กน้อย (มุม/แสง/เบลอ)
+2. **Junk geometry boxes จาก M3A รอดเข้า classifier** — กล่องรูป dash "-" / เศษขอบป้าที่ถูกแปะด้วย NMS/merge ไม่หมด classifier มี **ไม่มีคลาส "-" (50 คลาส: เลข+พยัญชนะ)** จึงถูกบังคับทายเป็นเลข → ที่มาของ "5"/"4" เกินและเลขเยอะผิดรูปแบบ
+3. **ขนาด/คอนทราสต์ไม่ใช่สาเหตุหลัก** — train/serve contract (autocontrast, square-pad, 64×64) ตรงกันแล้วหลัง v2/v3 fix; ที่เหลือคือ domain gap ของภาพยาก (เบลอมาก/แสงสะท้อน) ซึ่งแก้ด้วยข้อมูล ไม่ใช่ preprocessor
+
+**แก้แล้วทันที (serve + harvest):** `filter_implausible_char_boxes()` ใน `src/api_server.py` —
+กรองกล่องที่เรขาคณิตเป็นตัวอักษรไม่ได้: (1) dash sliver = แบนกว้าง w/h>1.6 แต่หมึกกินแค่<45% ของความสูงกล่อง, (2) แถบขอบป้า = เต็มความสูง crop แตะขอบบน+ล่าง, (3) เศษเส้นย่อย = ต่ำกว่า 40% ของ median ความสูงตัวอักษรในแถว, (4) composite เหนียว = สูงกว่า 120% median และยังกว้าง (split ไม่ขาด)
+— เปิดใช้ทั้ง Thai (strict) และ Lao (rules 1-2 เพราะสระ/วรรณยุกต์ลาวเล็กจริง) วัดบน charbox val 100 ภาพ: box-count match GT 81.3% → **84.6%**, กล่องที่ตกทั้งหมด 5 จาก 91 ภาพ (ไม่มี false-drop ตัวอักษรจริง)
+
+**แผน v4 (เพิ่มข้อมูล แก้ที่ root cause):**
+- Harvest ด้วย `src/harvest_crops_generic.py` จากทุกแหล่งภาพที่มี (รถเต็ม/ป้าย) → เป้าหมาย: ทุกคลาสตัวอักษร ≥ 50 crops, ทุกจังหวัด ≥ 30 crops (คลาสที่มี 1 crop ตอนนี้คือความเสี่ยงหลัก)
+- จากนั้น balance ตอน *sampling* (WeightedRandomSampler ที่ trainer มีอยู่แล้ว) ไม่ใช่ copy รูปซ้ำ — copy ทำให้ overfit คลาสเล็กโดยไม่เพิ่มความหลากหลาย
+- ตรวจ `ocr_gt_REVIEW_ME.csv` ก่อนใช้เป็น GT เสมอ (pseudo-label)
+
+### 🌾 เพิ่มข้อมูล v4 — Crop Harvester ใช้ได้กับทุกโฟลเดอร์
+
+สคริปต์ `src/harvest_crops_generic.py` crop ป้าย/จังหวัด/ตัวอักษร/OCR จาก **ภาพรถเต็มหรือป้ายโดยตรงก็ได้**
+ผ่าน pipeline เดียวกับ serve (M1 → M2 → M3A + M3B) พร้อม pseudo-label และ manifest กำกับทุก crop:
+
+```bash
+# smoke test ก่อนเสมอ (--limit 30)
+/Users/kwankhaos/miniconda3/envs/thai-lpr/bin/python src/harvest_crops_generic.py \
+    --src "datasets/Thai/LPR 2 - Character Box Detection.yolov11/train/images" \
+    --dest datasets/Thai/harvest_v4 --limit 30 --allow-ocr-pairing
+
+# รันเต็ม: --src ชี้ไปที่โฟลเดอร์ภาพต้นทางใดก็ได้ (รถเต็มหรือป้าย)
+#   --prov-label-mode model      ให้โมเดล province v3 ให้ label เอง (เก็บเฉพาะ conf >= --prov-conf)
+#   --prov-label-mode gt_folder  ถ้าแหล่งภาพจัดเป็นโฟลเดอร์คลาสอยู่แล้ว ใช้ GT จากชื่อโฟลเดอร์
+#   --assume-plates              บังคับว่าทุกภาพเป็นป้าย (ข้าม M1)
+```
+
+ผลที่ได้ใน `--dest`: `province_crops/<NN_Name>/`, `char_crops/<char>/` (64×64 serve-pad),
+`char_rows/`, `ocr_crops/` + `ocr_gt_REVIEW_ME.csv` (ข้อความ OCR จากโมเดล — **ต้องตรวจก่อนใช้เป็น GT**),
+`manifest.csv`, `rejected.csv` ทุก crop มี provenance กลับไปหาภาพต้นทาง
+
+> ⚠️ Pseudo-label ≠ GT: ก่อน retrain v4 ให้ตรวจ `ocr_gt_REVIEW_ME.csv` / sample รายคลาส
+> แล้วรัน balance + split (grouped ตามภาพต้นทาง) เท่านั้น ห้ามให้ crop จากภาพเดียวกันหลุดทั้ง train/valid
+
+### 🗂️ Datasets ที่ใช้ retrain (ตรวจแล้วบนดิสก์)
+
+| Task | Dataset Root | ขนาดจริง (จาก split_report.csv) | Split |
+| :--- | :--- | :--- | :--- |
+| Thai Char Cls v2 | `datasets/Thai/recognition_v2/char_crops_v2` | 2,768 crops / 48 คลาสที่มีข้อมูล (map 50) — train 2,227 / valid 541 | ✅ leak-free (grouped by source image) |
+| Thai Province v2 | `datasets/Thai/recognition_v2/province_crops_v2` | 3,147 crops / 77 คลาส — train 2,520 / valid 627 | ✅ leak-free (grouped by source image) |
+| Thai OCR | `datasets/Thai/ocr_v3` (train.csv 436 / val.csv 109, 545 plates) | split ตาม scene key | ✅ validate แล้ว (2026-09-26): ไฟล์ครบ 545/545, scene-key overlap 0, label อยู่ใน vocab 57 ตัวครบ, `cfg.CROPS_DIR` ชี้มาที่นี่แล้ว |
+| Lao Char Cls | `datasets/Lao/lao_character_crops` (train 23,155 / valid 2,043 crops, 30 คลาส) | ✅ validate แล้ว (2026-09-26): filename overlap 0, leakage เพียง 4 valid crops (0.20%) จาก 4 captures — trainer เพิ่ม `autocontrast(cutoff=2)` ตรง serve contract แล้ว |
+| Lao Province | `datasets/Lao/lao_province_crops` (train 3,361 / valid 450 / test 450, 18 คลาส) | ⚠️ validate แล้ว: valid/test เป็น synth ~90% (402/450) จาก generator เดียวกับ train — ไม่มี byte-identical แต่ตัวเลข val อาจสูงเกินจริงบนภาพจริง (real มีแค่ 48/split) || Lao OCR | `datasets/Lao/lao-plate-dataset` (ground_truth_train 9,038 / validation 1,138 usable, 11,317 แผง) | ✅ validate แล้ว: filename overlap train∩val∩test = 0, vocab ครบ (GT มี "ภ" 1 ตัวนอก vocab — encode ข้ามอัตโนมัติ) |
+
+### 🚀 Retrain Commands (copy-paste ได้เลย)
+
+```bash
+# ── ชุดหลัก: Thai recognition v2 (leak-free, ไม่ทับ weights เดิม — ได้ *_v2.pth) ──
+# 1) Thai Character Classifier (MobileNetV2, 50 classes)
+python src/train_character_classifier.py \
+    --data-dir datasets/Thai/recognition_v2/char_crops_v2 --tag v2
+
+# 2) Thai Province Classifier (ResNet34 gray 256x80 — default backbone)
+python src/train_grayscale_province_thai.py \
+    --data-dir datasets/Thai/recognition_v2/province_crops_v2 --tag v2
+
+# 2b) (ทางเลือก) ResNet18 เวอร์ชันเดียวกับ production ปัจจุบัน
+python src/train_grayscale_province_thai.py \
+    --data-dir datasets/Thai/recognition_v2/province_crops_v2 \
+    --backbone resnet18 --tag v2
+
+# ── ชุดรอง: OCR (dataset ผ่านการ validate แล้ว — cfg.CROPS_DIR ชี้ที่ ocr_v3 แล้ว) ──
+python src/train_ocr.py --task ocr --epochs 60 --batch 32
+
+# ── ชุด Lao (สคริปต์มี --tag แล้ว — ไม่ทับ production weights) ──
+python src/train_lao_character_classifier.py --tag v2
+python src/train_grayscale_province_lao.py --tag v2
+
+# ── Lao OCR fallback (ResNetCRNN + CTC, ไปป์ไลน์เดียวกับ Thai OCR — autocontrast/SmartResize 256x64) ──
+python src/train_lao_ocr.py --epochs 60 --batch 32 --tag v1
+```
+
+> [!NOTE]
+> หลัง retrain เสร็จ: switch ผ่าน `CHAR_CLASSIFIER_THAI_FILENAME = "character_classifier_v2.pth"`
+> และ `MODEL_3B_THAI_FILENAME` (หรือ `LPR_PROV_THAI_RESNET34=1` สำหรับ ResNet34)
+> ใน `src/config.py` แล้วกลับมาอัปเดตตาราง accuracy ด้านบนด้วยตัวเลข v2 จริง
 
 ---
 

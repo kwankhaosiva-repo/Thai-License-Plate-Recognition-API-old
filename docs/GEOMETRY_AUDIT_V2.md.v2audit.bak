@@ -29,17 +29,10 @@
 
 ## 3. Mismatch ที่เจอจริง (ต้องแก้ — ไม่ใช่เรื่อง pad)
 
-> **สถานะ 2026-09-26: แก้ครบทั้ง 4 ข้อแล้ว** (โค้ดเดิมเก็บไว้ใน `*.v2audit.bak` + git history)
-
-1. ✅ **`ImageOps.autocontrast` มีแค่ฝั่ง serve** (`api_server.py:2033` char cls cutoff=2, `:2154/:2443` OCR cutoff=1) **แต่ไม่มีใน train script/dataset เลย** → train/serve mismatch จริง (ประเภทเดียวกับ CLAHE ที่ถูกลบออกจาก M3A charbox ไปแล้ว)
-   - **แก้แล้ว:** char cls — ใส่ `autocontrast(cutoff=2)` ใน `train_character_classifier.CharacterDataset.__getitem__` และ `extract_recognition_crops_v2.pad_to_square` (harvest time)
-   - **แก้แล้ว:** OCR — ย้าย `autocontrast(cutoff=1)` เข้า `get_ocr_transforms` (`_ocr_enhanced_gray`) ทั้ง train/eval และปรับ serve ให้ส่ง raw gray เข้า transform (op เดียวกัน ไม่ enhance ซ้ำ); ต้อง retrain OCR เพื่อให้ weights เรียนรู้ภายใต้ op นี้
-2. ✅ **M2 "upscale 1280×640" เป็น no-op ทางเรขาคณิตสำหรับ plate 2:1** (`scratch/audit_pad_math.py` พิสูจน์: mean|diff| = 0.5/255) — comment ใน `api_server.py:1752-1755` เข้าใจผิดว่า object เล็กลง 3.5×; จริงๆ มีผลเฉพาะเมื่อ crop aspect ≠ train aspect
-   - **แก้แล้ว:** แก้ comment ใน `api_server.py` (Thai M2 branch), `preprocess_registry.py` (บล็อก M2 + spec notes), และตาราง geometry ใน `config.py` ให้ระบุเงื่อนไขที่ถูกต้อง
-3. ✅ **Docstring `train_grayscale_province_thai.py` เขียนผิด** ว่าใช้ (256,64) แต่ code ใช้ (256,80); `config.py:62` comment ว่า ResNet18 file เป็น "legacy 256x64" ซึ่งไม่จริง (ไฟล์ที่ serve ถูก train ที่ 256,80)
-   - **แก้แล้ว:** docstring เป็น (256,80); comment config ระบุว่า ResNet18 เป็น 256x80 และ resnet18/resnet34 ใช้ tensor เดียวกัน (แถว M3B ในตาราง geometry แก้จาก "64x256" → 256x80 (TH) / 256x64 (LA) + norm 0.5/0.25)
-4. ✅ **`province_model_resnet34_grayscale_thai.pth` (85 MB) ถูก train แล้วแต่ไม่ได้ serve** (`MODEL_3B_THAI_FILENAME` ชี้ ResNet18)
-   - **แก้แล้ว:** เพิ่ม `USE_RESNET34_PROVINCE_THAI` (default False, ไม่กระทบ production) — เปิดผ่าน env `LPR_PROV_THAI_RESNET34=1` หรือแก้ config; `_load_prov_model` ตรวจ backbone จาก state_dict อยู่แล้ว, tensor (256,80) เหมือนกันทั้งสอง backbone
+1. **`ImageOps.autocontrast` มีแค่ฝั่ง serve** (`api_server.py:2033` char cls cutoff=2, `:2154/:2443` OCR cutoff=1) **แต่ไม่มีใน train script/dataset เลย** → train/serve mismatch จริง (ประเภทเดียวกับ CLAHE ที่ถูกลบออกจาก M3A charbox ไปแล้ว)
+2. **M2 "upscale 1280×640" เป็น no-op ทางเรขาคณิตสำหรับ plate 2:1** (`scratch/audit_pad_math.py` พิสูจน์: mean|diff| = 0.5/255) — comment ใน `api_server.py:1752-1755` เข้าใจผิดว่า object เล็กลง 3.5×; จริงๆ มีผลเฉพาะเมื่อ crop aspect ≠ train aspect
+3. **Docstring `train_grayscale_province_thai.py` เขียนผิด** ว่าใช้ (256,64) แต่ code ใช้ (256,80); `config.py:62` comment ว่า ResNet18 file เป็น "legacy 256x64" ซึ่งไม่จริง (ไฟล์ที่ serve ถูก train ที่ 256,80)
+4. **`province_model_resnet34_grayscale_thai.pth` (85 MB) ถูก train แล้วแต่ไม่ได้ serve** (`MODEL_3B_THAI_FILENAME` ชี้ ResNet18)
 
 ## 4. Data leakage ที่วัดจริง (เหตุผลที่ accuracy เก่าฟอก)
 

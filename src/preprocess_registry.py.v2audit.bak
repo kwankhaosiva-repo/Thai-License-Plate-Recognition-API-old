@@ -159,10 +159,8 @@ M1_YOLO_LETTERBOX = ModelPreprocessSpec(
 # Model 2 — component detector (plate_char / province) on rectified plates.
 # Trained on Roboflow rectified crops, measured median aspect 1.95 (~2:1),
 # fine-tuned with D-FINE at 640x640 stretch.
-# The old pipeline fed the 320x160 rectified plate directly. Geometric note
-# (audit_pad_math): for a ~2:1 plate the stretch-to-square tensor is IDENTICAL
-# with or without the upscale (mean|diff| = 0.5/255) — the resize matters when
-# the crop aspect deviates from the trained ~2:1 and for per-axis box rescaling.
+# The old pipeline fed the 320x160 rectified plate directly -> objects appeared
+# ~3.5x smaller in tensor space than during training -> recall loss.
 # Fix: upscale to the TRAIN pixel geometry 1280x640 (2:1) before inference.
 # ---------------------------------------------------------------------------
 M2_COMPONENTS = ModelPreprocessSpec(
@@ -173,9 +171,7 @@ M2_COMPONENTS = ModelPreprocessSpec(
     train_aspect_w_over_h=2.0,
     postprocess="divide_by_upscale_scale",
     notes="Feed rectified plates upscaled to 1280x640 (train aspect 2:1) and "
-          "divide returned xyxy by the upscale factor. Do NOT letterbox. "
-          "For a ~2:1 plate the upscale is a geometric no-op pre-stretch "
-          "(audit_pad_math); it matters when the crop aspect deviates from 2:1.",
+          "divide returned xyxy by the upscale factor. Do NOT letterbox.",
 )
 
 M2_COMPONENTS_PICODET = ModelPreprocessSpec(

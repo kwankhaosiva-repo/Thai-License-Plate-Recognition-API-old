@@ -8,8 +8,6 @@ Trains Model 3A-Box (MobileNetV2 Character Classifier) on the 50 Thai character 
 
 Features:
   - Input: 64x64 RGB square-padded character crops
-  - autocontrast(cutoff=2) on every crop — MUST stay identical to the serve path
-    in api_server.py (char cls branch), else train/serve mismatch (v2 audit fix #1)
   - Class-weighted Cross-Entropy Loss to balance rare consonants against common digits
   - Real-time Top-1 and Top-3 accuracy evaluation on validation set
   - Saves best checkpoint to weights/character_classifier.pth
@@ -25,7 +23,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from torchvision import models, transforms
-from PIL import Image, ImageOps
+from PIL import Image
 from tqdm import tqdm
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -61,10 +59,6 @@ class CharacterDataset(Dataset):
     def __getitem__(self, idx):
         img_p, label = self.samples[idx]
         img = Image.open(img_p).convert("RGB")
-        # v2 audit fix #1: serve applies ImageOps.autocontrast(cutoff=2) to each
-        # char crop (api_server.py) — replicate it here on the pre-padded square
-        # crop so train sees the same enhancement.
-        img = ImageOps.autocontrast(img, cutoff=2)
         if self.transform:
             img = self.transform(img)
         return img, label
@@ -130,7 +124,6 @@ def train_character_classifier(
     data_dir=None,
     save_name=None,
     tag=None,
-    patience=None,
 ):
     if data_dir is not None:
         raw_dir = Path(data_dir)
@@ -205,8 +198,6 @@ def train_character_classifier(
     best_val_top1 = 0.0
     best_val_top3 = 0.0
     best_epoch = 0
-    stop_patience = patience if patience else 0  # 0/None = train all epochs (legacy behavior)
-    epochs_without_improvement = 0
 
     for epoch in range(1, epochs + 1):
         model.train()
@@ -249,7 +240,7 @@ def train_character_classifier(
             best_val_top1 = val_top1
             best_val_top3 = val_top3
             best_epoch = epoch
-            epochs_without_improvement = 0
+
             torch.save({
                 "model_state": model.state_dict(),
                 "class_map": idx_to_char,
@@ -258,13 +249,6 @@ def train_character_classifier(
                 "epoch": best_epoch,
             }, str(model_save_path))
             print(f"   --> New Best Checkpoint saved! (Val Top-1: {val_top1*100:.2f}%, Top-3: {val_top3*100:.2f}%)")
-        else:
-            epochs_without_improvement += 1
-            if stop_patience > 0:
-                print(f"   --> No improvement for {epochs_without_improvement}/{stop_patience} epochs")
-                if epochs_without_improvement >= stop_patience:
-                    print(f"   --> ⏹ Early stopping at epoch {epoch} (best Top-1 {best_val_top1*100:.2f}%)")
-                    break
 
     print(f"\n=======================================================")
     print(f"Training Complete!")
@@ -284,7 +268,6 @@ if __name__ == "__main__":
     parser.add_argument("--data-dir", type=str, default=None, help="Path to character dataset split root (default: thai_character_crops/splits)")
     parser.add_argument("--save-name", type=str, default=None, help="Explicit filename to save in weights/ (e.g. character_classifier_v2.pth)")
     parser.add_argument("--tag", type=str, default=None, help="Tag suffix for output weights (e.g. v2 -> character_classifier_v2.pth)")
-    parser.add_argument("--patience", type=int, default=None, help="Early stopping patience in epochs (e.g. 10 = stop after 10 epochs without val Top-1 improvement; omit = train all epochs)")
     args = parser.parse_args()
 
     train_character_classifier(
@@ -294,5 +277,4 @@ if __name__ == "__main__":
         data_dir=args.data_dir,
         save_name=args.save_name,
         tag=args.tag,
-        patience=args.patience,
     )

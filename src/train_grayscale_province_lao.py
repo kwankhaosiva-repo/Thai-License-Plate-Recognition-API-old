@@ -152,7 +152,27 @@ def evaluate(model, loader, device, top_k=3):
     return val_loss / val_total, val_correct_1 / val_total, val_correct_k / val_total
 
 
-def train_grayscale_lao(epochs=12, batch_size=32, lr=2e-4):
+def train_grayscale_lao(epochs=12, batch_size=32, lr=2e-4, data_dir=None, save_name=None, tag=None, patience=None):
+    """Train the Lao province classifier.
+
+    v2 parity with Thai trainers:
+      --data-dir <split_root>  use any dataset root with train/valid/test class folders
+                               (default: datasets/Lao/lao_province_crops)
+      --tag v2                 save to province_model_grayscale_lao_<tag>.pth
+                               (does NOT overwrite production weights)
+      --save-name <file>       explicit output filename in weights/
+    """
+    global DATA_DIR, MODEL_SAVE_PATH
+
+    if data_dir is not None:
+        DATA_DIR = Path(data_dir)
+    if save_name is not None:
+        MODEL_SAVE_PATH = WEIGHTS_DIR / save_name
+    elif tag is not None:
+        MODEL_SAVE_PATH = WEIGHTS_DIR / f"province_model_grayscale_lao_{tag}.pth"
+    else:
+        MODEL_SAVE_PATH = WEIGHTS_DIR / "province_model_grayscale_lao.pth"
+
     print("=" * 70)
     print("🇱🇦 Training Lao Province Grayscale Classifier (18 Classes)")
     print(f"Device: {DEVICE}")
@@ -190,6 +210,8 @@ def train_grayscale_lao(epochs=12, batch_size=32, lr=2e-4):
 
     best_val_top1 = 0.0
     best_val_top3 = 0.0
+    stop_patience = patience if patience else 0  # 0/None = train all epochs (legacy behavior)
+    epochs_without_improvement = 0
 
     for epoch in range(1, epochs + 1):
         model.train()
@@ -222,6 +244,7 @@ def train_grayscale_lao(epochs=12, batch_size=32, lr=2e-4):
         if val_top1 > best_val_top1:
             best_val_top1 = val_top1
             best_val_top3 = val_top3
+            epochs_without_improvement = 0
             WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
             torch.save({
                 "model_state": model.state_dict(),
@@ -231,8 +254,17 @@ def train_grayscale_lao(epochs=12, batch_size=32, lr=2e-4):
                 "val_top3": val_top3,
             }, MODEL_SAVE_PATH)
             print(f"  🏆 New best Top-1: {val_top1 * 100:.2f}% -> Saved to {MODEL_SAVE_PATH.name}")
+        else:
+            epochs_without_improvement += 1
+            if stop_patience > 0:
+                print(f"  No improvement for {epochs_without_improvement}/{stop_patience} epochs")
+                if epochs_without_improvement >= stop_patience:
+                    print(f"  ⏹ Early stopping at epoch {epoch} (best Top-1 {best_val_top1*100:.2f}%)")
+                    break
 
-    # Final test evaluation
+    # Final test evaluation (fall back to valid if no test split exists)
+    if not (DATA_DIR / "test").is_dir():
+        test_ds = val_ds
     if MODEL_SAVE_PATH.exists():
         ckpt = torch.load(MODEL_SAVE_PATH, map_location=DEVICE)
         model.load_state_dict(ckpt["model_state"])
@@ -246,4 +278,28 @@ def train_grayscale_lao(epochs=12, batch_size=32, lr=2e-4):
 
 
 if __name__ == "__main__":
-    train_grayscale_lao(epochs=12, batch_size=32, lr=2e-4)
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Train Lao Province Grayscale Classifier (18 classes)")
+    parser.add_argument("--epochs", type=int, default=12)
+    parser.add_argument("--batch", type=int, default=32)
+    parser.add_argument("--lr", type=float, default=2e-4)
+    parser.add_argument("--data-dir", type=str, default=None,
+                        help="Dataset split root with train/valid/test class folders (default: datasets/Lao/lao_province_crops)")
+    parser.add_argument("--save-name", type=str, default=None,
+                        help="Custom filename to save weights in weights/ (default: auto)")
+    parser.add_argument("--tag", type=str, default=None,
+                        help="Tag suffix for output weights (e.g. v2 -> province_model_grayscale_lao_v2.pth)")
+    parser.add_argument("--patience", type=int, default=None,
+                        help="Early stopping patience in epochs (e.g. 10 = stop after 10 epochs without val Top-1 improvement; omit = train all epochs)")
+    args = parser.parse_args()
+
+    train_grayscale_lao(
+        epochs=args.epochs,
+        batch_size=args.batch,
+        lr=args.lr,
+        data_dir=args.data_dir,
+        save_name=args.save_name,
+        tag=args.tag,
+        patience=args.patience,
+    )

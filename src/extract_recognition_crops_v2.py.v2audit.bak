@@ -84,7 +84,6 @@ from pathlib import Path
 import cv2
 import numpy as np
 import yaml
-from PIL import Image, ImageOps
 from tqdm import tqdm
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -233,18 +232,10 @@ def read_yolo_boxes(label_path: Path, img_w: int, img_h: int):
 # Cropping helpers — formulas must stay identical to api_server.py
 # ---------------------------------------------------------------------------
 def pad_to_square(crop_bgr: np.ndarray, target_size: int = 64) -> np.ndarray:
-    """Identical to extract_thai_character_crops.make_square_padded / serve pad.
-
-    v2 audit fix #1: serve ALSO runs PIL ImageOps.autocontrast(cutoff=2) on the
-    char crop (api_server.py, char cls branch) — apply it here at harvest time
-    so the saved 64x64 crops carry the exact serve enhancement.
-    """
+    """Identical to extract_thai_character_crops.make_square_padded / serve pad."""
     h, w = crop_bgr.shape[:2]
     if h == 0 or w == 0:
         return np.full((target_size, target_size, 3), 255, dtype=np.uint8)
-    pil = Image.fromarray(cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB))
-    pil = ImageOps.autocontrast(pil, cutoff=2)
-    crop_bgr = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
     max_dim = max(h, w)
     corners = np.array([crop_bgr[0, 0], crop_bgr[0, -1],
                         crop_bgr[-1, 0], crop_bgr[-1, -1]])

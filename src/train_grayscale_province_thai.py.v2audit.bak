@@ -3,7 +3,7 @@ src/train_grayscale_province_thai.py
 
 Trains Model 3B Thai Province Classifier using the Grayscale Image Classification approach:
 1. Converts all crops to Grayscale to be completely invariant to plate background color (yellow truck, white car, green rental).
-2. Uses GrayscaleSmartResize((256, 80)) which dynamically fills padding using the plate's genuine background tone (instead of artificial pitch-black bars).
+2. Uses GrayscaleSmartResize((256, 64)) which dynamically fills padding using the plate's genuine background tone (instead of artificial pitch-black bars).
 3. Preserves weights/province_model.pth intact.
 4. Saves best model to weights/province_model_grayscale_thai.pth.
 """
@@ -145,7 +145,7 @@ def evaluate(model, loader, device, top_k=5):
     return val_loss / val_total, val_correct_1 / val_total, val_correct_k / val_total
 
 
-def train_grayscale_thai(epochs=15, batch_size=32, lr=2e-4, backbone="resnet34", data_dir=None, save_name=None, tag=None, patience=None):
+def train_grayscale_thai(epochs=15, batch_size=32, lr=2e-4, backbone="resnet34", data_dir=None, save_name=None, tag=None):
     data_path = Path(data_dir) if data_dir is not None else DATA_DIR
     if save_name is not None:
         model_save_path = WEIGHTS_DIR / save_name
@@ -196,8 +196,6 @@ def train_grayscale_thai(epochs=15, batch_size=32, lr=2e-4, backbone="resnet34",
 
     best_val_top1 = 0.0
     best_val_top5 = 0.0
-    stop_patience = patience if patience else 0  # 0/None = train all epochs (legacy behavior)
-    epochs_without_improvement = 0
 
     for epoch in range(1, epochs + 1):
         model.train()
@@ -230,7 +228,6 @@ def train_grayscale_thai(epochs=15, batch_size=32, lr=2e-4, backbone="resnet34",
         if val_top1 > best_val_top1:
             best_val_top1 = val_top1
             best_val_top5 = val_top5
-            epochs_without_improvement = 0
             WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
             torch.save({
                 "model_state": model.state_dict(),
@@ -241,13 +238,6 @@ def train_grayscale_thai(epochs=15, batch_size=32, lr=2e-4, backbone="resnet34",
                 "val_top5": val_top5,
             }, model_save_path)
             print(f"  🏆 New best Top-1: {val_top1 * 100:.2f}% -> Saved to {model_save_path.name}")
-        else:
-            epochs_without_improvement += 1
-            if stop_patience > 0:
-                print(f"  No improvement for {epochs_without_improvement}/{stop_patience} epochs")
-                if epochs_without_improvement >= stop_patience:
-                    print(f"  ⏹ Early stopping at epoch {epoch} (best Top-1 {best_val_top1*100:.2f}% at its best epoch)")
-                    break
 
     # Evaluate best model on test set
     if model_save_path.exists():
@@ -273,7 +263,6 @@ if __name__ == "__main__":
     parser.add_argument("--data-dir", type=str, default=None, help="Path to province dataset split root (default: thai_province_crops)")
     parser.add_argument("--save-name", type=str, default=None, help="Custom filename to save weights in weights/ (default: auto)")
     parser.add_argument("--tag", type=str, default=None, help="Tag suffix for output weights (e.g. v2 -> *_v2.pth)")
-    parser.add_argument("--patience", type=int, default=None, help="Early stopping patience in epochs (e.g. 10 = stop after 10 epochs without val Top-1 improvement; omit = train all epochs)")
     args = parser.parse_args()
 
     train_grayscale_thai(
@@ -284,5 +273,4 @@ if __name__ == "__main__":
         data_dir=args.data_dir,
         save_name=args.save_name,
         tag=args.tag,
-        patience=args.patience,
     )

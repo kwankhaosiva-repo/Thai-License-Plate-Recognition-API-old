@@ -1,6 +1,6 @@
 import io
 import numpy as np
-from PIL import Image, ImageOps
+from PIL import Image
 from torchvision import transforms
 
 class SmartResize:
@@ -37,20 +37,9 @@ def preprocess_raw_api_image(image_bytes):
         print(f"Error processing image: {e}")
         return None
 
-def _ocr_enhanced_gray(img):
-    """Train/serve contract (v2 audit fix #1): PIL.ImageOps.autocontrast(cutoff=1)
-    on the grayscale crop BEFORE SmartResize. Must stay identical to the serve
-    path in api_server.py (char_crop -> convert('L') -> tf_ocr); the op used to
-    exist ONLY at serve time, which was a real train/serve mismatch."""
-    if img.mode != "L":
-        img = img.convert("L")
-    return ImageOps.autocontrast(img, cutoff=1)
-
-
 def get_ocr_transforms(is_train=False):
     if is_train:
         return transforms.Compose([
-            _ocr_enhanced_gray,
             SmartResize((256, 64), mode="L"),
             transforms.RandomApply([
                 transforms.ColorJitter(brightness=0.5, contrast=0.5)
@@ -61,7 +50,6 @@ def get_ocr_transforms(is_train=False):
         ])
     else:
         return transforms.Compose([
-            _ocr_enhanced_gray,
             SmartResize((256, 64), mode="L"),
             transforms.ToTensor(),
         ])

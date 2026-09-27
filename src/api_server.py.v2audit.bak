@@ -524,74 +524,6 @@ def split_wide_char_boxes(boxes, char_crop, max_char_aspect=1.1):
     return out
 
 
-def filter_implausible_char_boxes(boxes, char_crop, strict=True, min_char_h_frac=0.40, max_char_h_frac=1.20):
-    """Reject M3A boxes whose geometry cannot be a plate character (v4 fix).
-
-    Kills the artifact families seen on 2026-09-27 serve overlays
-    (e.g. 'บร 9797' -> 'บร 59797' — the dash box classified as '5'):
-
-      1. Dash/separator slivers — wide flat boxes (w/h > 1.6) whose ink only
-         fills the middle band (ink span < 45% of box height). The char
-         classifier has NO '-' class (50 classes: 10 digits + 40 consonants),
-         so these boxes get FORCED into a digit. A real character is never
-         1.6x wider than tall at serve scale, and a real char's ink fills
-         most of its box vertically.
-      2. Frame/border strips — near full-crop-height boxes touching both the
-         top and bottom border: the rolled metal plate frame edge, not ink.
-      3. Sub-stroke fragments (strict/Thai only) — boxes under 40% of the
-         row's MEDIAN character height: inner holes, shadow specks, corner
-         paint flakes that classify as random noise characters.
-      4. Glued composites (strict/Thai only) — taller than 120% of median AND
-         still wider than 1.3 aspect: two characters the splitter failed to
-         cut; classifying them emits one bogus char + drops one.
-
-    Median-relative thresholds so a single bad box cannot poison the
-    reference. Applied AFTER split_wide_char_boxes and again AFTER
-    recover_character_boxes (recovered boxes carry full char geometry so
-    they survive; only true junk is dropped).
-
-    strict=False (Lao path): keeps rules 1-2 only — Lao script legitimately
-    has small vowel/tone marks above/below consonants, so median-height
-    filtering could drop real glyphs.
-    """
-    if not boxes or char_crop is None or char_crop.size == 0:
-        return boxes
-    import cv2 as _cv2
-    H = char_crop.shape[0]
-    feats = []
-    for (x1, y1, x2, y2, _conf) in boxes:
-        bw, bh = max(1, x2 - x1), max(1, y2 - y1)
-        y1c, y2c = max(0, y1), min(H, y2)
-        x1c, x2c = max(0, x1), min(char_crop.shape[1], x2)
-        patch = char_crop[y1c:y2c, x1c:x2c]
-        ink_span = 0
-        if patch.size:
-            gray = _cv2.cvtColor(patch, _cv2.COLOR_BGR2GRAY) if patch.ndim == 3 else patch
-            binm = gray < 110  # same ink polarity as split_wide_char_boxes
-            rows = np.where(binm.any(axis=1))[0]
-            if len(rows):
-                ink_span = int(rows[-1] - rows[0] + 1)
-        ink_ratio = ink_span / float(bh) if bh else 0.0
-        touches_v = (y1 <= 2 and y2 >= H - 2)
-        feats.append((bw / float(bh), ink_ratio, touches_v, bh))
-
-    med_h = float(np.median([f[3] for f in feats])) if feats else 0.0
-
-    kept = []
-    for box, (aspect, ink_ratio, touches_v, bh) in zip(boxes, feats):
-        if aspect > 1.6 and ink_ratio < 0.45:
-            continue  # dash / separator sliver
-        if touches_v and bh > 0.95 * H:
-            continue  # plate frame strip
-        if strict and med_h > 0:
-            if bh < min_char_h_frac * med_h:
-                continue  # sub-stroke fragment
-            if bh > max_char_h_frac * med_h and aspect > 1.3:
-                continue  # un-split glued composite
-        kept.append(box)
-    return kept
-
-
 def charbox_greedy_nms(raw_boxes, iou_thr=0.35):
     """Greedy confidence-ordered IoU NMS for Model 3A character boxes.
 
@@ -1057,19 +989,19 @@ class LPRPipelineService:
         m2_path = cfg.WEIGHTS_DIR / "component_detector.pt"
 
         # Thai Models
-        ocr_path = cfg.WEIGHTS_DIR / cfg.OCR_FILENAME  # v3: ocr_model_v3.pth (train/serve-matched retrain)
+        ocr_path = cfg.WEIGHTS_DIR / "ocr_model.pth"
         prov_path = cfg.ACTIVE_PROV_MODEL_THAI_PATH
         char_map_path = cfg.WEIGHTS_DIR / "int_to_char.json"
         prov_map_path = cfg.WEIGHTS_DIR / "province_map.json"
         char_box_path = cfg.WEIGHTS_DIR / "character_box_detector.pt"
-        char_class_path = cfg.CHAR_CLASS_THAI_PATH  # v3: character_classifier_v3.pth via config
+        char_class_path = cfg.WEIGHTS_DIR / "character_classifier.pth"
         char_class_map_path = cfg.WEIGHTS_DIR / "char_classifier_map.json"
         digit_class_path = cfg.WEIGHTS_DIR / "digit_classifier.pth"
 
         # Lao Models
         prov_lao_path = cfg.ACTIVE_PROV_MODEL_LAO_PATH
         prov_lao_map_path = cfg.WEIGHTS_DIR / "province_map_lao.json"
-        char_lao_class_path = cfg.CHAR_CLASS_LAO_PATH  # v3: character_classifier_lao_v3.pth via config
+        char_lao_class_path = cfg.WEIGHTS_DIR / "character_classifier_lao.pth"
         char_lao_map_path = cfg.WEIGHTS_DIR / "char_classifier_map_lao.json"
 
         active_m1_path = cfg.ACTIVE_MODEL_1_PATH
@@ -1818,13 +1750,9 @@ class LPRPipelineService:
         if country_name == "Thai":
             # Thai Standard Layout: Top 65% is Characters, Bottom 35% is Province
             # PREPROCESS FIX: M2 was fine-tuned on ~2:1 rectified-plate crops at
-            # 640x640 stretch. The upscale to 1280x640 matches the TRAIN PIXEL
-            # geometry so the model sees the same object pixel scale as during
-            # training. Geometrically, for a ~2:1 plate the stretch-to-square
-            # is identical with or without this upscale (audit_pad_math:
-            # mean|diff| = 0.5/255) — the resize matters when the crop aspect
-            # deviates from the trained ~2:1 and for per-axis box rescaling
-            # (divide_boxes_by_scale below).
+            # 640x640 stretch. Feeding the 320x160 rectified plate made objects
+            # ~3.5x smaller in tensor space than in training -> recall loss.
+            # Upscale to the train pixel geometry (1280x640) before inference.
             m2_input, m2_scale = upscale_to_train_geometry(rectified_plate, self.m2_spec)
             try:
                 res2 = self.model_comp(m2_input, conf=conf_m2, verbose=False, device=self.device)[0]
@@ -2019,11 +1947,6 @@ class LPRPipelineService:
                 # Split detector-merged multi-character boxes (the wide 'square'
                 # overlay covering middle chars) — GT contains no wide boxes.
                 raw_boxes = split_wide_char_boxes(raw_boxes, char_crop)
-                # v4: geometry filter — drop dash slivers / frame strips /
-                # sub-stroke fragments BEFORE merging/recovery, so junk never
-                # gets classified (the char classifier has no '-' class, so a
-                # surviving dash box becomes a hallucinated digit like 5/4).
-                raw_boxes = filter_implausible_char_boxes(raw_boxes, char_crop, strict=True)
 
                 # 1. Filter out merged composite boxes and sub-stroke fragments
                 # A: Suppress sub-stroke boxes that are fully inside a larger normal character box
@@ -2095,10 +2018,6 @@ class LPRPipelineService:
                 # Sort left-to-right & recover missing character boxes from spatial gaps
                 detected_boxes = sorted(kept_boxes, key=lambda item: item[0])
                 detected_boxes = recover_character_boxes(detected_boxes, crop_w, char_crop.shape[0], is_lao=False)
-                # v4: second pass AFTER recovery — recovered boxes are full
-                # char geometry so they survive; this only catches junk that
-                # the merge steps re-shaped (e.g. a dash merged into a half).
-                detected_boxes = filter_implausible_char_boxes(detected_boxes, char_crop, strict=True)
                 t_m3_box_det = int((time.time() - t_bdet_start) * 1000)
 
                 t_ccls_start = time.time()
@@ -2109,10 +2028,7 @@ class LPRPipelineService:
                     if single_crop.shape[0] < 4 or single_crop.shape[1] < 4:
                         continue
 
-                    # Train/serve contract (v2 audit fix #1): autocontrast(cutoff=2)
-                    # is now mirrored in TRAIN too — train_character_classifier.py
-                    # and extract_recognition_crops_v2.pad_to_square apply the
-                    # same op, so keep it here unchanged.
+                    # Contrast enhancement matching CTC OCR preprocessing
                     pil_sc = Image.fromarray(cv2.cvtColor(single_crop, cv2.COLOR_BGR2RGB))
                     pil_sc = ImageOps.autocontrast(pil_sc, cutoff=2)
                     single_crop_enhanced = cv2.cvtColor(np.array(pil_sc), cv2.COLOR_RGB2BGR)
@@ -2233,11 +2149,9 @@ class LPRPipelineService:
 
             # 3A-2: Thai OCR (ResNetCRNN + CTC)
             t_ocr_start = time.time()
-            # v2 audit fix #1: autocontrast(cutoff=1) moved into
-            # get_ocr_transforms (_ocr_enhanced_gray) so TRAIN applies the exact
-            # same op — pass the raw grayscale here, do NOT re-enhance.
             char_pil = Image.fromarray(cv2.cvtColor(char_crop, cv2.COLOR_BGR2RGB))
-            char_enhanced = char_pil.convert("L")
+            char_gray = char_pil.convert("L")
+            char_enhanced = ImageOps.autocontrast(char_gray, cutoff=1)
 
             ts_ocr = self.tf_ocr(char_enhanced).unsqueeze(0).to(self.device)
             with torch.no_grad():
@@ -2524,11 +2438,9 @@ class LPRPipelineService:
 
         else:
             # 3A: Lao Plate Text
-            # v2 audit fix #1: autocontrast(cutoff=1) moved into
-            # get_ocr_transforms (_ocr_enhanced_gray) so TRAIN applies the exact
-            # same op — pass the raw grayscale here, do NOT re-enhance.
             char_pil = Image.fromarray(cv2.cvtColor(char_crop, cv2.COLOR_BGR2RGB))
-            char_enhanced = char_pil.convert("L")
+            char_gray = char_pil.convert("L")
+            char_enhanced = ImageOps.autocontrast(char_gray, cutoff=1)
 
             # 3B: Lao Province (Using isolated province crop from Model 2)
             if prov_crop is not None and prov_crop.size > 0:
@@ -2588,9 +2500,6 @@ class LPRPipelineService:
                     # Conf-ordered IoU NMS + merged-box split (same fix as Thai branch)
                     raw_boxes = charbox_greedy_nms(raw_boxes, iou_thr=0.35)
                     raw_boxes = split_wide_char_boxes(raw_boxes, char_crop)
-                    # v4: geometry filter — Lao keeps vowel/tone marks, so
-                    # strict=False (dash + frame rules only).
-                    raw_boxes = filter_implausible_char_boxes(raw_boxes, char_crop, strict=False)
 
                     # Horizontal NMS / Deduplication
                     raw_boxes.sort(key=lambda x: x[4], reverse=True)
