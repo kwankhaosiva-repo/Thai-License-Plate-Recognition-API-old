@@ -24,7 +24,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, models
-from PIL import Image
+from PIL import Image, ImageOps
 from tqdm import tqdm
 
 try:
@@ -62,6 +62,11 @@ class LaoCharacterDataset(Dataset):
     def __getitem__(self, idx):
         img_p, label = self.samples[idx]
         img = Image.open(img_p).convert("RGB")
+        # v2 audit train/serve contract: the Thai serve path applies
+        # ImageOps.autocontrast(cutoff=2) to every char crop (api_server.py,
+        # char cls branch). Mirror it here so Lao training crops carry the
+        # same enhancement as what the classifier sees in production.
+        img = ImageOps.autocontrast(img, cutoff=2)
         if self.transform:
             img = self.transform(img)
         return img, label
@@ -150,10 +155,37 @@ def export_to_onnx(model: nn.Module, onnx_path: Path, n_classes: int, opset: int
         print(f"  --> Saved to: {onnx_path}")
 
 
-def train_lao_character_classifier(epochs=15, batch_size=64, lr=4e-4):
+def train_lao_character_classifier(epochs=15, batch_size=64, lr=4e-4, data_dir=None, save_name=None, tag=None, patience=None):
+    """Train the Lao character classifier.
+
+    v2 parity with Thai trainers:
+      --data-dir <split_root>  use any dataset root with train/ & valid/ class folders
+                               (default: datasets/Lao/lao_character_crops)
+      --tag v2                 save to character_classifier_lao_<tag>.pth + matching ONNX
+                               (does NOT overwrite production weights)
+      --save-name <file>       explicit output filename in weights/
+    """
+    global BASE_DIR, TRAIN_DIR, VALID_DIR, MODEL_SAVE_PATH, ONNX_SAVE_PATH
+
+    if data_dir is not None:
+        BASE_DIR = Path(data_dir)
+        TRAIN_DIR = BASE_DIR / "train"
+        VALID_DIR = BASE_DIR / "valid"
+
+    if save_name is not None:
+        MODEL_SAVE_PATH = WEIGHTS_DIR / save_name
+    elif tag is not None:
+        MODEL_SAVE_PATH = WEIGHTS_DIR / f"character_classifier_lao_{tag}.pth"
+    else:
+        MODEL_SAVE_PATH = WEIGHTS_DIR / "character_classifier_lao.pth"
+
+    onnx_stem = MODEL_SAVE_PATH.stem
+    ONNX_SAVE_PATH = WEIGHTS_DIR / f"{onnx_stem}_opset18.onnx"
+
     print(f"\n=======================================================")
     print(f"--- Training Lao Character Classifier (MobileNetV2) ---")
     print(f"Device     : {DEVICE}")
+    print(f"Dataset    : {BASE_DIR}")
     print(f"Epochs     : {epochs}, Batch Size: {batch_size}, LR: {lr}")
     print(f"Target Save: {MODEL_SAVE_PATH}")
     print(f"=======================================================\n")
@@ -209,6 +241,8 @@ def train_lao_character_classifier(epochs=15, batch_size=64, lr=4e-4):
     best_val_top1 = 0.0
     best_val_top3 = 0.0
     best_epoch = 0
+    stop_patience = patience if patience else 0  # 0/None = train all epochs (legacy behavior)
+    epochs_without_improvement = 0
 
     for epoch in range(1, epochs + 1):
         model.train()
@@ -251,7 +285,7 @@ def train_lao_character_classifier(epochs=15, batch_size=64, lr=4e-4):
             best_val_top1 = val_top1
             best_val_top3 = val_top3
             best_epoch = epoch
-
+            epochs_without_improvement = 0
             torch.save({
                 "model_state": model.state_dict(),
                 "class_map": idx_to_char,
@@ -262,6 +296,13 @@ def train_lao_character_classifier(epochs=15, batch_size=64, lr=4e-4):
                 "license": "BSD-3 / Apache-2.0 Compatible",
             }, str(MODEL_SAVE_PATH))
             print(f"   --> ⭐ New Best Checkpoint saved! (Val Top-1: {val_top1*100:.2f}%, Top-3: {val_top3*100:.2f}%)")
+        else:
+            epochs_without_improvement += 1
+            if stop_patience > 0:
+                print(f"   --> No improvement for {epochs_without_improvement}/{stop_patience} epochs")
+                if epochs_without_improvement >= stop_patience:
+                    print(f"   --> ⏹ Early stopping at epoch {epoch} (best Top-1 {best_val_top1*100:.2f}%)")
+                    break
 
     print(f"\n=======================================================")
     print(f"🎉 Training Complete! Best Checkpoint at Epoch {best_epoch}")
@@ -282,10 +323,26 @@ def train_lao_character_classifier(epochs=15, batch_size=64, lr=4e-4):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="Train Lao Character Classifier (MobileNetV2)")
     parser.add_argument("--epochs", type=int, default=15)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=4e-4)
+    parser.add_argument("--data-dir", type=str, default=None,
+                        help="Dataset split root with train/ & valid/ class folders (default: datasets/Lao/lao_character_crops)")
+    parser.add_argument("--save-name", type=str, default=None,
+                        help="Custom filename to save weights in weights/ (default: auto)")
+    parser.add_argument("--tag", type=str, default=None,
+                        help="Tag suffix for output weights (e.g. v2 -> character_classifier_lao_v2.pth)")
+    parser.add_argument("--patience", type=int, default=None,
+                        help="Early stopping patience in epochs (e.g. 10 = stop after 10 epochs without val Top-1 improvement; omit = train all epochs)")
     args = parser.parse_args()
 
-    train_lao_character_classifier(epochs=args.epochs, batch_size=args.batch_size, lr=args.lr)
+    train_lao_character_classifier(
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        lr=args.lr,
+        data_dir=args.data_dir,
+        save_name=args.save_name,
+        tag=args.tag,
+        patience=args.patience,
+    )

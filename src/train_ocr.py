@@ -253,9 +253,19 @@ class ProvinceTrainer:
 # 2. OCR Trainer (ResNet18 + BiLSTM + CTC)
 # ==========================================
 class OCRTrainer:
-    def __init__(self):
+    def __init__(self, tag=None, save_name=None):
         print("\n=== OCR Trainer (ResNetCRNN + CTC) ===")
         self.device = cfg.DEVICE
+
+        # v3tag parity with other trainers: --tag writes ocr_model_<tag>.pth and
+        # does NOT resume from the production checkpoint (fresh run learns
+        # entirely under the train/serve-matched preprocessing).
+        if save_name:
+            self.save_path = cfg.WEIGHTS_DIR / save_name
+        elif tag:
+            self.save_path = cfg.WEIGHTS_DIR / f"ocr_model_{tag}.pth"
+        else:
+            self.save_path = cfg.OCR_MODEL_SAVE_PATH
 
         if not cfg.CHAR_MAP_PATH.exists():
             raise FileNotFoundError(f"OCR char_map not found at {cfg.CHAR_MAP_PATH}. Please prepare it first.")
@@ -317,10 +327,10 @@ class OCRTrainer:
 
         self.model = ResNetCRNN(1, len(self.int_to_char), hidden_size=256).to(self.device)
 
-        if cfg.OCR_MODEL_SAVE_PATH.exists():
-            print(f" Resuming from {cfg.OCR_MODEL_SAVE_PATH}")
+        if self.save_path.exists():
+            print(f" Resuming from {self.save_path}")
             try:
-                ckpt = torch.load(cfg.OCR_MODEL_SAVE_PATH, map_location=self.device)
+                ckpt = torch.load(self.save_path, map_location=self.device)
                 state_dict = ckpt.get("model_state_dict", ckpt)
                 self.model.load_state_dict(state_dict, strict=False)
                 if "cer" in ckpt:
@@ -334,9 +344,11 @@ class OCRTrainer:
         self.criterion = nn.CTCLoss(blank=0, zero_infinity=True)
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode="min", factor=0.5, patience=5)
 
-    def train(self):
+    def train(self, patience_override=None):
         print(f"Start Training OCR for {cfg.EPOCHS} epochs...")
         patience = 0
+        stop_patience = patience_override if patience_override else cfg.EARLY_STOPPING_PATIENCE
+        print(f"Early stopping patience: {stop_patience} epochs")
 
         for ep in range(self.start_epoch, cfg.EPOCHS):
             self.model.train()
@@ -377,8 +389,8 @@ class OCRTrainer:
                 print(f"   └── Score: {combined_score:.4f} (CER: {val_cer:.4f}, Fmt: {val_fmt_acc:.2%}) -> New Best!")
             else:
                 patience += 1
-                print(f"   └── Score: {combined_score:.4f} (Best: {self.best_score:.4f}) [Patience: {patience}/{cfg.EARLY_STOPPING_PATIENCE}]")
-                if patience >= cfg.EARLY_STOPPING_PATIENCE:
+                print(f"   └── Score: {combined_score:.4f} (Best: {self.best_score:.4f}) [Patience: {patience}/{stop_patience}]")
+                if patience >= stop_patience:
                     print("Early stopping triggered for OCR Trainer.")
                     break
 
@@ -423,9 +435,10 @@ class OCRTrainer:
                 "fmt_acc": fmt_acc,
                 "score": self.best_score,
             },
-            cfg.OCR_MODEL_SAVE_PATH,
+            self.save_path,
         )
         print("       OCR Model Saved!")
+        print(f"       -> {self.save_path}")
 
 
 # ==========================================
@@ -436,6 +449,9 @@ if __name__ == "__main__":
     p.add_argument("--task", type=str, default="all", choices=["ocr", "province", "all"], help="Task to train")
     p.add_argument("--epochs", type=int, default=60, help="Number of epochs")
     p.add_argument("--batch", type=int, default=32, help="Batch size")
+    p.add_argument("--patience", type=int, default=None, help="Early stopping patience in epochs (default: cfg.EARLY_STOPPING_PATIENCE = 20)")
+    p.add_argument("--tag", type=str, default=None, help="Tag suffix for OCR output weights (e.g. v3 -> ocr_model_v3.pth; also skips resume from production)")
+    p.add_argument("--save-name", type=str, default=None, help="Explicit OCR output filename in weights/")
     args = p.parse_args()
 
     cfg.EPOCHS = args.epochs
@@ -448,5 +464,5 @@ if __name__ == "__main__":
         prov_trainer.train()
 
     if args.task in ["ocr", "all"]:
-        ocr_trainer = OCRTrainer()
-        ocr_trainer.train()
+        ocr_trainer = OCRTrainer(tag=args.tag, save_name=args.save_name)
+        ocr_trainer.train(patience_override=args.patience)
