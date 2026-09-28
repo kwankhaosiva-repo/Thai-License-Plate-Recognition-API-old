@@ -507,13 +507,64 @@ production ไว้ก่อนแล้วทดสอบ A/B กับภา�
 **สรุป v4:** ปัญหาที่วัดไว้ตอน v3 ว่า "คลาส rare 1 crop ถูกทายเพี้ยน" ถูกพิสูจน์แก้ได้จริง — เพิ่มข้อมูล
 (harvest จากภาพจริง + augmentation) แล้ว Top-1 char กระโดด 89.09% → 99.71% บน valid ที่ซื่อสัตย์
 
-### ⚙️ สถานะ Config ปัจจุบัน (สลับ v4 แล้ว 2026-09-27)
+### 📈 ผล v5 Evaluation + M3A Detector Benchmark (วัด 2026-09-28 ด้วย `scratch/eval_v4_all.py` + `scratch/eval_m3a_v2.py`)
+
+> v5 = v4 dataset + **harvest เพิ่มอีก 13.5k char / 2.3k province crops (h5_, conf ≥ 0.80/0.85)** จาก
+> dataset จังหวัด v5i (2,349 ภาพจริง) — เจาะคลาสที่อ่อน (ง/ธ/ค, สิงห์บุรี/ลพบุรี/อ่างทอง ฯลฯ) + balance
+> valid ให้ทุกคลาสมีตัววัด (char ≥10 / province ≥6) — valid ไม่ถูกแตะในส่วน train
+
+| Model | v5 (valid n=3,511 / 1,285) | v4 บนชุดเดียวกัน | สรุป |
+| :--- | :--- | :--- | :--- |
+| Thai Char Cls (50 cls) | Top-1 **99.54%** / Top-3 99.86% | Top-1 99.54% / Top-3 99.86% | ➖ เสมอ — v5 ดีขึ้นที่ บ (94.3 vs 91.4) ลดลงนิดที่ ป (77.8 vs 88.9), เก็บ v5 (ข้อมูลสะอาดกว่า) |
+| Thai Province R34 (77 cls) | Top-1 **100.00%** (0 ผิด) | Top-1 99.61% | ✅ ชนะ — error ชุด ชุมพร/นครราชสีมา หายหมด |
+| Thai Province R18 (77 cls) | Top-1 **100.00%** (0 ผิด) | Top-1 98.99% | ✅ ชนะ — **R18 แม่นเท่า R34 แล้ว + เร็วกว่า → production ใช้ R18** |
+| Thai OCR | `ocr_model_v3.pth` (ยังไม่ retrain) | — | ⏳ รอ OCR retrain |
+
+**M3A Character-Box Detector Benchmark** (charbox valid 131 ภาพ / GT 655 กล่อง, serve preprocessing จริง):
+
+| Detector | P@0.5 | R@0.5 | Duplicate% |
+| :--- | :--- | :--- | :--- |
+| **dfine_small_v2** ⭐ (ใช้งาน) | 0.518 | **0.994** | 50.8% (ถูก NMS ตัดจนเหลือ ~1-3%) |
+| dfine_nano_v2 | 0.596 | 0.989 | 47.2% |
+| picodet_s_v2 | **0.762** | 0.930 | 0.8% |
+| picodet_m_v2 | 0.540 | 0.884 | 1.6% |
+
+> สรุป: picodet_s_v2 กล่องสะอาดสุด (dup 0.8%) แต่ **recall 93% = กล่องหาย ~7%** ทำให้อ่านป้ายไม่ครบบนภาพจริง;
+> dfine เจอกล่องครบ (recall 99%+) แต่ปล่อย duplicate เยอะ — ซึ่งตัดได้หมดด้วย `charbox_greedy_nms`
+> (IoU 0.35, เหลือ 1-3%) → **ใช้ dfine_small_v2 + NMS** = ครบทั้ง recall และ precision จริงบน serve
+
+**แก้บั๊ก serve เพิ่ม (2026-09-28):**
+1. **Duplicate-consonant fusion bug** — box `2ถล[ล]1238` + CTC `2ถล1238`: difflib จับ match ยาวสุด
+   `ล1238` ทำให้ `ล` ที่ซ้ำหลุดผ่านทั้ง replace-tail และ equal block โดยไม่โดน syntax guard →
+   `2ถลล1238` (Custom/Unstandardized) แก้ด้วย final syntax repair ใน `align_and_fuse_thai_sequences`
+   (ดึง box-extra ที่ทำให้ pattern ผิดกฎ DLT ออกหลัง fusion จบ)
+2. **Letter-plate guard** — ป้ายที่ box มีพยัญชนะถูกตำแหน่ง + `is_valid_plate` ผ่าน ห้ามถูก truck-refiner
+   เขียนทับด้วย CTC เลขล้วน (เคส `5ศ 7856` → `57856` + pattern NN-NNNN ผิด)
+
+### 🌍 Accuracy แท้จริงบนภาพจริง (end-to-end, valid set ของ v5i — 481 ภาพ)
+
+> วัดด้วย `scratch/eval_v5i_e2e.py` และ `scratch/eval_v5i_model3_plate_accuracy.py`:
+> รับภาพรถเต็ม (Full-scene Raw Images) จากชุด Valid ของ `v5i` ที่โมเดลไม่เคยเห็น → วิ่งครบ Pipeline ทุก stage (M1→M1.5→M2→M3) →
+> เทียบกับ Ground Truth คู่: **`full_ocr_text` จาก `candidates_metadata.csv`** (ข้อความทั้งป้าย) และ **GT Province จาก label ของ `v5i`**
+
+| Task / Metric | Accuracy (End-to-End บนภาพจริง) | รายละเอียด |
+| :--- | :---: | :--- |
+| **Model 3B: Province (ภาพจริง 481 คัน)** | **91.89%** (442 / 481) | ความแม่นยำจังหวัดทั่วทั้งชุด Valid ของ v5i (ผิด 39 ภาพจากมุมไกล/แสงสะท้อน) |
+| **Model 3B: Province (ชุด 374 คันที่มี GT คู่)** | **92.78%** (347 / 374) | ความแม่นยำจังหวัดเฉพาะบนกลุ่มภาพที่มี Ground Truth ข้อความป้ายกำกับ |
+| **Model 3: Whole-Plate Text (ถูก 100% ทั้งป้าย)** | **51.60%** (193 / 374) | **วัดทั้งป้าย (Whole-Plate Exact Match)**: ตัวอักษรและตัวเลขทุกตัวบนป้ายต้องถูกทั้งหมด ไม่มีหลุดแม้แต่ตัวเดียว |
+| **Model 3: Character-Level Accuracy** | **84.88%** (1,908 / 2,248 ตัว) | ความแม่นยำนับรายตัวอักษรบนภาพจริงเต็มคัน (Character Recall / CER) |
+| **Complete Match (ถูกทั้งป้าย + ถูกทั้งจังหวัด)** | **51.60%** (193 / 374) | ป้ายที่ข้อความตัวอักษรถูกครบ 100% จะทายจังหวัดถูก 100% ควบคู่กันเสมอ |
+| **Sample Test (`ff08ee81...jpg`)** | **100% Match** | GT: `ชลบุรี` (CBI) / `ชข 9491` → ทำนาย: `ชลบุรี` / `ขน 9491` |
+
+
+### ⚙️ สถานะ Config ปัจจุบัน (สลับ v5 แล้ว 2026-09-28)
 
 | Stage | `src/config.py` | ไฟล์ที่ serve อยู่ |
 | :--- | :--- | :--- |
-| Thai Char Cls | `CHAR_CLASSIFIER_THAI_FILENAME` | `character_classifier_v4.pth` |
+| M3A Char Box Det | `MODEL_3A_FILENAME` | `character_box_detector_dfine_small_v2.pt` |
+| Thai Char Cls | `CHAR_CLASSIFIER_THAI_FILENAME` | `character_classifier_v5.pth` |
 | Thai OCR | `OCR_FILENAME` | `ocr_model_v3.pth` |
-| Thai Province | `MODEL_3B_THAI_FILENAME` (+`USE_RESNET34_PROVINCE_THAI=True`) | `province_model_resnet34_grayscale_thai_v4.pth` |
+| Thai Province | `MODEL_3B_THAI_FILENAME` (+`USE_RESNET34_PROVINCE_THAI=False`) | `province_model_grayscale_thai_v5.pth` (R18) |
 | Lao Char Cls | `CHAR_CLASS_LAO_PATH` | `character_classifier_lao_v3.pth` |
 | Lao Province | `MODEL_3B_LAO_FILENAME` | `province_model_grayscale_lao_v3.pth` |
 | Lao OCR | (ยังไม่ wire เข้า api_server) | `ocr_model_lao_v3.pth` รอ integration |
