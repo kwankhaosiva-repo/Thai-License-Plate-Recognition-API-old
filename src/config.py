@@ -57,7 +57,7 @@ class Config:
     #     (h4_) + per-class augmentation to ≥50 crops/class. Valid Top-1 99.71% on the
     #     re-split set (v3 scores 96.71% on the same set; rare classes ธ ป ค fixed).
     #     Raw v3-eval numbers (89.09%) were on the OLD split — not comparable.
-    CHAR_CLASSIFIER_THAI_FILENAME = "character_classifier_v4.pth"
+    CHAR_CLASSIFIER_THAI_FILENAME = "character_classifier_v5.pth"
 
     # --- Model 3A: OCR (CTC Text Recognition) ---
     #   v3 = train/serve-matched retrain on ocr_v3 leak-free split (436 train plates).
@@ -74,7 +74,7 @@ class Config:
     # exist (proven to load via _load_prov_model's backbone auto-detection).
     # Default False keeps today's production checkpoint (ResNet18) untouched.
     USE_RESNET34_PROVINCE_THAI = True  # v4: ResNet34 retrain on balanced harvest+GT data
-    MODEL_3B_THAI_FILENAME = "province_model_resnet34_grayscale_thai_v4.pth"
+    MODEL_3B_THAI_FILENAME = "province_model_resnet18_grayscale_thai_v5.pth"
 
     # --- Lao Plate Detector ---
     #   "plate_detector_lao_dfine_nano.pt"   ← D-FINE-Nano (⚡ recommended: MIT)

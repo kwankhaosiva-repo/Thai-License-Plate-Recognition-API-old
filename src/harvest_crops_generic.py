@@ -260,8 +260,9 @@ def province_label_from_gt_folder(img_path: Path, prov_map: dict):
     """Source images organized as <NN_Name>/ or <name>/ class folders."""
     for parent in (img_path.parent, img_path.parent.parent):
         name = parent.name
-        if f"{int(name.split('_')[0]):02d}_" in f"{name}_" and name.split("_")[0].isdigit():
-            pid = int(name.split("_")[0])
+        first = name.split("_")[0]
+        if first.isdigit() and f"{int(first):02d}_" in f"{name}_":
+            pid = int(first)
             thai = prov_map.get(str(pid))
             if thai:
                 return pid, thai
