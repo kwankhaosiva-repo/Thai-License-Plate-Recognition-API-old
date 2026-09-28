@@ -486,13 +486,34 @@ python src/train_grayscale_province_thai.py --data-dir datasets/Thai/recognition
 production ไว้ก่อนแล้วทดสอบ A/B กับภาพจริงนอก dataset ก่อนสลับ เพราะ v3 เทรนด้วยข้อมูลน้อยกว่ามาก
 (Thai OCR v3: 436 train plates เท่านั้น) — ตัวเลข valid ทั้งสองฝั่งของสองโมเดลนี้ไม่เทียบกันตรง ๆ ได้
 
-### ⚙️ สถานะ Config ปัจจุบัน (สลับ v3 → production แล้ว 2026-09-27)
+### 📈 ผล v4 Evaluation จริงบน Valid Sets (วัด 2026-09-27 ด้วย `scratch/eval_v4_all.py`)
+
+> v4 = v3 dataset + **harvest pseudo-label 7.6k char crops (h4_) + 983 province crops** ผ่าน serve-identical
+> pipeline (M3A box → geometric filter → char/prov classifier) + **balance ด้วย augmented variants**
+> (ไม่ใช่ copy ซ้ำ) จนทุกคลาส char ≥ 50 / province ≥ 30 crops จากนั้น re-split leak-free (grouped ตามภาพต้นทาง,
+> leak = 0 ทั้งสอง task) แล้วเทรนใหม่ทั้งหมด ตรวจคุณภาพก่อนเทรน: crop 64×64 ตาม contract, aspect p95 ≤ 1.6,
+> ไม่มีคลาสคอนทราสต์ต่ำ (รายละเอียด `scratch/audit_v4_char_train.csv`, `scratch/audit_v4_province_train.csv`)
+>
+> ⚠️ Valid set ของ v4 คือ split ใหม่ที่มี h4_ pseudo-label ปน ~10% ของ char valid (v3/v4 วัดบนชุดเดียวกัน
+> จึงเทียบกันได้ fair) แต่**ไม่ใช่ชุดเดียวกับตาราง v3 ด้านบน** — ห้ามเทียบข้ามตาราง
+
+| Model | v4 ผลจริง (valid ใหม่, n=3,468 / 1,002) | v3 บนชุดเดียวกัน | สรุป |
+| :--- | :--- | :--- | :--- |
+| Thai Char Cls (50 cls) | Top-1 **99.71%** / Top-3 99.91% | Top-1 96.71% / Top-3 97.81% | ✅ ชนะชัด — คลาส rare ที่เคยพังหายวบ (v3: ธ 0/18, ป 0/3, ค 1/12) ถูกแก้ที่ root cause ตัวเลขแย่สุดของ v4 คือ ด 3/4 และ ฆ 13/14 |
+| Thai Province R34 (77 cls) | Top-1 **99.90%** / Top-5 99.90% (ผิด 1/1,002) | Top-1 98.90% / Top-5 99.50% | ✅ ชนะ — v3 พังซ้ำเป็นชุดที่ กรุงเทพ→มหาสารคาม จากคลาส imbalance, v4 เหลือ error เดียว (ชุมพร→สกลนคร) |
+| Thai Province R18 (77 cls) | Top-1 99.80% (ผิด 2/1,002) | Top-1 99.50% | ✅ ชนะ — R34 v4 ยังเป็น best, คงใช้ R34 ต่อ |
+| Thai OCR | `ocr_model_v3.pth` (ยังไม่ retrain) | — | ⏳ รอ OCR retrain รอบหน้า — harvester มี `ocr_crops/` + `ocr_gt_REVIEW_ME.csv` พร้อมแล้ว |
+
+**สรุป v4:** ปัญหาที่วัดไว้ตอน v3 ว่า "คลาส rare 1 crop ถูกทายเพี้ยน" ถูกพิสูจน์แก้ได้จริง — เพิ่มข้อมูล
+(harvest จากภาพจริง + augmentation) แล้ว Top-1 char กระโดด 89.09% → 99.71% บน valid ที่ซื่อสัตย์
+
+### ⚙️ สถานะ Config ปัจจุบัน (สลับ v4 แล้ว 2026-09-27)
 
 | Stage | `src/config.py` | ไฟล์ที่ serve อยู่ |
 | :--- | :--- | :--- |
-| Thai Char Cls | `CHAR_CLASSIFIER_THAI_FILENAME` | `character_classifier_v3.pth` |
+| Thai Char Cls | `CHAR_CLASSIFIER_THAI_FILENAME` | `character_classifier_v4.pth` |
 | Thai OCR | `OCR_FILENAME` | `ocr_model_v3.pth` |
-| Thai Province | `MODEL_3B_THAI_FILENAME` (+`USE_RESNET34_PROVINCE_THAI=True`) | `province_model_resnet34_grayscale_thai_v3.pth` |
+| Thai Province | `MODEL_3B_THAI_FILENAME` (+`USE_RESNET34_PROVINCE_THAI=True`) | `province_model_resnet34_grayscale_thai_v4.pth` |
 | Lao Char Cls | `CHAR_CLASS_LAO_PATH` | `character_classifier_lao_v3.pth` |
 | Lao Province | `MODEL_3B_LAO_FILENAME` | `province_model_grayscale_lao_v3.pth` |
 | Lao OCR | (ยังไม่ wire เข้า api_server) | `ocr_model_lao_v3.pth` รอ integration |
@@ -500,6 +521,7 @@ production ไว้ก่อนแล้วทดสอบ A/B กับภา�
 > **Rollback:** เปลี่ยนชื่อไฟล์ใน config กลับเป็น `character_classifier.pth`,
 > `ocr_model.pth`, `province_model_grayscale_thai.pth` (และตั้ง `USE_RESNET34_PROVINCE_THAI=False`),
 > `character_classifier_lao.pth`, `province_model_grayscale_lao.pth` — weights เดิมทั้งหมดยังอยู่ใน `weights/` ครบ
+> (rollback เป็น v3: `character_classifier_v3.pth` + `province_model_resnet34_grayscale_thai_v3.pth` ก็ยังอยู่ครบเช่นกัน)
 >
 > หมายเหตุ: `ACTIVE_PROV_MODEL_THAI_PATH` ถูกแก้ให้ใช้ `MODEL_3B_THAI_FILENAME` เป็น source of truth
 > (เดิม R34 flag ล้ำหน้าแล้วชี้ไฟล์ production ทำให้สลับ tag ไม่ได้)
