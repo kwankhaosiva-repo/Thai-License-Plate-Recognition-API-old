@@ -697,6 +697,8 @@ def align_and_fuse_thai_sequences(box_items: list[dict], ctc_text: str, crop_w: 
     sm = difflib.SequenceMatcher(None, box_chars, clean_ctc_chars)
     fused = []
     recovered_chars = []
+    extra_indices = []  # fused positions of box-only chars (delete / unequal-replace tails)
+    repair_note = ""
 
     for tag, i1, i2, j1, j2 in sm.get_opcodes():
         if tag == "equal":
@@ -719,7 +721,17 @@ def align_and_fuse_thai_sequences(box_items: list[dict], ctc_text: str, crop_w: 
                     fused.append(c_char)
             # Handle unequal replacement lengths
             if (i2 - i1) > (j2 - j1):
-                fused.extend(box_chars[i1 + (j2 - j1):i2])
+                # Extra box chars in an unequal replace — same syntax guard as
+                # the delete branch: never keep a box char that creates an
+                # invalid consonant pattern (e.g. '2ถล' vs CTC '2ถ' -> the
+                # extra 'ล' would land at index >= 3).
+                for b_idx in range(i1 + (j2 - j1), i2):
+                    b_char = box_chars[b_idx]
+                    candidate_prefix = "".join(fused) + b_char
+                    if has_invalid_thai_consonant_placement(candidate_prefix):
+                        continue
+                    extra_indices.append(len(fused))
+                    fused.append(b_char)
             elif (j2 - j1) > (i2 - i1):
                 inserted = clean_ctc_chars[j1 + (i2 - i1):j2]
                 fused.extend(inserted)
@@ -770,12 +782,42 @@ def align_and_fuse_thai_sequences(box_items: list[dict], ctc_text: str, crop_w: 
                     fused.extend(cand_chars)
                     recovered_chars.extend(cand_chars)
         elif tag == "delete":
-            # Extra in box (e.g. leading digit missed by CTC) -> keep box!
-            fused.extend(box_chars[i1:i2])
+            # Extra in box (e.g. leading digit missed by CTC) -> keep box,
+            # BUT respect Thai consonant syntax: if keeping the extra box char
+            # produces an invalid pattern (e.g. duplicated consonant landing at
+            # index >= 3 like '2ถลล1238', or a consonant on a 2-digit truck
+            # plate), the per-char classifier hallucinated that box — drop it.
+            for b_idx in range(i1, i2):
+                b_char = box_chars[b_idx]
+                candidate_prefix = "".join(fused) + b_char
+                if has_invalid_thai_consonant_placement(candidate_prefix):
+                    continue
+                extra_indices.append(len(fused))
+                fused.append(b_char)
 
     fused_str = "".join(fused)
+    # Final syntax repair: a box-extra char that looked valid at append time can
+    # still end up invalid once a later opcode contributes more characters
+    # (e.g. box '2ถ[ลล]1238' vs CTC '2ถล1238' -> difflib deletes the FIRST 'ล',
+    # prefix '2ถล' is legal, then the equal block adds the SECOND 'ล' at index 3
+    # -> '2ถลล1238' violates DLT rules). Drop box-extras (last first) until the
+    # fused string satisfies consonant placement; keep original if repair fails.
+    if extra_indices and has_invalid_thai_consonant_placement(fused_str):
+        repaired = list(fused)
+        for idx in reversed(extra_indices):
+            if idx >= len(repaired):
+                continue
+            del repaired[idx]
+            if not has_invalid_thai_consonant_placement("".join(repaired)):
+                fused = repaired
+                fused_str = "".join(fused)
+                repair_note = " | ⚠ Syntax repair: dropped hallucinated duplicate box char"
+                break
+
     formatted = format_thai_plate(fused_str)
     note = f"⚡ Method A+C Spatial Sequence Fusion: recovered missing char(s) {recovered_chars} from CTC into physical gap" if recovered_chars else ""
+    if repair_note:
+        note = (note + repair_note).lstrip(" |")
     return formatted, note
 
 

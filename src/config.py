@@ -48,7 +48,7 @@ class Config:
     #   "character_box_detector_rtdetr.pt"      ← RT-DETR-L (older)
     # NOTE: filename must be the EXACT weight filename (no "...pt_v2.pt" mistakes —
     # a nonexistent name silently falls back to an older checkpoint via ACTIVE_CHAR_BOX_MODEL_PATH).
-    MODEL_3A_FILENAME = "character_box_detector_dfine_nano_v2.pt"
+    MODEL_3A_FILENAME = "character_box_detector_dfine_small_v2.pt"
 
     # --- Model 3A: Character Classifier (MobileNetV2) ---
     #   "character_classifier.pth" ← MobileNetV2 (50 Thai character & digit classes)
@@ -73,8 +73,8 @@ class Config:
     # v2 audit fix #4: set True to serve the trained ResNet34 weights when they
     # exist (proven to load via _load_prov_model's backbone auto-detection).
     # Default False keeps today's production checkpoint (ResNet18) untouched.
-    USE_RESNET34_PROVINCE_THAI = True  # v4: ResNet34 retrain on balanced harvest+GT data
-    MODEL_3B_THAI_FILENAME = "province_model_resnet18_grayscale_thai_v5.pth"
+    USE_RESNET34_PROVINCE_THAI = False  # v5: R18 wins in real-world serve tests; R34 kept as backup
+    MODEL_3B_THAI_FILENAME = "province_model_grayscale_thai_v5.pth"
 
     # --- Lao Plate Detector ---
     #   "plate_detector_lao_dfine_nano.pt"   ← D-FINE-Nano (⚡ recommended: MIT)
