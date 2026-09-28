@@ -53,9 +53,11 @@ class Config:
     # --- Model 3A: Character Classifier (MobileNetV2) ---
     #   "character_classifier.pth" ← MobileNetV2 (50 Thai character & digit classes)
     #   "character_classifier_v3.pth" ← leak-free retrain (recognition_v2 dataset).
-    #     NOTE: raw valid Top-1 89.09% vs production 99.45% — production number is
-    #     inflated by old-split leakage. v3 number is the honest one on unseen data.
-    CHAR_CLASSIFIER_THAI_FILENAME = "character_classifier_v3.pth"
+    #   "character_classifier_v4.pth" ← v4: v3 data + 7.6k self-labeled harvest crops
+    #     (h4_) + per-class augmentation to ≥50 crops/class. Valid Top-1 99.71% on the
+    #     re-split set (v3 scores 96.71% on the same set; rare classes ธ ป ค fixed).
+    #     Raw v3-eval numbers (89.09%) were on the OLD split — not comparable.
+    CHAR_CLASSIFIER_THAI_FILENAME = "character_classifier_v4.pth"
 
     # --- Model 3A: OCR (CTC Text Recognition) ---
     #   v3 = train/serve-matched retrain on ocr_v3 leak-free split (436 train plates).
@@ -71,8 +73,8 @@ class Config:
     # v2 audit fix #4: set True to serve the trained ResNet34 weights when they
     # exist (proven to load via _load_prov_model's backbone auto-detection).
     # Default False keeps today's production checkpoint (ResNet18) untouched.
-    USE_RESNET34_PROVINCE_THAI = True  # v3: ResNet34 leak-free retrain won (99.84% vs 98.56% R18 prod)
-    MODEL_3B_THAI_FILENAME = "province_model_resnet34_grayscale_thai_v3.pth"
+    USE_RESNET34_PROVINCE_THAI = True  # v4: ResNet34 retrain on balanced harvest+GT data
+    MODEL_3B_THAI_FILENAME = "province_model_resnet34_grayscale_thai_v4.pth"
 
     # --- Lao Plate Detector ---
     #   "plate_detector_lao_dfine_nano.pt"   ← D-FINE-Nano (⚡ recommended: MIT)

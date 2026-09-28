@@ -155,11 +155,20 @@
 
 ### ✅ ยุคที่ 7 (สถาปัตยกรรม Production ปัจจุบัน): Production-Grade 50-Class Balanced Engine + Subsumed Box Filter
 - **ทางออกที่ชนะและเสถียรที่สุด:**
-  1. **Balanced 50-Class Dataset & 35-Epoch Cosine Training**: ปรับสมดุลทุกคลาสเป็น $\ge 400$ ภาพ (29,385 ภาพ) พร้อม Photometric Shadow Augmentation ได้ความแม่นยำ **99.58% Val Top-1 / 99.89% Top-3**
+  1. **Balanced 50-Class Dataset & 35-Epoch Cosine Training**: ปรับสมดุลทุกคลาสเป็น $\\ge 400$ ภาพ (29,385 ภาพ) พร้อม Photometric Shadow Augmentation ได้ความแม่นยำ **99.58% Val Top-1 / 99.89% Top-3**
   2. **Subsumed Composite Box Filter**: ตรวจสอบกล่องที่กว้างผิดปกติและครอบกล่องย่อย 2 กล่องไว้ข้างใน โดยระบบจะตัดกล่องรวมทิ้งเพื่อรักษาตัวอักษรเดี่ยวทั้ง 2 ตัวไว้
   3. **Autocontrast Normalization**: ขยาย Dynamic Range ของ Crop ตัวอักษรที่มีเงาทอดทึบก่อนส่งเข้า Classifier
-  4. **DLT Syntax Placement Guard (`has_invalid_thai_consonant_placement`)**: ล็อคกฎไวยากรณ์ป้ายรถยนต์ส่วนบุคคล ห้ามมีพยัญชนะตามหลังตัวเลข 2 หลัก หรือขึ้นต้นด้วยตัวเลขเดี่ยวแล้วตามด้วยพยัญชนะ (`\d[พยัญชนะ]\d{4}`)
+  4. **DLT Syntax Placement Guard (`has_invalid_thai_consonant_placement`)**: ล็อคกฎไวยากรณ์ป้ายรถยนต์ส่วนบุคคล ห้ามมีพยัญชนะตามหลังตัวเลข 2 หลัก หรือขึ้นต้นด้วยตัวเลขเดี่ยวแล้วตามด้วยพยัญชนะ (`\\d[พยัญชนะ]\\d{4}`)
   5. **Protected Sequence Reconciliation**: ปกป้องป้ายพยัญชนะไทยแท้ เช่น `ณ 4100` หรือ `ผว 7697` ไม่ให้ถูกภาพหลอนป้ายรถบรรทุกสวมรอยทับ
+
+### ✅ ยุคที่ 8 (ปัจจุบัน, v4): Data-Centric Fix — Harvest + Balance + Leak-Free Re-split
+- **ปัญหาที่วัดได้จาก v3:** แม้สถาปัตยกรรมถูกต้องแล้ว valid แบบ leak-free เผยว่าคลาสหายากพังหนัก — Thai char v2 train มี ง ฟ ธ ค ฐ น พ ป = **1 crop/คลาส** เทียบเลข 180–214 (200:1), province กรุงเทพ 470 เทียบจังหวัดเล็ก 1 crop (470:1) → v3 Top-1 ตกเหลือ 96.71% บนชุดทดสอบใหม่ (ธ 0/18, ป 0/3, ค 1/12)
+- **ทางออกที่ชนะ (v4):**
+  1. **Self-Labeling Harvest (7.6k char + 983 province crops)**: `src/harvest_crops_generic.py` รัน pipeline เดียวกับ serve (M3A box → geometric filter → classifier) บนภาพจริงเพิ่ม เก็บเฉพาะ conf ≥ 0.70 พร้อม manifest provenance ทุก crop (prefix `h4_` แยกจาก GT)
+  2. **Augmented-Variant Balancing**: เติมคลาสที่ขาดด้วย augmented variants (หมุน/เลื่อน/สเกล ±6°, brightness/contrast jitter, blur/CLAHE) — **ไม่ใช่ copy ซ้ำ** จนครบทุกคลาส char ≥ 50 / province ≥ 30 crops
+  3. **Leak-Free Re-split ระดับ Source Image** (leak = 0 ทั้งสอง task) แล้ว retrain ทั้ง MobileNetV2 char + ResNet34 province
+- **ผลลัพธ์ที่วัดจริง (valid เดียวกัน, `scratch/eval_v4_all.py`):** Thai Char **Top-1 99.71%** (v3: 96.71% บนชุดเดียวกัน — คลาส rare ถูกแก้ที่ root cause) / Province R34 **Top-1 99.90%** (v3: 98.90%, ผิดเหลือ 1/1,002)
+- **บทเรียนสำคัญ:** การเพิ่ม *ความหลากหลายของข้อมูล* แก้ปัญหาที่การปรับ architecture/hyperparameter แก้ไม่ได้ — และ pseudo-label จากโมเดลตัวเอง (self-training) ใช้ได้จริงเมื่อมี confidence gate + geometric filter กัน label เน่า
 
 ---
 
@@ -220,12 +229,12 @@ flowchart LR
 - ✅ **Commercially Compliant**: ปราศจากลิขสิทธิ์ AGPL หรือเงื่อนไขที่ห้ามใช้เชิงพาณิชย์
 - ✅ **Full C# (.NET) Integration**: พร้อมโค้ดตัวอย่าง `Microsoft.ML.OnnxRuntime` + `OpenCvSharp4` นำไปใส่ในโปรเจกต์ Desktop หรือ Server ของลูกค้าได้ทันที
 - ✅ **GCP Cloud Native**: พร้อม Dockerfile และ `.dockerignore` ที่ลดขนาดลงกว่า 1.2 GB รองรับการ Deploy บน Cloud Run ได้ทันที
-- ✅ **Tested Accuracy**: 
+- ✅ **Tested Accuracy** (v4 weights, leak-free valid):
   - Plate Localization: **~99.2% mAP**
-  - Character Recognition: **~98.5% Sequence Accuracy** (ด้วย Method A+C Spatial Fusion)
-  - Province Classification: **99.20% Val Top-1** (ResNet18-Grayscale, 42.9 MB)
+  - Thai Character Classifier: **99.71% Top-1 / 99.91% Top-3** (MobileNetV2, v4 balanced retrain)
+  - Thai Province Classification: **99.90% Val Top-1** (ResNet34-Grayscale 256×80, v4 retrain — ผิด 1/1,002)
   - Average End-to-End Latency: **~75–95 ms บน CPU ทั่วไป**
-- ✅ **Traceable & Leak-Free Dataset Pipeline (v2)**: การ retrain รอบใหม่ใช้ pipeline ที่ crop ด้วยกฎ serve เดียวกัน, แบ่ง split แบบ leak-free ระดับ source image, และ curation ที่ sync กับ manifest เสมอ (ดูหัวข้อ 5.5)
+- ✅ **Traceable & Leak-Free Dataset Pipeline (v2→v4)**: ทุกรุ่น retrain ใช้ pipeline ที่ crop ด้วยกฎ serve เดียวกัน, แบ่ง split แบบ leak-free ระดับ source image, curation sync กับ manifest เสมอ และ v4 เพิ่ม **self-labeling harvest + augmented-variant balancing** จนไม่เหลือคลาสที่มี < 30 crops (ดูหัวข้อ 5.5 และยุคที่ 8)
 
 ---
 
