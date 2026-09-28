@@ -2422,9 +2422,42 @@ class LPRPipelineService:
             # This ensures private cars (1กข 1234), motorcycles, and Lao plates are 100% untouched!
             digit_count = sum(1 for item in char_boxes_detail if item.get("char", "").isdigit())
             consonant_count = sum(1 for item in char_boxes_detail if re.match(r"[\u0E01-\u0E2E]", item.get("char", "")))
+
+            # v4 fix (5ศ 7856 case): a box reading with a valid consonant prefix is
+            # REAL EVIDENCE (per-char boxes seen by M3A + classifier); an all-digit
+            # CTC reading is only a guess that may have dropped the consonant.
+            # The truck refiner must never override a valid letter-plate box result
+            # with an all-digit CTC string — that turned 5ศ 7856 into 57856 and
+            # mislabeled it "Truck/Transport, Incomplete 5/6".
+            # NOTE: we deliberately do NOT gate on has_invalid_thai_consonant_placement
+            # rule 4 here — it bans NC NNNN, but NC NNNN is a legal Trailer/Special
+            # format (PATTERN_NC_NNNN). We check the structural invariants directly:
+            # no consonant at index >= 3, no consonants sandwiched after digits.
+            def _consonant_placement_ok(text: str) -> bool:
+                clean = text.strip().replace(" ", "").replace("-", "")
+                for idx, ch in enumerate(clean):
+                    if re.match(r"[\u0E01-\u0E2E]", ch) and idx >= 3:
+                        return False
+                consonant_ended = False
+                for ch in clean:
+                    if re.match(r"[\u0E01-\u0E2E]", ch):
+                        if consonant_ended:
+                            return False
+                    elif ch.isdigit() and consonant_ended:
+                        pass
+                return True
+
+            box_is_valid_letter_plate = (
+                consonant_count >= 1
+                and is_valid_plate(fmt_box)
+                and _consonant_placement_ok(fmt_box)
+                and len(char_boxes_detail) > 0
+            )
+
             is_truck_candidate = (
                 (digit_count >= 5 and consonant_count == 0) or
-                (is_likely_truck and (valid_ctc or re.match(r"^\d{2}-\d{4}$", fmt_ctc) or digit_count >= 3))
+                (is_likely_truck and not box_is_valid_letter_plate and
+                 (valid_ctc or re.match(r"^\d{2}-\d{4}$", fmt_ctc) or digit_count >= 3))
             )
 
             clean_fmt = formatted_plate_text.replace("-", "").replace(" ", "")
@@ -2436,6 +2469,17 @@ class LPRPipelineService:
                     formatted_plate_text = best_truck_text
                 elif valid_ctc or re.match(r"^\d{2}-\d{4}$", fmt_ctc) or re.match(r"^\d{6}$", clean_ctc):
                     formatted_plate_text = fmt_ctc
+
+            # v4 fix (continued): even after the refiner, if the final text is an
+            # all-digit string but the boxes formed a VALID consonant plate, trust
+            # the boxes — the refiner above can still reach fmt_ctc via the elif.
+            if (
+                box_is_valid_letter_plate
+                and formatted_plate_text.replace(" ", "").replace("-", "").isdigit()
+                and fmt_box != formatted_plate_text
+            ):
+                formatted_plate_text = fmt_box
+                char_box_note = f"🔒 Letter-plate guard: kept box reading '{fmt_box}' (CTC '{fmt_ctc}' was all digits and likely dropped a consonant)"
 
             # Ensure finalized plate text adheres to canonical formatting (e.g. NN-NNNN with hyphen)
             formatted_plate_text = format_thai_plate(formatted_plate_text)
