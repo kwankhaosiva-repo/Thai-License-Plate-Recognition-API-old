@@ -1,0 +1,1530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Thai &amp; Lao LPR — Engineering Story</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Sarabun:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  /* ---------- professional light palette ---------- */
+  --bg:#ffffff;
+  --bg-soft:#f8fafc;
+  --bg-sunk:#f1f5f9;
+  --ink:#0f172a;
+  --body:#334155;
+  --muted:#64748b;
+  --faint:#94a3b8;
+  --line:#e5e7eb;
+  --line-2:#cbd5e1;
+  --accent:#1d4ed8;
+  --accent-2:#1e40af;
+  --accent-soft:#eff6ff;
+  --accent-line:#bfdbfe;
+  --good:#047857; --good-soft:#ecfdf5; --good-line:#a7f3d0;
+  --warn:#b45309; --warn-soft:#fffbeb; --warn-line:#fde68a;
+  --bad:#b91c1c;  --bad-soft:#fef2f2;  --bad-line:#fecaca;
+  --purple:#6d28d9; --purple-soft:#f5f3ff; --purple-line:#ddd6fe;
+  --font-sans:'Inter','Sarabun','Noto Sans Thai',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
+  --font-mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --r:8px;
+  --side:272px;
+  --bar:56px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{color-scheme:light}
+body{
+  font-family:var(--font-sans);font-size:16px;line-height:1.7;
+  background:var(--bg);color:var(--body);
+  -webkit-font-smoothing:antialiased;
+}
+
+/* ---------- sidebar table of contents ---------- */
+.side{position:fixed;inset:0 auto 0 0;width:var(--side);background:#fff;
+  border-right:1px solid var(--line);display:flex;flex-direction:column;z-index:60}
+.side-head{padding:20px 18px 14px;border-bottom:1px solid var(--line)}
+.side-brand{font-weight:700;font-size:14.5px;color:var(--ink);line-height:1.35}
+.side-brand small{display:block;font-weight:500;font-size:11.5px;color:var(--faint);margin-top:3px}
+.side-links{display:flex;gap:6px;margin-top:12px}
+.lang{font-size:11.5px;font-weight:600;color:var(--muted);text-decoration:none;
+  border:1px solid var(--line-2);border-radius:5px;padding:2px 9px}
+.lang:hover{color:var(--accent);border-color:var(--accent-line);background:var(--accent-soft)}
+.lang.on{color:#fff;background:var(--accent);border-color:var(--accent)}
+.navpills{display:flex;flex-direction:column;overflow-y:auto;flex:1;padding:12px 10px 16px;gap:1px}
+.navpills button{text-align:left;font:inherit;font-size:12.8px;line-height:1.45;color:var(--body);
+  background:none;border:0;border-radius:6px;padding:6px 10px;cursor:pointer;
+  transition:background .15s,color .15s}
+.navpills button:hover{background:var(--bg-sunk);color:var(--ink)}
+.navpills button.active{background:var(--accent-soft);color:var(--accent-2);font-weight:700}
+.navpills button.sep{margin-top:9px;padding-top:10px;border-top:1px solid var(--line)}
+.side-foot{padding:12px 14px;border-top:1px solid var(--line);display:flex;gap:8px}
+.side-foot button{flex:1;font:inherit;font-size:12px;font-weight:600;color:var(--body);background:#fff;
+  border:1px solid var(--line-2);border-radius:6px;padding:7px 10px;cursor:pointer;transition:all .15s}
+.side-foot button:hover{border-color:var(--accent);color:var(--accent)}
+
+/* ---------- mobile top bar ---------- */
+.mobilebar{display:none;position:fixed;top:0;left:0;right:0;height:var(--bar);z-index:65;
+  align-items:center;gap:10px;padding:0 14px;background:rgba(255,255,255,.94);
+  backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.mb-title{font-size:13.5px;font-weight:700;color:var(--ink);white-space:nowrap}
+.mobilebar select{flex:1;min-width:0;font:inherit;font-size:13px;color:var(--body);
+  background:#fff;border:1px solid var(--line-2);border-radius:6px;padding:6px 8px}
+.progress{position:fixed;top:0;left:var(--side);right:0;height:3px;width:0;z-index:70;
+  background:var(--accent);transition:width .1s linear}
+
+.deck{margin-left:var(--side)}
+.slide{position:relative;max-width:960px;margin:0 auto;padding:64px 48px 72px;
+  border-top:1px solid var(--line);scroll-margin-top:24px}
+.slide:first-child{border-top:0;padding-top:56px}
+
+/* ---------- chapter dividers ---------- */
+.act{background:var(--bg-soft)}
+.act .rnum{font-family:var(--font-mono);font-size:44px;font-weight:700;line-height:1;
+  letter-spacing:.06em;color:#cbd5e1;margin-bottom:4px}
+.act.neg .rnum{color:#fca5a5}
+.act.win .rnum{color:#86efac}
+.act h1{font-size:clamp(24px,3vw,34px);margin-bottom:10px}
+.act .q{font-size:17px;color:var(--accent);font-weight:600;margin-bottom:18px}
+.act.neg .q{color:var(--bad)}
+.act.win .q{color:var(--good)}
+.act .rule{height:1px;width:100%;background:var(--line-2);margin-bottom:22px}
+
+.beat{display:flex;gap:16px;align-items:flex-start;margin-bottom:16px}
+.beat .when{flex:0 0 104px;font-family:var(--font-mono);font-size:11.5px;font-weight:600;
+  color:var(--accent-2);background:var(--accent-soft);border:1px solid var(--accent-line);
+  border-radius:999px;padding:3px 0;text-align:center;margin-top:3px}
+.beat .what{flex:1;min-width:0}
+.beat .what h3{margin-bottom:2px}
+.beat.bad .when{color:var(--bad);background:var(--bad-soft);border-color:var(--bad-line)}
+.beat.good .when{color:var(--good);background:var(--good-soft);border-color:var(--good-line)}
+
+.lesson{border-left:3px solid var(--purple);background:var(--purple-soft);
+  padding:12px 18px;border-radius:0 6px 6px 0;margin:16px 0}
+.lesson .lt{font-size:11px;font-weight:700;letter-spacing:.12em;color:var(--purple);
+  text-transform:uppercase;margin-bottom:4px}
+.lesson p{margin:0;color:var(--ink);font-weight:600}
+
+.eyebrow{display:inline-block;font-size:11.5px;font-weight:600;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--muted);background:var(--bg-sunk);
+  border:1px solid var(--line);padding:3px 10px;border-radius:4px;margin-bottom:16px}
+h1{font-size:clamp(26px,3.2vw,40px);line-height:1.28;font-weight:700;color:var(--ink);letter-spacing:-.2px}
+h2{font-size:clamp(21px,2.2vw,27px);line-height:1.4;font-weight:700;color:var(--ink);margin-bottom:12px}
+h3{font-size:16px;font-weight:700;color:var(--ink);margin:0 0 6px}
+p{color:var(--body);margin-bottom:12px;max-width:92ch}
+p strong,li strong{color:var(--ink);font-weight:700}
+.lead{font-size:17.5px;color:var(--body);max-width:80ch;margin-bottom:22px}
+.muted{color:var(--muted);font-size:13.5px}
+ul,ol{margin:0 0 12px 0;padding-left:22px;color:var(--body)}
+li{margin-bottom:6px}
+li::marker{color:var(--faint)}
+code,.mono{font-family:var(--font-mono);font-size:.87em}
+code{background:var(--bg-sunk);border:1px solid var(--line);border-radius:4px;padding:1px 5px;color:#1e3a8a}
+a{color:var(--accent)}
+.sub{font-size:12.5px;color:var(--muted);margin-top:5px}
+
+.grid{display:grid;gap:14px}
+.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.g4{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media(max-width:1080px){.g3,.g4{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:760px){.g2,.g3,.g4{grid-template-columns:1fr}}
+
+.card{background:#fff;border:1px solid var(--line);border-radius:var(--r);padding:16px 18px}
+.card.accent{background:var(--accent-soft);border-color:var(--accent-line)}
+.card.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.card.bad{background:var(--bad-soft);border-color:var(--bad-line)}
+.card.good{background:var(--good-soft);border-color:var(--good-line)}
+.card.purple{background:var(--purple-soft);border-color:var(--purple-line)}
+.card h3{display:flex;align-items:center;gap:8px}
+.card ul{padding-left:18px;margin-bottom:0}
+.card p:last-child{margin-bottom:0}
+.card.tight{padding:13px 15px}
+
+.stat{text-align:center;padding:16px 12px}
+.stat .v{font-family:var(--font-mono);font-size:clamp(22px,2.5vw,30px);font-weight:700;
+  line-height:1.15;color:var(--accent)}
+.stat .v.green{color:var(--good)} .stat .v.amber{color:var(--warn)}
+.stat .v.red{color:var(--bad)} .stat .v.purple{color:var(--purple)}
+.stat .l{font-size:12.5px;color:var(--muted);margin-top:7px;line-height:1.45}
+.stat .n{font-size:11.5px;color:var(--faint);font-family:var(--font-mono);margin-top:3px}
+
+.tw{overflow-x:auto;background:#fff;border:1px solid var(--line);
+  border-radius:var(--r);margin-bottom:16px}
+.tw.compact table{font-size:12.4px;min-width:680px}
+.tw.compact thead th{white-space:normal}
+.tw.compact thead th,.tw.compact tbody td{padding:8px 10px}
+.tw.compact th:last-child,.tw.compact td:last-child{white-space:normal}
+table{width:100%;border-collapse:collapse;font-size:13.5px;min-width:560px}
+thead th{background:var(--bg-soft);font-size:11px;text-transform:uppercase;letter-spacing:.07em;
+  color:var(--muted);font-weight:700;text-align:left;padding:10px 13px;
+  border-bottom:1px solid var(--line-2);white-space:nowrap}
+tbody td{padding:10px 13px;border-bottom:1px solid var(--line);color:var(--body);vertical-align:top}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:hover td{background:var(--bg-soft)}
+td.num,th.num{font-family:var(--font-mono);text-align:right;white-space:nowrap}
+td.ok{color:var(--good);font-weight:600}
+td.no{color:var(--bad);font-weight:600}
+td.hi{color:var(--accent);font-weight:600}
+.pill{display:inline-block;font-size:11px;font-weight:700;padding:1px 8px;border-radius:4px;
+  border:1px solid;font-family:var(--font-mono)}
+.pill.p0{color:var(--bad);border-color:var(--bad-line);background:var(--bad-soft)}
+.pill.p1{color:var(--warn);border-color:var(--warn-line);background:var(--warn-soft)}
+.pill.p2{color:var(--accent);border-color:var(--accent-line);background:var(--accent-soft)}
+.pill.ok{color:var(--good);border-color:var(--good-line);background:var(--good-soft)}
+
+.callout{border-left:3px solid var(--accent);background:var(--accent-soft);padding:12px 16px;
+  border-radius:0 6px 6px 0;margin:14px 0;font-size:14px;color:var(--body)}
+.callout.warn{border-color:var(--warn);background:var(--warn-soft)}
+.callout.bad{border-color:var(--bad);background:var(--bad-soft)}
+.callout.good{border-color:var(--good);background:var(--good-soft)}
+.callout strong{color:var(--ink)}
+
+.plate{display:inline-flex;align-items:center;gap:10px;background:#fff;color:#111827;
+  border:2px solid #111827;border-radius:6px;padding:6px 14px;font-weight:700;
+  font-size:20px;letter-spacing:.06em}
+.plate.wrong{border-color:var(--bad);background:var(--bad-soft)}
+.plate.right{border-color:var(--good);background:var(--good-soft)}
+.plate .note{font-size:11px;font-weight:600;letter-spacing:0;color:var(--muted)}
+.chip{display:inline-block;font-family:var(--font-mono);font-size:12.5px;background:var(--bg-sunk);
+  border:1px solid var(--line);border-radius:4px;padding:2px 7px;color:#1e3a8a;margin:2px 4px 2px 0}
+.chip.r{color:var(--bad);border-color:var(--bad-line);background:var(--bad-soft)}
+.chip.a{color:var(--warn);border-color:var(--warn-line);background:var(--warn-soft)}
+
+.flow{display:flex;flex-direction:column;gap:10px;margin-bottom:18px}
+.frow{display:flex;align-items:stretch;gap:9px;flex-wrap:wrap}
+.node{flex:1 1 150px;min-width:130px;background:#fff;border:1px solid var(--line);
+  border-left:3px solid var(--line-2);border-radius:var(--r);padding:11px 13px}
+.node .tag{font-size:10px;font-weight:700;letter-spacing:.1em;color:var(--faint);text-transform:uppercase}
+.node .nm{font-size:14px;font-weight:700;color:var(--ink);margin:2px 0 3px}
+.node .ds{font-size:12.5px;color:var(--muted);line-height:1.55}
+.node.a{border-left-color:var(--accent)}
+.node.b{border-left-color:var(--good)}
+.node.c{border-left-color:var(--purple)}
+.node.w{border-left-color:var(--warn)}
+.arrow{align-self:center;color:var(--faint);font-size:16px;padding:0 2px}
+
+.barwrap{display:flex;flex-direction:column;gap:9px}
+.bar{display:grid;grid-template-columns:160px 1fr 82px;gap:10px;align-items:center;font-size:13px}
+@media(max-width:760px){.bar{grid-template-columns:1fr 54px;grid-template-areas:'l v' 't t';row-gap:4px}
+  .bar .bl{grid-area:l}.bar .bt{grid-area:t}.bar .bv{grid-area:v}}
+.bar .bl{color:var(--body);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar .bt{height:8px;border-radius:999px;background:var(--bg-sunk);overflow:hidden}
+.bar .bf{height:100%;border-radius:999px;background:var(--accent)}
+.bar .bf.g{background:var(--good)}
+.bar .bf.a{background:var(--warn)}
+.bar .bf.r{background:var(--bad)}
+.bar .bv{font-family:var(--font-mono);font-size:12.5px;text-align:right;color:var(--ink)}
+
+/* ---------- utilities ---------- */
+.totop{position:fixed;right:22px;bottom:22px;z-index:70;font:inherit;font-size:13px;font-weight:600;
+  color:var(--ink);background:#fff;border:1px solid var(--line-2);border-radius:6px;
+  padding:9px 14px;cursor:pointer;box-shadow:0 2px 10px rgba(15,23,42,.08);
+  opacity:0;pointer-events:none;transform:translateY(6px);
+  transition:opacity .2s,transform .2s,border-color .15s}
+.totop.show{opacity:1;pointer-events:auto;transform:none}
+.totop:hover{border-color:var(--accent);color:var(--accent)}
+.counter{position:fixed;right:22px;bottom:66px;z-index:70;font-family:var(--font-mono);font-size:11.5px;
+  color:var(--muted);background:#fff;border:1px solid var(--line);border-radius:6px;
+  padding:4px 10px;box-shadow:0 2px 8px rgba(15,23,42,.06);opacity:0;transition:opacity .2s}
+.counter.show{opacity:1}
+.counter b{color:var(--accent);font-weight:700}
+.secnum{position:absolute;top:26px;right:48px;font-family:var(--font-mono);font-size:11.5px;
+  color:var(--faint);letter-spacing:.06em}
+.footer-note{margin-top:26px;padding-top:14px;border-top:1px solid var(--line);
+  font-size:12px;color:var(--faint)}
+
+/* ---------- responsive ---------- */
+@media(max-width:1024px){
+  .side{display:none}
+  .deck{margin-left:0;padding-top:var(--bar)}
+  .progress{left:0}
+  .mobilebar{display:flex}
+  .slide{padding:48px 24px 56px}
+  .slide:first-child{padding-top:36px}
+  .act{padding:56px 24px 48px}
+  .secnum{position:static;margin:0 0 10px;font-size:11px}
+}
+@media(max-width:760px){.footer-note{font-size:11px}}
+
+@media print{
+  .side,.mobilebar,.totop,.counter,.progress{display:none}
+  .deck{margin-left:0;padding-top:0}
+  .slide{max-width:none;padding:16px 0;page-break-after:always;page-break-inside:avoid}
+  .slide:first-child{padding-top:0}
+  .act{background:#fff}
+  a{color:inherit;text-decoration:none}
+}
+</style>
+</head>
+<body>
+
+<aside class="side">
+  <div class="side-head">
+    <div class="side-brand">Thai &amp; Lao LPR<small>Engineering story · 136 commits</small></div>
+    <div class="side-links">
+      <a class="lang" href="presentation.html">ไทย</a>
+      <a class="lang on" href="presentation_en.html">English</a>
+    </div>
+  </div>
+  <nav class="navpills" id="navpills"></nav>
+  <div class="side-foot">
+    <button id="btnPrint">Print / PDF</button>
+    <button id="btnTop" title="or press g">Back to top</button>
+  </div>
+</aside>
+
+<header class="mobilebar">
+  <span class="mb-title">Thai &amp; Lao LPR</span>
+  <select id="jumpSel" aria-label="Jump to section"></select>
+  <a class="lang" href="presentation.html">ไทย</a>
+</header>
+
+<div class="progress" id="progress"></div>
+
+<main class="deck" id="deck">
+
+<!-- 1 COVER -->
+<section class="slide act" data-title="Cover">
+  <span class="eyebrow">Engineering story · 136 commits · Dec 2025 → Sep 2026</span>
+  <h1>“Why we built it this way”</h1>
+  <p class="lead" style="font-size:19px">The decision story behind a Thai–Lao license plate recognition system —
+  from six failed eras to an architecture that actually ships.</p>
+
+  <div class="grid g3">
+    <div class="card bad">
+      <h3>😵 Six eras that failed first</h3>
+      <p class="muted">AABB → OBB → whole-plate OCR → DLT banner code → blind CTC → merged box</p>
+    </div>
+    <div class="card warn">
+      <h3>🎯 The real director</h3>
+      <p class="muted">Not the benchmark — three constraints: <strong>License</strong> · <strong>CPU</strong> · <strong>C# / ONNX Runtime</strong></p>
+    </div>
+    <div class="card good">
+      <h3>✅ What ships today</h3>
+      <p class="muted">~75–95 ms on CPU · ONNX Opset 18 running on .NET · 100% commercially permissive</p>
+    </div>
+  </div>
+
+  <div class="callout">
+    <strong>How to read this deck:</strong> Acts I–IV answer <em>“what did we run into”</em> (real problems, real evidence).<br>
+    Acts V–VII answer <em>“how did we fix it, and why that way”</em>. The epilogue is <em>“why this library and not that one”</em>.<br>
+    Appendices A–F hold every reference table: specs, augmentation, measured numbers, the v6 plan, and the tech stack.
+  </div>
+
+  <div class="footer-note">
+    Sources: <span class="mono">README.md</span> · <span class="mono">presentation_briefing.md</span> ·
+    <span class="mono">docs/IMPROVEMENT_ANALYSIS_V6.md</span> · <span class="mono">git log</span>
+  </div>
+</section>
+
+<!-- 2 PROLOGUE -->
+<section class="slide" data-title="Starting point">
+  <span class="eyebrow">Prologue · the starting point</span>
+  <h2>Where we started — not “let’s build an AI model”</h2>
+
+  <div class="beat good">
+    <div class="when">2025-12-04</div>
+    <div class="what">
+      <h3>First commits: <span class="mono">first commit</span> → <span class="mono">preprocess fix</span> → <span class="mono">train fix</span> → <span class="mono">api add</span></h3>
+      <p class="muted">A prototype reader plus a FastAPI service. We did not yet know where the real problems were hiding — this was pure exploration.</p>
+    </div>
+  </div>
+
+  <div class="callout">
+    <strong>The actual business problem:</strong> CCTV at gates and checkpoints must read
+    <strong>Thai and Lao</strong> plates, store searchable history, and — critically —
+    <strong>ship inside the customer’s existing system, which is written in C# (.NET)</strong>.
+  </div>
+
+  <div class="grid g2" style="margin-top:16px">
+    <div class="card accent">
+      <h3>What the system must do</h3>
+      <ul>
+        <li>Take an image or an RTSP stream → detect the plate in a real street scene</li>
+        <li>Rectify the plate, then separate the character row from the province row</li>
+        <li>Read both the “series–number” and the “province” correctly</li>
+        <li>Record in real time and feed analytics (Firestore + BigQuery)</li>
+      </ul>
+    </div>
+    <div class="card purple">
+      <h3>Working rules this project has followed from day one</h3>
+      <ul>
+        <li><strong>Config-driven</strong> — important knobs live in config, not scattered in code</li>
+        <li><strong>Validate + regression-check</strong> before every delivery</li>
+        <li><strong>Test first</strong>, then run the full job</li>
+        <li>Always report which files changed and how to verify</li>
+      </ul>
+      <p class="muted" style="margin-top:6px">That discipline is exactly why Acts V–VII have real measured numbers to tell.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 3 CONSTRAINTS -->
+<section class="slide" data-title="Three constraints">
+  <span class="eyebrow">Prologue · the compass</span>
+  <h2>Three constraints that decided everything else</h2>
+  <p class="lead">The most accurate model in the world is worthless the moment it violates one of these three.
+  This is what makes the project choose differently from everyone else.</p>
+
+  <div class="grid g3">
+    <div class="card accent">
+      <h3>① Commercial license</h3>
+      <p>The customer is industrial → no AGPL, no royalty.</p>
+      <p class="muted"><strong>Consequence:</strong> Ultralytics YOLO (AGPL-3.0) is allowed only as a
+      <em>benchmarking tool</em>; anything in the served weights must be MIT / Apache-2.0 / BSD-3.</p>
+      <div class="sub mono">D-FINE = MIT · RF-DETR = Apache-2.0 · MobileNet/ResNet = BSD-3</div>
+    </div>
+    <div class="card accent">
+      <h3>② CPU only, no GPU</h3>
+      <p>Target runtime is Cloud Run / an edge box — no GPU available.</p>
+      <p class="muted"><strong>Consequence:</strong> the ~75–95 ms per-image budget eliminates large
+      transformer detectors instantly (84–108 ms <em>per stage</em>).</p>
+      <div class="sub mono">FORCE_CPU=True · warmup at startup</div>
+    </div>
+    <div class="card accent">
+      <h3>③ Must run on C# .NET</h3>
+      <p>Every model must export to <strong>ONNX (Opset 18)</strong> and run through
+      <span class="mono">Microsoft.ML.OnnxRuntime</span> + <span class="mono">OpenCvSharp4</span>.</p>
+      <p class="muted"><strong>Consequence (the big one):</strong> anything needing a custom C++ operator
+      dies right here. Luckily it died during <em>experiments</em>, not during <em>delivery</em>.</p>
+      <div class="sub mono">docs/csharp_integration_guide.md · no Python needed on the customer’s machine</div>
+    </div>
+  </div>
+
+  <div class="lesson">
+    <div class="lt">Compass</div>
+    <p>Deployment constraints choose the architecture — not the leaderboard.</p>
+  </div>
+</section>
+
+<!-- 4 ACT I -->
+<section class="slide act neg" data-title="Act I">
+  <div class="rnum">ACT I</div>
+  <h1>The plate was never straight</h1>
+  <div class="q">This act asks: “why do we still misread characters that look perfectly clear?”</div>
+  <div class="rule"></div>
+  <p class="lead">The first era assumed “find the plate → crop → feed OCR”. It did not take long to learn
+  that nearly half the errors were not the reader’s fault — they were caused by the
+  <strong>geometry of the image we were feeding it</strong>.</p>
+</section>
+
+<!-- 5 ERA 1 -->
+<section class="slide" data-title="Era 1: AABB">
+  <span class="eyebrow">Act I · era 1</span>
+  <h2>❌ Era 1 — plain AABB, then crop straight out</h2>
+
+  <div class="grid g2">
+    <div class="card bad">
+      <h3>What we did</h3>
+      <p>An axis-aligned detector returns a rectangle → expand it slightly → crop → send to OCR.</p>
+    </div>
+    <div class="card bad">
+      <h3>What we found</h3>
+      <p>Whenever the camera is mounted at an angle or the car is turning, the plate becomes a
+      <strong>trapezoid</strong>: characters are stretched and no two are the same height.</p>
+      <div class="stat" style="padding:6px 0">
+        <div class="v red">&gt; 40%</div>
+        <div class="l">misread rate on angled plates</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="beat bad">
+    <div class="when">2026-09-03</div>
+    <div class="what">
+      <h3>Commit: <span class="mono">feat: implement perspective transform pipeline</span></h3>
+      <p class="muted">That day we stopped “cropping” and started “transforming the viewpoint” — the first
+      architectural turning point.</p>
+    </div>
+  </div>
+
+  <div class="lesson">
+    <div class="lt">Lesson from this act</div>
+    <p>Before changing the model, check whether the image you feed it is still the problem.</p>
+  </div>
+</section>
+
+<!-- 6 ACT II -->
+<section class="slide act neg" data-title="Act II">
+  <div class="rnum">ACT II</div>
+  <h1>The path that looked best was the dead end</h1>
+  <div class="q">This act asks: “why can a model that is accurate in a notebook never reach the customer?”</div>
+  <div class="rule"></div>
+  <p class="lead">The answer is Rotated NMS — a custom C++ operator that standard ONNX Runtime does not have.
+  The OBB model worked beautifully in PyTorch and <strong>broke at export</strong>.
+  That was the day the C# constraint became the narrator of this whole story.</p>
+</section>
+
+<!-- 7 ERA 2 -->
+<section class="slide" data-title="Era 2: OBB">
+  <span class="eyebrow">Act II · era 2</span>
+  <h2>❌ Era 2 — one-stage Rotated Bounding Box (OBB) / segmentation</h2>
+
+  <div class="grid g2">
+    <div class="card bad">
+      <h3>Why it looked good</h3>
+      <ul>
+        <li>Rotatable boxes → handle angled plates in a single model</li>
+        <li>Segmentation gives a plate mask → rectify directly from it</li>
+        <li>“One model, done” reads as simpler</li>
+      </ul>
+    </div>
+    <div class="card bad">
+      <h3>The two walls we hit</h3>
+      <ul>
+        <li><strong>Slow on CPU:</strong> ~90–120 ms per image, over the real-time budget</li>
+        <li><strong>Export refused:</strong> ONNX needs <span class="mono">Rotated NMS</span> as a custom
+        C++ operator, which standard ONNX Runtime does not provide</li>
+      </ul>
+      <p class="muted">→ barely runnable from C# / .NET and fragile in deployment (commits
+      <span class="mono">fcf9857</span>, <span class="mono">efc2e47</span>)</p>
+    </div>
+  </div>
+
+  <div class="callout bad">
+    <strong>The painful truth:</strong> we burned time on a route that had good accuracy but was not
+    shippable. Had we started from the deployment constraint instead of the benchmark, we would never
+    have spent that month.
+  </div>
+
+  <div class="lesson">
+    <div class="lt">Lesson from this act</div>
+    <p>Try the export and run it from the target language on day one — not after training finishes.</p>
+  </div>
+</section>
+
+<!-- 8 ERA 2 FIX -->
+<section class="slide" data-title="Era 2: the fix">
+  <span class="eyebrow">Act II · the fix</span>
+  <h2>✅ The winning path: a 2-stage light keypoint regressor</h2>
+  <p class="lead">If ONNX Runtime cannot do Rotated NMS, then <em>we</em> rotate the image with OpenCV —
+  and let the model do only what exports everywhere: <strong>regress four points</strong>.</p>
+
+  <div class="flow">
+    <div class="frow">
+      <div class="node a"><div class="tag">Stage 1</div><div class="nm">AABB Detector</div><div class="ds">D-FINE-Nano ~27 ms · finds the upright plate box + 12% margin</div></div>
+      <span class="arrow">→</span>
+      <div class="node a"><div class="tag">Stage 1.1</div><div class="nm">Corner Regressor</div><div class="ds">MobileNetV3-Small predicts 8 values (4 corners) in 3.2 ms</div></div>
+      <span class="arrow">→</span>
+      <div class="node b"><div class="tag">Pure OpenCV</div><div class="nm">warpPerspective</div><div class="ds">Rectifies the plate exactly — no custom ONNX operators</div></div>
+    </div>
+  </div>
+
+  <div class="grid g3">
+    <div class="card good"><h3>Fast</h3><p class="muted">~30 ms for both stages — 3–4× faster than OBB</p></div>
+    <div class="card good"><h3>Portable</h3><p class="muted">Pure regression + homography → runs on ONNX Runtime, OpenCvSharp4, mobile, anywhere</p></div>
+    <div class="card good"><h3>Bonus</h3><p class="muted">A perfectly rectified 320×160 plate becomes the shared input for every downstream stage</p></div>
+  </div>
+
+  <div class="beat">
+    <div class="when">09-13 / 09-17</div>
+    <div class="what">
+      <h3>Commits: <span class="mono">add PlateQuadNet detection pipeline, C# reference example</span> → <span class="mono">add PlateCornerRegressor</span></h3>
+      <p class="muted">Note the <strong>C# reference example</strong> was built the same day — the C# constraint was
+      treated as a requirement from the start, not an afterthought.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 9 ACT III -->
+<section class="slide act neg" data-title="Act III">
+  <div class="rnum">ACT III</div>
+  <h1>Reading the whole plate at once did not work</h1>
+  <div class="q">This act asks: “why did the province name end up inside the plate number?”</div>
+  <div class="rule"></div>
+  <p class="lead">Thai plates have two rows (series–number on top, province below) and trucks have a dash.
+  Fed the whole plate, the OCR “reads it as one sentence” and the rows bleed into each other.</p>
+</section>
+
+<!-- 10 ERA 3 -->
+<section class="slide" data-title="Era 3: split the job">
+  <span class="eyebrow">Act III · era 3</span>
+  <h2>❌ Era 3 — whole-plate OCR with no component split</h2>
+
+  <div class="grid g2">
+    <div class="card bad">
+      <h3>Symptoms we saw</h3>
+      <ul>
+        <li>The province name leaked into the plate number</li>
+        <li>Top and bottom rows swapped places</li>
+        <li>Truck plates with a dash → the model tried to read the dash as a character</li>
+      </ul>
+    </div>
+    <div class="card good">
+      <h3>Fix: Model 2 (component detector)</h3>
+      <p>Add a stage that does exactly one thing — separate the <span class="mono">plate_char</span>
+      zone from the <span class="mono">province</span> zone — then let each specialist model read its own part.</p>
+      <div class="sub mono">commit 2026-09-04 “add code for model 2 plate and province charactor”</div>
+    </div>
+  </div>
+
+  <div class="callout">
+    <strong>This was the first time we changed our way of thinking, not our model.</strong>
+    We stopped trying to make one model smarter and started <em>giving each job to the right stage</em> —
+    which fixed something that adding capacity never could.
+  </div>
+
+  <div class="lesson">
+    <div class="lt">Lesson from this act</div>
+    <p>When one model is asked to do two jobs at once, its failures become too tangled to diagnose.</p>
+  </div>
+</section>
+
+<!-- 11 ACT IV -->
+<section class="slide act neg" data-title="Act IV">
+  <div class="rnum">ACT IV</div>
+  <h1>The era the model invented answers</h1>
+  <div class="q">This act asks: “why could the system confidently read things that are not on the plate?”</div>
+  <div class="rule"></div>
+  <p class="lead">When a late-stage model is <em>required</em> to answer, small errors get promoted into
+  plausible-looking text. That is worse than saying “I cannot read it”, because nobody knows it is wrong.</p>
+</section>
+
+<!-- 12 ERAS 4-6 -->
+<section class="slide" data-title="Eras 4–6">
+  <span class="eyebrow">Act IV · three failures</span>
+  <h2>Eras 4, 5 and 6 — different symptoms, one root cause</h2>
+
+  <div class="beat bad">
+    <div class="when">Era 4</div>
+    <div class="what">
+      <h3>❌ Trusting the DLT top banner code (two digits beside “THAILAND”)</h3>
+      <p class="muted">The digits are tiny and usually pierced by the mounting screw → <span class="mono">70</span>
+      (Ratchaburi) read as <span class="mono">55</span> (Nan), and then it <strong>overrode a correctly read province name</strong>.</p>
+      <p class="muted"><strong>The interesting part:</strong> commit 09-09 <span class="mono">implement DLT truck province code extraction</span>,
+      then 09-17 <span class="mono">remove DLT truck extraction logic</span> — <em>we built it, then we deleted it</em>.</p>
+    </div>
+  </div>
+  <div class="beat bad">
+    <div class="when">Era 5</div>
+    <div class="what">
+      <h3>❌ Blind CTC insertion — filling missing boxes without checking</h3>
+      <p class="muted">Screws and reflective frames got hallucinated as digits: real plate <span class="mono">กย 588</span>
+      became <span class="mono">5กย 4588</span>. A truck plate <span class="mono">70-1737</span> had its dash read as a
+      consonant → <span class="mono">70ษย7ม</span>, which is plainly illegal.</p>
+    </div>
+  </div>
+  <div class="beat bad">
+    <div class="when">Era 6</div>
+    <div class="what">
+      <h3>❌ Merged boxes swallowing characters + an imbalanced classifier</h3>
+      <p class="muted">Adjacent characters (<span class="mono">97</span>) were predicted as one wide box
+      (<span class="mono">w &gt; 1.6 × median</span>) and NMS then swallowed the two real children.
+      A single-letter plate <span class="mono">ณ 4100</span> was hallucinated into <span class="mono">74-0001</span>.</p>
+    </div>
+  </div>
+
+  <div class="callout bad">
+    <strong>The shared pattern:</strong> a late stage had real power to override earlier results, with no check on
+    whether the output was <em>even possible</em> under plate grammar.
+  </div>
+</section>
+
+<!-- 13 ERA 7 -->
+<section class="slide" data-title="Era 7: the fixes">
+  <span class="eyebrow">Act IV · the fixes</span>
+  <h2>✅ Era 7 — teaching the system what is impossible</h2>
+
+  <div class="grid g2">
+    <div class="card good">
+      <h3>1 · Subsumed composite box filter</h3>
+      <p>Detect abnormally wide boxes that <strong>contain two smaller boxes</strong> → drop the merged box so both
+      real characters survive.</p>
+      <div class="sub mono">commit 09-21: add greedy NMS and wide box splitting</div>
+    </div>
+    <div class="card good">
+      <h3>2 · DLT syntax placement guard</h3>
+      <p><span class="mono">has_invalid_thai_consonant_placement()</span> locks private-plate grammar:
+      no consonant after a two-digit number, and no <span class="mono">\d[consonant]\d{4}</span> shape.</p>
+    </div>
+    <div class="card good">
+      <h3>3 · Protected sequence reconciliation</h3>
+      <p>Protects genuine Thai consonant plates like <span class="mono">ณ 4100</span> or <span class="mono">ผว 7697</span>
+      from being overwritten by a hallucinated truck reading.</p>
+    </div>
+    <div class="card good">
+      <h3>4 · Autocontrast normalization</h3>
+      <p>Expands the dynamic range of shadowed character crops before classification —
+      related to commit 09-09 <span class="mono">add low-light CLAHE enhancement</span>.</p>
+    </div>
+  </div>
+
+  <div class="lesson">
+    <div class="lt">Lesson from this act</div>
+    <p>A system that must always answer will hallucinate — it needs both rules that say “impossible”
+    and a way to say “I do not know”.</p>
+  </div>
+</section>
+
+<!-- 14 ACT V -->
+<section class="slide act" data-title="Act V">
+  <div class="rnum">ACT V</div>
+  <h1>The turn: stop tuning models, start auditing data</h1>
+  <div class="q">This act asks: “if the architecture is already right, why is accuracy still stuck?”</div>
+  <div class="rule"></div>
+  <p class="lead">After we had fixed the architecture, the model still failed on the same classes over and over.
+  So we audited the house we had built — and found four uncomfortable facts.</p>
+</section>
+
+<!-- 15 AUDIT -->
+<section class="slide" data-title="Dataset audit">
+  <span class="eyebrow">Act V · the audit</span>
+  <h2>What the dataset audit found — and why it changed everything</h2>
+
+  <div class="grid g2">
+    <div class="card bad">
+      <h3>① Class imbalance beyond imagination</h3>
+      <p>Character training set: digits had ~180–214 crops per class, while <span class="mono">ง ฟ ธ ค ฐ น พ ป</span>
+      had exactly <strong>1 crop</strong> — a <strong>200 : 1</strong> ratio.</p>
+      <p>Province training set: Bangkok had 470 crops versus <strong>1 crop</strong> for a small province — <strong>470 : 1</strong>.</p>
+      <p class="muted">→ Rare classes survived by “remembering the picture”, not by learning the province itself.</p>
+    </div>
+    <div class="card bad">
+      <h3>② Train/serve crop mismatch</h3>
+      <p>The original dataset was hand-boxed on Roboflow, while production used its own crop rules
+      (insets / padding / min-y gating).</p>
+      <p class="muted">→ The province model looked great in-dataset but <strong>failed on real street plates</strong>,
+      because the distributions differed. The root cause was that <em>we built our data differently from how we use it</em>.</p>
+    </div>
+    <div class="card bad">
+      <h3>③ Hidden split leakage</h3>
+      <p>Frames from the same capture second (the same car in the same video) sat in both train and valid ·
+      byte-identical province crops were on both sides · per-crop sampling scattered one plate’s crops across splits.</p>
+      <p class="muted">→ <strong>The old validation accuracy was inflated and not comparable at all.</strong></p>
+    </div>
+    <div class="card warn">
+      <h3>④ Junk that the classifier was forced to name</h3>
+      <p>Dash slivers, plate-edge fragments and screws survived NMS, and the classifier has only 50 classes
+      (digits + consonants, no “junk”) — so it was forced to pick a digit.</p>
+      <p class="muted">→ This is the origin of the extra digits and distorted shapes seen on screen.</p>
+    </div>
+  </div>
+
+  <div class="beat bad">
+    <div class="when">2026-09-23</div>
+    <div class="what">
+      <h3>Commit: <span class="mono">feat: add v2 recognition dataset extraction, splitting, tests, and documentation</span></h3>
+      <p class="muted">This is the day the project shifted from <strong>architecture-centric</strong> to <strong>data-centric</strong>.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 16 V2 PIPELINE -->
+<section class="slide" data-title="v2 retrain pipeline">
+  <span class="eyebrow">Act V · the fix</span>
+  <h2>Building a three-step data pipeline you can trust</h2>
+
+  <div class="grid g3" style="margin-bottom:16px">
+    <div class="card accent">
+      <h3>Step 1 · Extract</h3>
+      <p class="mono" style="font-size:12.5px">extract_recognition_crops_v2.py</p>
+      <p>Crops using <strong>exactly the serve rules</strong> (not hand-drawn boxes) plus a
+      <span class="mono">manifest.csv</span> recording the provenance of every crop.</p>
+      <p class="muted">Directly fixes finding ②</p>
+    </div>
+    <div class="card accent">
+      <h3>Step 2 · Split</h3>
+      <p class="mono" style="font-size:12.5px">split_recognition_dataset_v2.py</p>
+      <p><strong>Source-image grouped</strong> splitting — all crops of one car or one video stay on the same side.</p>
+      <p class="muted">Directly fixes finding ③</p>
+    </div>
+    <div class="card accent">
+      <h3>Step 3 · Curate</h3>
+      <p class="mono" style="font-size:12.5px">curate_recognition_v2.py</p>
+      <p>Inspect and correct label errors safely, always <strong>in sync with the manifest</strong> — never editing stray files.</p>
+      <p class="muted">commit 2026-09-26</p>
+    </div>
+  </div>
+
+  <div class="grid g2">
+    <div class="card purple">
+      <h3>Then we added data — in two ways that do not cheat</h3>
+      <ul>
+        <li><strong>Self-labeling harvest:</strong> run the <em>same pipeline as serve</em>
+        (M3A box → geometric filter → classifier) over new real images, keeping only
+        <span class="mono">conf ≥ 0.70</span>, with full provenance in the manifest.</li>
+        <li><strong>Augmented-variant balancing:</strong> fill thin classes with rotated / scaled / jittered / blurred
+        variants — <strong>not by duplicating the same image</strong>.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Why not just copy images until the counts match?</h3>
+      <p>Duplication makes a small class <strong>overfit one picture</strong> without adding anything for the model to
+      learn — training numbers improve while generalization gets worse.</p>
+      <p class="muted">That is why we used <span class="mono">WeightedRandomSampler</span> plus class weighting at the
+      loss instead of adding files.</p>
+    </div>
+  </div>
+
+  <div class="lesson">
+    <div class="lt">Lesson from this act</div>
+    <p>Data diversity fixes what architecture and hyper-parameter tuning cannot.</p>
+  </div>
+</section>
+
+<!-- 17 ACT VI -->
+<section class="slide act win" data-title="Act VI">
+  <div class="rnum">ACT VI</div>
+  <h1>The results that were actually measured</h1>
+  <div class="q">This act asks: “did any of this work?”</div>
+  <div class="rule"></div>
+  <p class="lead">Every number below comes from re-running evaluation on the validation split only, using the same
+  dataset class, transforms and decoding as training (autocontrast, GrayscaleSmartResize, best_path_decode)
+  so the comparison is apples-to-apples.</p>
+</section>
+
+<!-- 18 V3-V5 -->
+<section class="slide" data-title="v3 → v4 → v5">
+  <span class="eyebrow">Act VI · measured results</span>
+  <h2>v3 → v4: proof that fixing the data works</h2>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th>Model</th><th class="num">v4 (new valid)</th><th class="num">v3 (same set)</th><th>What happened</th></tr></thead>
+      <tbody>
+        <tr><td>Thai Char Cls (50 cls)</td><td class="num ok">99.71%</td><td class="num">96.71%</td>
+          <td>Classes that used to collapse (v3: <span class="mono">ธ 0/18</span>, <span class="mono">ป 0/3</span>, <span class="mono">ค 1/12</span>) were fixed at the root cause — v4’s worst are <span class="mono">ด 3/4</span>, <span class="mono">ฆ 13/14</span></td></tr>
+        <tr><td>Thai Province R34</td><td class="num ok">99.90%</td><td class="num">98.90%</td>
+          <td>v3 failed repeatedly with Bangkok→Maha Sarakham from imbalance · v4 left a single error (Chumphon→Sakon Nakhon)</td></tr>
+        <tr><td>Thai Province R18</td><td class="num">99.80%</td><td class="num">99.50%</td><td>R34 was still best in v4 → kept R34</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>v5: another 13.5k character / 2.3k province crops harvested</h3>
+  <div class="tw">
+    <table>
+      <thead><tr><th>Model</th><th class="num">v5</th><th class="num">v4 on the same set</th><th>Verdict</th></tr></thead>
+      <tbody>
+        <tr><td>Thai Char Cls (50 cls)</td><td class="num">99.54% Top-1</td><td class="num">99.54%</td><td>➖ Tie — better on <span class="mono">บ</span>, slightly worse on <span class="mono">ป</span> → kept v5 (cleaner data)</td></tr>
+        <tr><td>Thai Province R34</td><td class="num ok">100.00%</td><td class="num">99.61%</td><td>Chumphon / Nakhon Ratchasima errors gone</td></tr>
+        <tr><td>Thai Province R18</td><td class="num ok">100.00%</td><td class="num">98.99%</td>
+          <td class="hi">R18 now matches R34 and is faster → production uses R18</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout warn">
+    <strong>But wait —</strong> those 100% numbers are measured on a validation split that
+    <em>still has leakage</em> (we open that up in Act VII), which is why they cannot serve as a closing argument.
+  </div>
+</section>
+
+<!-- 19 M3A -->
+<section class="slide" data-title="M3A benchmark">
+  <span class="eyebrow">Act VI · a decision benchmark</span>
+  <h2>Choosing the char-box detector: recall before precision</h2>
+  <p class="muted">charbox valid: 131 images / 655 GT boxes, using the real serve preprocessing ·
+  commit 09-21 <span class="mono">add greedy NMS and wide box splitting</span></p>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th>Detector</th><th class="num">P@0.5</th><th class="num">R@0.5</th><th class="num">Duplicate %</th><th>Why (not) chosen</th></tr></thead>
+      <tbody>
+        <tr><td class="hi">dfine_small_v2 ⭐</td><td class="num">0.518</td><td class="num ok">0.994</td><td class="num">50.8% → 1–3%</td><td>Finds every box; NMS cleans the duplicates → <strong>both real recall and real precision</strong></td></tr>
+        <tr><td>dfine_nano_v2</td><td class="num">0.596</td><td class="num">0.989</td><td class="num">47.2%</td><td>Good recall, more duplicates</td></tr>
+        <tr><td>picodet_s_v2</td><td class="num ok">0.762</td><td class="num no">0.930</td><td class="num ok">0.8%</td><td class="no">Best precision but misses ~7% of boxes → plates read incompletely</td></tr>
+        <tr><td>picodet_m_v2</td><td class="num">0.540</td><td class="num">0.884</td><td class="num">1.6%</td><td>Lowest recall</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid g2">
+    <div class="card accent">
+      <h3>Why “50% duplicates” is not as bad as it looks</h3>
+      <p>The duplicates are removed by <span class="mono">charbox_greedy_nms (IoU 0.35)</span>, leaving 1–3% —
+      whereas a <em>missing</em> box is unrecoverable.</p>
+      <p class="muted">A case study in how a single aggregate metric is never enough: you must ask which kind of error can be repaired.</p>
+    </div>
+    <div class="card good">
+      <h3>Box-quality helper</h3>
+      <p><span class="mono">filter_implausible_char_boxes()</span> rejects boxes that cannot geometrically be a character:
+      dash slivers · plate-edge strips · fragments under 40% of the median · sticky composites.</p>
+      <p class="muted">Measured over 100 images: box-count match with GT went <strong>81.3% → 84.6%</strong>
+      with <strong>no real character falsely dropped</strong>.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 20 ACT VII -->
+<section class="slide act" data-title="Act VII">
+  <div class="rnum">ACT VII</div>
+  <h1>The truth we had to open up</h1>
+  <div class="q">This act asks: “how much of that 100% actually holds up?”</div>
+  <div class="rule"></div>
+  <p class="lead">This is the hardest act in the project — measuring on real images, and writing the limitations
+  next to the numbers instead of burying them at the bottom of a file.</p>
+</section>
+
+<!-- 21 E2E -->
+<section class="slide" data-title="End-to-end on 481">
+  <span class="eyebrow">Act VII · measured on real photos</span>
+  <h2>Full pipeline over 481 real vehicle images (v5i valid)</h2>
+  <p class="lead">Unseen full-scene images → M1 → M1.5 → M2 → M3 → compared against two ground truths:
+  the whole-plate text and the province.</p>
+
+  <div class="grid g4" style="margin-bottom:16px">
+    <div class="card stat"><div class="v amber">91.89%</div><div class="l">Province (481 vehicles)</div><div class="n">442 / 481</div></div>
+    <div class="card stat"><div class="v amber">92.78%</div><div class="l">Province (374 with text GT)</div><div class="n">347 / 374</div></div>
+    <div class="card stat"><div class="v">51.60%</div><div class="l">Whole plate exact</div><div class="n">193 / 374</div></div>
+    <div class="card stat"><div class="v purple">84.88%</div><div class="l">Per-character accuracy</div><div class="n">1,908 / 2,248</div></div>
+  </div>
+
+  <h3>The 39 wrong provinces, broken down by cause</h3>
+  <div class="barwrap" style="margin-bottom:14px">
+    <div class="bar"><span class="bl">M1 found no plate at all</span><span class="bt"><span class="bf r" style="width:100%"></span></span><span class="bv">14</span></div>
+    <div class="bar"><span class="bl">Predicted ระนอง (Ranong)</span><span class="bt"><span class="bf r" style="width:86%"></span></span><span class="bv">12</span></div>
+    <div class="bar"><span class="bl">Wrong Thai province</span><span class="bt"><span class="bf a" style="width:79%"></span></span><span class="bv">11</span></div>
+    <div class="bar"><span class="bl">Flipped to Laos</span><span class="bt"><span class="bf a" style="width:14%"></span></span><span class="bv">2</span></div>
+  </div>
+
+  <div class="grid g2">
+    <div class="card bad">
+      <h3>What is clearly not a coincidence</h3>
+      <ul>
+        <li><strong>All 14 no-detection images are 192×99</strong> → the input is too small, the model is not “bad”</li>
+        <li><span class="mono">ระนอง</span> was predicted 12 times while its GT count is <strong>zero</strong> — the class has only 3 real source images, so it acts as an “attractor”</li>
+        <li>The 2 Laos flips had <span class="mono">country_confidence 0.616</span>, yet the system still committed</li>
+      </ul>
+    </div>
+    <div class="card good">
+      <h3>Free wins we found immediately (no retraining)</h3>
+      <p>Upscaling small inputs 3× (INTER_LANCZOS4) before M1:
+      recovered detection on <strong>8 of 14</strong> images and got <strong>5 more</strong> provinces right.</p>
+      <div class="stat" style="padding:8px 0">
+        <div class="v green">91.89% → 92.93%</div>
+        <div class="n">447 / 481 · negligible compute cost (small images only)</div>
+      </div>
+      <p class="muted">Lesson: there is still cheap value in pre/post-processing — before paying for a new model.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 22 LIMITATIONS -->
+<section class="slide" data-title="Four limitations">
+  <span class="eyebrow">Act VII · honesty</span>
+  <h2>Four limitations you must read before quoting these numbers</h2>
+
+  <div class="grid g2">
+    <div class="card bad">
+      <h3>① Resolution of the evaluation set</h3>
+      <p><strong>97% of v5i (train and valid alike) is 192×99 px</strong> (Roboflow thumbnails) — the plate is only
+      ~50 px wide and the province strip ~15 px tall.</p>
+      <p class="muted">→ 91.89% is a <em>low-resolution stress test</em>, <strong>not what production should expect</strong>
+      (real images are 4–10× sharper).</p>
+    </div>
+    <div class="card warn">
+      <h3>② The whole-plate ground truth is a pseudo-label</h3>
+      <p><span class="mono">full_ocr_text</span> comes from <span class="mono">candidates_metadata.csv</span>,
+      which is <strong>model output</strong> (it has a <span class="mono">confidence</span> column and <span class="mono">auto_*</span> filenames).</p>
+      <p class="muted">→ 51.60% and 84.88% <strong>include the GT’s own mistakes</strong> (e.g. GT <span class="mono">ฆช 8734</span>
+      where ฆ barely exists on real plates). The true figures should be higher — nobody knows by how much until a
+      human-verified set exists.</p>
+    </div>
+    <div class="card warn">
+      <h3>③ In-dataset 100% still has leakage</h3>
+      <p>province <strong>62/77 classes (81%)</strong> and char <strong>46/48 (96%)</strong> share source images between
+      train and valid.</p>
+      <p class="muted">Some classes have only 1–5 unique sources — <strong>6 classes have exactly one</strong>
+      (31 crops = one photo + 30 augmentations) → 100.00% on valid is optimistic by construction.</p>
+    </div>
+    <div class="card bad">
+      <h3>④ No production-resolution number exists yet</h3>
+      <p>Because of ① and ②, we <strong>do not yet have</strong> the figure needed to decide config or model choice.</p>
+      <p class="muted">That is exactly why experiment E1 — a real-photo set with human-verified GT —
+      has to happen <em>before</em> anything else.</p>
+    </div>
+  </div>
+
+  <div class="callout good">
+    <strong>Why publishing limitations is a strength, not a weakness:</strong> an honest number that says where it
+    applies can be audited and built upon. A flattering number with no provenance cannot — and it breaks
+    the moment the customer uses it.
+  </div>
+</section>
+
+<!-- 23 CASES -->
+<section class="slide" data-title="Two real cases">
+  <span class="eyebrow">Act VII · the last bugs</span>
+  <h2>Two production cases that sent us back into the fusion logic</h2>
+
+  <div class="grid g2">
+    <div class="card good">
+      <h3>Case A · a plate read with a duplicated character</h3>
+      <p>The box stage saw <span class="mono">2 ถ ล [ล] 1 2 3 8</span> (two ล) while CTC read
+      <span class="mono">2ถล1238</span>. <span class="mono">difflib</span> matched the longest common run
+      <span class="mono">ล1238</span>, so the extra ล slipped past both the replace-tail and the equal-block path
+      without hitting the syntax guard.</p>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:10px 0">
+        <span class="plate wrong">2ถลล1238 <span class="note">Custom / Unstandardized</span></span>
+        <span class="arrow">→</span>
+        <span class="plate right">2ถล 1238 <span class="note">NCC NNNN · private car</span></span>
+      </div>
+      <p class="muted">Fixed with a <em>final syntax repair</em> inside
+      <span class="mono">align_and_fuse_thai_sequences()</span> that strips box-extra characters making the pattern
+      illegal <strong>after</strong> fusion completes · commit 09-28.</p>
+    </div>
+    <div class="card good">
+      <h3>Case B · the truck refiner overwriting a valid letter plate</h3>
+      <p>For <span class="mono">5ศ 7856</span>, fusion internally returned <span class="mono">57856</span>, but a
+      call-site guard saw the plate had a consonant in a legal position and that
+      <span class="mono">is_valid_plate</span> passed → <strong>the truck refiner was not allowed to overwrite it</strong>.</p>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:10px 0">
+        <span class="plate right">5ศ 7856 <span class="note">NC NNNN · trailer / special</span></span>
+      </div>
+      <p class="muted">Re-checked with no regression: <span class="mono">1กข 1234</span>,
+      <span class="mono">กข 4962</span> and <span class="mono">83-4203</span> behave as before
+      · commit 09-28 <span class="mono">fix: prevent truck refiner from overriding valid letter plates</span>.</p>
+    </div>
+  </div>
+
+  <div class="callout warn">
+    <strong>Technical debt still open:</strong> <span class="mono">has_invalid_thai_consonant_placement()</span> rule 4
+    still forbids the <span class="mono">NC NNNN</span> shape, while <span class="mono">is_valid_plate()</span> accepts it
+    (<span class="mono">PATTERN_NC_NNNN</span>). <strong>The two functions contradict each other</strong> and are only
+    papered over by the letter-plate guard — it works, but on an assumption nobody has confirmed.
+  </div>
+</section>
+
+<!-- 24 EPILOGUE -->
+<section class="slide act win" data-title="Epilogue">
+  <div class="rnum">EPILOGUE</div>
+  <h1>Six principles this project produced</h1>
+  <div class="q">And they explain why every library choice looks the way it does</div>
+  <div class="rule"></div>
+
+  <div class="grid g2">
+    <div class="card"><h3>1 · Deployment constraints decide the architecture</h3>
+      <p class="muted">“Must just work from C#/ONNX” eliminated OBB and large transformers before we could waste more time on them.</p></div>
+    <div class="card"><h3>2 · License is an engineering constraint, not paperwork</h3>
+      <p class="muted">Discovering an AGPL dependency after the model works means rebuilding the system — so we chose MIT/Apache/BSD on day one.</p></div>
+    <div class="card"><h3>3 · Splitting the job beats growing the model</h3>
+      <p class="muted">The M2 component detector solved what extra capacity could not — exactly as the 2-stage keypoint solved what OBB could not.</p></div>
+    <div class="card"><h3>4 · A model that must always answer will hallucinate</h3>
+      <p class="muted">Eras 4–6 are the price of “never say I don’t know” → syntax guards, a junk class, and an abstain path are needed.</p></div>
+    <div class="card"><h3>5 · When the dataset is the bottleneck, data-centric wins</h3>
+      <p class="muted">Harvest + balance + leak-free split took character accuracy from 96.71% to 99.71% without touching the architecture.</p></div>
+    <div class="card"><h3>6 · An honest number beats a flattering one</h3>
+      <p class="muted">Writing “91.89% measured at 192×99 with pseudo-label GT” next to the figure tells us what to do next. An unqualified 100% tells us nothing.</p></div>
+  </div>
+</section>
+
+<!-- 25 DECISION TRACE -->
+<section class="slide" data-title="Decision trace">
+  <span class="eyebrow">Epilogue · decision trace</span>
+  <h2>Constraint → option rejected → what we chose → what it cost us</h2>
+
+  <div class="tw compact">
+    <table>
+      <thead><tr><th>Constraint / problem</th><th>Looked good, but rejected</th><th>What we actually chose</th><th>License</th><th>Price paid</th></tr></thead>
+      <tbody>
+        <tr><td>Must run from C# / ONNX Runtime</td><td class="no">OBB · Rotated NMS (custom C++ op)</td><td class="hi">2-stage: AABB + MobileNetV3 keypoint + OpenCV warp</td><td class="ok">MIT / BSD-3</td><td>Two models instead of one</td></tr>
+        <tr><td>CPU at ~75–95 ms, no GPU</td><td class="no">RF-DETR-S (84 ms) · RT-DETRv2 (108 ms) · D-FINE-S (63 ms)</td><td class="hi">D-FINE-Nano (27 ms, 15 MB)</td><td class="ok">MIT</td><td>Slightly lower mAP than a transformer</td></tr>
+        <tr><td>100% commercially permissive</td><td class="no">Ultralytics YOLO</td><td class="hi">LibreYOLO (D-FINE/PicoDet) + RF-DETR</td><td class="no">AGPL-3.0 → <span class="ok">MIT / Apache-2.0</span></td><td>A smaller training-tool community</td></tr>
+        <tr><td>Need clean character boxes</td><td class="no">Connected component analysis</td><td class="hi">D-FINE-Small + greedy NMS + subsumed-box filter</td><td class="ok">MIT</td><td>Many duplicates (handled by NMS)</td></tr>
+        <tr><td>OCR mixed up the rows</td><td class="no">A bigger whole-plate OCR model</td><td class="hi">M2 component detector to split zones</td><td class="ok">MIT</td><td>One extra stage (~18 ms)</td></tr>
+        <tr><td>DLT banner code misread</td><td class="no">Rely on the two top digits</td><td class="hi">Province classifier reading the name directly</td><td class="ok">BSD-3</td><td>Must collect province data</td></tr>
+        <tr><td>Province classes with 1–5 images</td><td class="no">Duplicate the same picture</td><td class="hi">Harvest real crops + augmented variants + weighted loss</td><td>—</td><td>Build a three-step data pipeline</td></tr>
+        <tr><td>System prefers guessing over admitting</td><td class="no">Always return 1 of 77</td><td class="hi">Syntax guard + filters (done) · <em>abstain (awaiting approval)</em></td><td>—</td><td>Someone must set the policy</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout">
+    <strong>Read this table as one sentence:</strong> almost everything in the “rejected” column is
+    <em>more accurate or more modern</em> than what we shipped. Each one lost to a constraint above.
+    This architecture did not come from “the best model” — it came from <strong>the narrowest set of constraints</strong>.
+  </div>
+</section>
+
+<!-- 26 V6 -->
+<section class="slide" data-title="Next: v6">
+  <span class="eyebrow">Epilogue · the next chapter</span>
+  <h2>v6 — fix root causes that were measured, not ones that were felt</h2>
+
+  <div class="tw compact">
+    <table>
+      <thead><tr><th>Priority</th><th>Root cause</th><th>Decisive evidence</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td><span class="pill p0">P0</span></td>
+          <td><strong>Province classes have only 1–5 real source images</strong></td>
+          <td>6 classes have exactly <strong>1 source</strong> / 31 crops (Nan, Phang Nga, Uttaradit, Nakhon Phanom, Pattani, Mae Hong Son) · 36/77 classes ≤ 5 sources</td>
+          <td>Find <strong>new real images</strong> per class (target ≥ 30 unique sources) + pHash verification</td></tr>
+        <tr><td><span class="pill p0">P0</span></td>
+          <td><strong>Resolution domain gap</strong></td>
+          <td>71% of province training crops come from 192px images (native 61×29, upscaled 4.2×) while serve sees sharp crops</td>
+          <td>Harvest <strong>full-resolution images only</strong> + add resolution-degradation augmentation</td></tr>
+        <tr><td><span class="pill p1">P1</span></td>
+          <td>In-dataset 100% is optimistic</td>
+          <td>81% of province and 96% of char classes share source images</td>
+          <td>Re-split <strong>source-disjoint</strong> and re-measure</td></tr>
+        <tr><td><span class="pill p1">P1</span></td>
+          <td><strong>Small inputs → M1 finds nothing at all</strong></td>
+          <td>14 of 39 errors are <span class="mono">detected=False</span>, all 192×99 · 3× upscale recovered 8/14 (91.89% → 92.93%)</td>
+          <td>Minimum-resolution gate + upscale before M1 for small inputs</td></tr>
+        <tr><td><span class="pill p2">P2</span></td>
+          <td>Data-poor classes become <strong>attractors</strong></td>
+          <td>Ranong predicted 12 times with GT count = 0 (class has 3 unique sources)</td>
+          <td>Add an <strong>unknown/unreadable</strong> class + prior correction for classes with &lt; 5 sources</td></tr>
+        <tr><td><span class="pill p2">P2</span></td>
+          <td>One wrong character means a wrong plate (last mile)</td>
+          <td>Of 181 wrong plates, 98 (54%) are <strong>off by one character</strong> · 72 by several · 11 empty</td>
+          <td>Beam/top-k decoding + let the validator choose from <span class="mono">alt_candidates</span> + retrain OCR</td></tr>
+        <tr><td><span class="pill p2">P2</span></td>
+          <td>Whole-plate GT is a pseudo-label</td>
+          <td>e.g. GT <span class="mono">ฆช 8734</span> where ฆ barely exists on real plates (the GT is wrong)</td>
+          <td>Build a <strong>human-verified set of 200–300 plates</strong> as the headline metric</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid g3">
+    <div class="card accent"><h3>E1 — do this first</h3><p class="muted">A real-photo benchmark of 30–50 vehicles with human-verified GT → decide R18 vs R34, autocontrast A/B and upscale A/B from this set only</p></div>
+    <div class="card accent"><h3>E2–E4 — fix the data</h3><p class="muted">Source-disjoint re-split · harvest ~1,000 full-resolution images → retrain province v6 · character v6 with a junk class</p></div>
+    <div class="card accent"><h3>E5 — fix the decisions</h3><p class="muted">Abstain + country gate + actually use <span class="mono">alt_candidates</span> + the NC NNNN policy — cheap and needs no training</p></div>
+  </div>
+</section>
+
+<!-- 27 DECISIONS -->
+<section class="slide" data-title="Open decisions">
+  <span class="eyebrow">Epilogue · we need confirmation</span>
+  <h2>Four questions only the system owner can answer</h2>
+  <p class="lead">These are policy and product decisions, not technical ones. The code can go either way —
+  but we must know whether the system is allowed to say “I don’t know”.</p>
+
+  <div class="grid g2">
+    <div class="card warn">
+      <h3>① Is the <span class="mono">NC NNNN</span> plate legal?</h3>
+      <p class="muted">e.g. <span class="mono">5ศ 7856</span>, <span class="mono">8ว 7687</span><br>
+      <strong>If yes</strong> → fix <span class="mono">has_invalid_thai_consonant_placement()</span> rule 4 to agree with
+      <span class="mono">is_valid_plate()</span>.<br>
+      <strong>If no</strong> → add a guard so a consonant-bearing box is never recovered
+      (today the code assumes “yes”, via the letter-plate guard).</p>
+    </div>
+    <div class="card warn">
+      <h3>② May the system abstain?</h3>
+      <p class="muted">If the downstream workflow requires an answer every time, we must switch to
+      <strong>prior correction</strong> instead — nudging scores away from data-poor classes while still answering.</p>
+    </div>
+    <div class="card warn">
+      <h3>③ Is replacing autocontrast with CLAHE acceptable?</h3>
+      <p class="muted">CLAHE (<span class="mono">clipLimit 2.0, tile 4×4</span>) or character-ROI-masked autocontrast may
+      beat global autocontrast, which can sink characters when the crop includes a bright plate border —
+      <strong>but choosing it means retraining the whole set to keep the contract</strong>.</p>
+    </div>
+    <div class="card warn">
+      <h3>④ Is there budget for ~1,000 more real images?</h3>
+      <p class="muted">For the 36 thin province classes (the worst 12 first). If not, we must accept a lower ceiling
+      and lean on abstain instead.</p>
+    </div>
+  </div>
+
+  <div class="callout">
+    <strong>Why ask before building:</strong> all four decide whether the system should
+    “always guess” or “sometimes admit it does not know”. Both are implementable — they are not interchangeable.
+  </div>
+</section>
+
+<!-- 28 CLOSING -->
+<section class="slide" data-title="Closing">
+  <span class="eyebrow">Closing</span>
+  <h2>The whole story in five lines</h2>
+
+  <div class="grid g2" style="margin-bottom:16px">
+    <div class="card">
+      <h3>Synopsis</h3>
+      <ol style="margin-bottom:0">
+        <li>Started from a CCTV problem reading Thai–Lao plates that had to be embedded in a <strong>C#</strong> system.</li>
+        <li>Six failed eras — each one lost to a constraint (license / CPU / ONNX), never to accuracy.</li>
+        <li>Fixed it by <strong>giving each job to the right stage</strong> (2-stage keypoint, M2 component detector, dual-engine OCR).</li>
+        <li>Then found the real bottleneck was <strong>the data</strong> — so we built a leak-free data pipeline plus harvest and balancing.</li>
+        <li>Measured honestly on real images, which produced both free wins (upscaling) and the v6 backlog.</li>
+      </ol>
+    </div>
+    <div class="card good">
+      <h3>What is ready today</h3>
+      <ul>
+        <li><strong>Latency:</strong> ~75–95 ms end-to-end on a normal CPU</li>
+        <li><strong>Models:</strong> every stage exports to ONNX (Opset 18) with a ready C# (.NET) guide</li>
+        <li><strong>License:</strong> MIT / Apache-2.0 / BSD-3 throughout — 100% commercial</li>
+        <li><strong>System:</strong> FastAPI + per-stage debug dashboard + Firestore/BigQuery + Cloud Run</li>
+        <li><strong>Data:</strong> a retraining pipeline where every crop is traceable</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="callout warn">
+    <strong>What to tell the customer plainly:</strong> the system is production-ready <em>as engineering</em> —
+    but <strong>the accuracy figures that would justify pricing or an SLA must wait for a benchmark at production
+    resolution with human-verified GT (E1)</strong>. What we have today is 91.89% province and 51.60% whole-plate,
+    measured on 192×99 images whose GT still contains noise.
+  </div>
+
+  <div class="footer-note">Appendices: A model specs · B preprocessing contract · C augmentation · D all measured numbers · E v6 plan · F tech stack &amp; licenses</div>
+</section>
+
+<!-- 29 APPENDIX -->
+<section class="slide act" data-title="Appendix">
+  <div class="rnum">APPENDIX</div>
+  <h1>Appendices — reference tables</h1>
+  <div class="q">For the deep questions that come after the presentation</div>
+  <div class="rule"></div>
+  <div class="grid g3">
+    <div class="card tight"><h3>A · Model specs</h3><p class="muted">Input resolution, file size, framework and output for every stage</p></div>
+    <div class="card tight"><h3>B · Preprocessing contract</h3><p class="muted">The four special techniques, the STRETCH rule and each tensor size</p></div>
+    <div class="card tight"><h3>C · Augmentation</h3><p class="muted">What is used today and the missing axes proposed for v6</p></div>
+    <div class="card tight"><h3>D · All measured numbers</h3><p class="muted">v3/v4/v5, the M3A benchmark, end-to-end on 481 images and the error breakdown</p></div>
+    <div class="card tight"><h3>E · v6 plan</h3><p class="muted">P0/P1/P2, experiments E1–E5 and target metrics</p></div>
+    <div class="card tight"><h3>F · Tech stack &amp; licenses</h3><p class="muted">Every library actually used, its license status and role</p></div>
+  </div>
+</section>
+
+<!-- 30 A -->
+<section class="slide" data-title="A · Model specs">
+  <span class="eyebrow">Appendix A</span>
+  <h2>Specs of every model in production</h2>
+  <p class="muted" style="margin-bottom:12px">Convention: Input Resolution = <strong>(W × H)</strong>, taken from the checkpoints / ONNX / <span class="mono">src/preprocess_registry.py</span>. All detection models use square tensors with <strong>stretch</strong> (never letterbox).</p>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th>Stage</th><th>Model</th><th>Input (W×H)</th><th class="num">Size</th><th>Framework</th><th>Output</th></tr></thead>
+      <tbody>
+        <tr><td>1 · Plate</td><td class="hi">D-FINE-Nano</td><td class="mono">640×640 (stretch)</td><td class="num">15.0 MB</td><td>PyTorch / LibreYOLO</td><td>Detection [1,300,4]</td></tr>
+        <tr><td><em>alt</em> 1</td><td>PicoDet-S</td><td class="mono">416×416</td><td class="num">3.8 MB</td><td>LibreYOLO</td><td>Detection [1,3598,5]</td></tr>
+        <tr><td>1.1 · Corner</td><td>MobileNetV3-S head</td><td class="mono">224×224 (bbox+12%)</td><td class="num">4.0 MB</td><td>torchvision</td><td>8-D regression</td></tr>
+        <tr><td>1.5 · Country</td><td>MobileNetV3-S</td><td class="mono">256×128</td><td class="num">3.8 MB</td><td>torchvision</td><td>Binary classification</td></tr>
+        <tr><td>2 · Component</td><td>D-FINE-Nano</td><td class="mono">640×640</td><td class="num">15.0 MB</td><td>D-FINE engine</td><td>plate_char / province</td></tr>
+        <tr><td>3A · Char box</td><td>D-FINE-Small v2</td><td class="mono">2088×560 (3.7:1)</td><td class="num">~40 MB</td><td>LibreYOLO</td><td>Character boxes</td></tr>
+        <tr><td>3A · Char cls</td><td>MobileNetV2 (50 cls)</td><td class="mono">64×64 (square-pad)</td><td class="num">9.0 MB</td><td>torchvision</td><td>50-class softmax</td></tr>
+        <tr><td>3A · OCR</td><td>ResNet18+BiLSTM+CTC</td><td class="mono">256×64 grayscale</td><td class="num">54.8 MB</td><td>PyTorch custom</td><td>CTC logits [T,1,71]</td></tr>
+        <tr><td>3A · Lao char</td><td>MobileNetV2 (30 cls)</td><td class="mono">64×64</td><td class="num">8.9 MB</td><td>torchvision</td><td>34-class softmax</td></tr>
+        <tr><td>3B · Thai province</td><td>ResNet18 grayscale</td><td class="mono">256×80</td><td class="num">42.9 MB</td><td>torchvision</td><td>77-class softmax</td></tr>
+        <tr><td>3B · Lao province</td><td>ResNet18 grayscale</td><td class="mono">256×64</td><td class="num">42.7 MB</td><td>torchvision</td><td>18-class softmax</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout warn">
+    <strong>⚠️ A trap we already fell into:</strong> Thai province uses <span class="mono">256×80</span>,
+    <strong>not 256×64</strong> — and serve must keep a separate transform per country
+    (<span class="mono">tf_prov_thai</span> / <span class="mono">tf_prov_lao</span>). Never share one.
+  </div>
+</section>
+
+<!-- 31 B -->
+<section class="slide" data-title="B · Preprocessing">
+  <span class="eyebrow">Appendix B</span>
+  <h2>The preprocessing contract — four special techniques</h2>
+
+  <div class="grid g2">
+    <div class="card"><h3>1 · Smart padding homography crop</h3>
+      <p>Expand the M1 bounding box by a <strong>12% margin</strong> before the corner regressor so no plate corner falls outside the image.</p></div>
+    <div class="card"><h3>2 · Four-point clockwise quad sorting</h3>
+      <p>Order corners as <span class="mono">TL → TR → BR → BL</span> using <span class="mono">x+y</span> and <span class="mono">y−x</span>
+      before <span class="mono">cv2.getPerspectiveTransform</span> — prevents swapped corners from warping the image.</p></div>
+    <div class="card"><h3>3 · Grayscale smart-resize with ambient background filling</h3>
+      <p>Black padding confuses the province model into reading it as text, so we read the median colour of the four corners
+      (<span class="mono">np.median(corners)</span>) and use it as the canvas background.</p>
+      <div class="sub">Thai <span class="mono">(256, 80)</span> · Lao <span class="mono">(256, 64)</span> · norm 0.5/0.25</div></div>
+    <div class="card"><h3>4 · Serve-geometry upscale (Stage 2 / 3A)</h3>
+      <p>Rectified plate 320×160 → <strong>1280×640</strong> before M2, then boxes are divided back per axis.
+      Character row → <strong>2088×560</strong> before the char-box detector.</p>
+      <div class="sub">All of it is <strong>STRETCH only</strong> — no letterbox/pad, because the models trained with stretch</div></div>
+  </div>
+
+  <div class="grid g2" style="margin-top:14px">
+    <div class="card accent"><h3>Libraries used in preprocessing</h3>
+      <ul>
+        <li><strong>OpenCV (cv2)</strong> — decoding, BGR→RGB/LAB, CLAHE, perspective transform, deskew</li>
+        <li><strong>NumPy</strong> — corner coordinate math, vectorization, box sorting, NMS</li>
+        <li><strong>Pillow</strong> — high-quality resize (BICUBIC), grayscale, dynamic canvas padding</li>
+        <li><strong>TorchVision Transforms</strong> — normalization and tensor formatting</li>
+      </ul></div>
+    <div class="card good"><h3>This contract is tested</h3>
+      <p>There are real tests guarding it — commit 09-20 <span class="mono">test: add preprocessing contract tests and update model input specs</span>.</p>
+      <div class="sub mono">python src/test_preprocess_registry.py<br>python src/test_classifier_preprocess.py</div>
+      <p class="muted" style="margin-top:8px">Because geometry is the quietest kind of bug: everything looks like it works while the numbers are wrong.</p></div>
+  </div>
+</section>
+
+<!-- 32 C -->
+<section class="slide" data-title="C · Augmentation">
+  <span class="eyebrow">Appendix C</span>
+  <h2>Augmentation — what we use, and the axes still missing</h2>
+
+  <div class="grid g2">
+    <div class="card"><h3>In use today</h3>
+      <ul>
+        <li><strong>Province</strong> (<span class="mono">train_grayscale_province_thai.py</span>):
+        RandomAffine 5°, translate .03/.04 · ColorJitter .3 · RandomAdjustSharpness 2.0 (p=.5) · RandomAutocontrast (p=.5)</li>
+        <li><strong>Character</strong> (<span class="mono">train_character_classifier.py</span>):
+        RandomAffine 6° scale .95–1.05 · ColorJitter .35 · RandomGrayscale .15 · RandomPerspective .12 (p=.3)</li>
+      </ul>
+      <div class="callout bad" style="margin-bottom:0">
+        <strong>The gap:</strong> <strong>no Gaussian blur · no motion blur · no scale degradation · no perspective for province</strong>
+        — precisely the axes that match the measured domain gap.
+      </div>
+    </div>
+    <div class="card purple"><h3>Axes proposed for v6</h3>
+      <div class="tw" style="border:none;margin:6px 0 0">
+        <table style="min-width:0;font-size:12.5px">
+          <tbody>
+            <tr><td><strong>Resolution degradation</strong> (highest priority)</td><td class="mono muted">downscale s=0.15–0.5 (INTER_AREA) → resample back to contract size · p=0.5</td></tr>
+            <tr><td>Gaussian blur</td><td class="mono muted">radius 0.5–2.0 · p=0.4</td></tr>
+            <tr><td>Motion blur</td><td class="mono muted">kernel 3–9, random angle · p=0.15</td></tr>
+            <tr><td>JPEG artifacts</td><td class="mono muted">quality 30–70 · p=0.3</td></tr>
+            <tr><td>Specular glare / shadow</td><td class="mono muted">RandomShadow / highlight blend · p=0.2</td></tr>
+            <tr><td>RandomErasing (occlusion)</td><td class="mono muted">scale 2–8% · p=0.15</td></tr>
+            <tr><td>Scale + perspective (province)</td><td class="mono muted">scale 0.8–1.2 + RandomPerspective 0.1 · p=0.3</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout">
+    <strong>Two cautions:</strong> (1) do not remove augmentation that is already working;
+    (2) never augment at low native resolution and upscale afterwards — always augment <strong>after</strong> the downscale step.
+  </div>
+</section>
+
+<!-- 33 D -->
+<section class="slide" data-title="D · All metrics">
+  <span class="eyebrow">Appendix D</span>
+  <h2>Every measured number (from the project’s benchmarking suite)</h2>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th>Dataset</th><th>Model</th><th class="num">Measured</th><th>Source</th></tr></thead>
+      <tbody>
+        <tr><td>v3 valid</td><td>Thai char cls</td><td class="num">89.09% Top-1 (n=541)</td><td class="mono">eval_v3_all.py</td></tr>
+        <tr><td>v3 valid</td><td>Thai province R18 / R34</td><td class="num">99.68% / 99.84%</td><td class="mono">eval_v3_all.py</td></tr>
+        <tr><td>v3 valid</td><td>Thai OCR CTC</td><td class="num">CER 0.0893 · Fmt 98.17%</td><td class="mono">eval_v3_all.py</td></tr>
+        <tr><td>v4 valid</td><td>Thai char cls</td><td class="num ok">99.71% Top-1 (n=3,468)</td><td class="mono">eval_v4_all.py</td></tr>
+        <tr><td>v4 valid</td><td>Thai province R34 / R18</td><td class="num ok">99.90% / 99.80% (n=1,002)</td><td class="mono">eval_v4_all.py</td></tr>
+        <tr><td>v5 valid</td><td>Thai char cls</td><td class="num">99.54% Top-1 (n=3,511)</td><td class="mono">eval_v4_all.py</td></tr>
+        <tr><td>v5 valid</td><td>Thai province R18 / R34</td><td class="num ok">100.00% (n=1,285)</td><td class="mono">eval_v4_all.py</td></tr>
+        <tr><td>charbox valid (131 images / 655 boxes)</td><td>dfine_small_v2 / picodet_s_v2</td><td class="num">R 0.994 / R 0.930</td><td class="mono">eval_m3a_v2.py</td></tr>
+        <tr><td>v5i valid (481 real images)</td><td>Province end-to-end</td><td class="num amber">91.89% (442/481)</td><td class="mono">eval_v5i_e2e_results.csv</td></tr>
+        <tr><td>v5i, 374 with text GT</td><td>Whole-plate exact</td><td class="num">51.60% (193/374)</td><td class="mono">eval_v5i_model3_results.csv</td></tr>
+        <tr><td>v5i, 374 images</td><td>Character-level recall</td><td class="num purple">84.88% (1,908/2,248)</td><td class="mono">eval_v5i_model3_results.csv</td></tr>
+        <tr><td>v5i 481 + 3× upscale</td><td>Province end-to-end</td><td class="num ok">92.93% (447/481)</td><td>experiment 2026-09-29</td></tr>
+        <tr><td>Lao valid</td><td>Lao char / Lao province</td><td class="num">99.41% / 99.78%</td><td class="mono">eval_v3_all.py</td></tr>
+        <tr><td>Lao OCR</td><td>ResNet18+BiLSTM+CTC</td><td class="num">CER 0.0102 · Fmt 100%</td><td class="mono">eval_v3_all.py</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout warn">
+    <strong>Citation caution:</strong> each dataset row was measured on a different validation split —
+    <strong>never compare across rows</strong>. And the v5 100.00% still carries 81%/96% leakage,
+    which is exactly what E2 must re-prove on a source-disjoint split.
+  </div>
+</section>
+
+<!-- 34 E -->
+<section class="slide" data-title="E · v6 targets">
+  <span class="eyebrow">Appendix E</span>
+  <h2>v6 — target metrics</h2>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th>Metric</th><th>Today</th><th>Target</th></tr></thead>
+      <tbody>
+        <tr><td>Province unique sources per class (minimum)</td><td class="num no">1</td><td class="num ok">≥ 30</td></tr>
+        <tr><td>Province accuracy on the real-photo set (E1)</td><td class="num">none yet (91.89% is at 192px)</td><td class="num ok">≥ 95%</td></tr>
+        <tr><td>M1 no-detection rate</td><td class="num no">2.9% (14/481, small images)</td><td class="num ok">≤ 0.5% after the upscale gate</td></tr>
+        <tr><td>Attractor errors (predicting classes with &lt; 5 sources)</td><td class="num no">12 / 481</td><td class="num ok">0</td></tr>
+        <tr><td>Plates wrong by exactly one character</td><td class="num no">98 / 374 (54%)</td><td class="num ok">≤ 40%</td></tr>
+        <tr><td>Character unique sources per class (minimum)</td><td class="num">unknown (needs counting; thinnest crop class is 52)</td><td class="num ok">≥ 25</td></tr>
+        <tr><td>GT quality of the evaluation set</td><td class="num no">pseudo-label (<span class="mono">full_ocr_text</span>)</td><td class="num ok">200–300 human-verified plates</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid g2">
+    <div class="card accent"><h3>How much harvesting is needed</h3>
+      <p>36 province classes with ≤ 5 unique sources × ~25 images ≈ <strong>~900–1,200 real images</strong> —
+      focusing on the worst 12: Uttaradit, Phang Nga, Nan, Nakhon Phanom, Pattani, Mae Hong Son,
+      Roi Et, Phrae, Satun, Phatthalung, Kalasin, Narathiwat.</p>
+      <p class="muted">New harvest quality rules: accept only source images ≥ 1000 px on the long side ·
+      reject crops whose native province strip &lt; 96 px or native character crop &lt; 24 px ·
+      record <span class="mono">native_w, native_h, blur_var, source_hash</span> per crop.</p></div>
+    <div class="card purple"><h3>Adding classes so the model can refuse</h3>
+      <ul>
+        <li><strong>char: add a <span class="mono">junk/background</span> class</strong> — plate-edge fragments, dashes, screws, colour strips
+        (today all 50 classes are forced to name junk as a real character → the source of <span class="mono">7→ษ</span>, <span class="mono">1→ข</span>, <span class="mono">2→ก</span>)</li>
+        <li><strong>province: add an <span class="mono">unknown/unreadable</span> class</strong> — give the model a way to say “I don’t know”
+        instead of being forced to pick <span class="mono">ระนอง</span></li>
+      </ul></div>
+  </div>
+</section>
+
+<!-- 35 F -->
+<section class="slide" data-title="F · Tech stack">
+  <span class="eyebrow">Appendix F</span>
+  <h2>The full tech stack and its license status</h2>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th>Area</th><th>Technology</th><th>License</th><th>Role in the system</th></tr></thead>
+      <tbody>
+        <tr><td>Web API</td><td>FastAPI + Uvicorn</td><td class="ok">BSD-3</td><td>REST microservice + Swagger docs + web dashboard</td></tr>
+        <tr><td></td><td>Pydantic · python-multipart · python-dotenv · PyJWT</td><td class="ok">MIT / BSD</td><td>Request validation, uploads, config, auth</td></tr>
+        <tr><td>ML core</td><td>PyTorch + TorchVision</td><td class="ok">BSD-3</td><td>Training and serving every stage (MPS / CUDA / CPU)</td></tr>
+        <tr><td></td><td>RF-DETR (<span class="mono">rfdetr[train]</span>)</td><td class="ok">Apache-2.0</td><td>Char box detector (Stage 3A) + alternative Stage 1</td></tr>
+        <tr><td></td><td>LibreYOLO (D-FINE / PicoDet / RT-DETRv2)</td><td class="ok">MIT</td><td>Plate + component detectors (Stage 1 / 2)</td></tr>
+        <tr><td></td><td>Ultralytics YOLO / RT-DETR</td><td class="no">AGPL-3.0</td><td class="muted">Benchmarking tool only — <strong>never in served weights</strong></td></tr>
+        <tr><td>Runtime</td><td>ONNX (Opset 18) + ONNX Runtime + onnxslim</td><td class="ok">MIT</td><td>Standalone export, cross-platform (Python + C# .NET)</td></tr>
+        <tr><td>Vision / data</td><td>OpenCV (<span class="mono">opencv-python-headless</span>)</td><td class="ok">Apache-2.0</td><td>Homography warp, flip-and-detect, motion gating</td></tr>
+        <tr><td></td><td>NumPy · Pandas · scikit-learn</td><td class="ok">BSD-3</td><td>Box math, imbalance analysis, metrics</td></tr>
+        <tr><td></td><td>Pillow</td><td class="ok">MIT-CM</td><td>Smart resize, canvas padding</td></tr>
+        <tr><td></td><td>editdistance · tqdm · requests</td><td class="ok">MIT</td><td>CTC evaluation, progress, data download</td></tr>
+        <tr><td>Cloud (GCP)</td><td>Cloud Firestore</td><td>GCP ToS</td><td>Real-time document store (history + base64 crops)</td></tr>
+        <tr><td></td><td>Cloud BigQuery · Cloud Storage</td><td>GCP ToS</td><td>Analytics tables / SQL reporting · weight artifacts</td></tr>
+        <tr><td>Deployment</td><td>Docker + Cloud Run + Cloud Build</td><td>—</td><td>Containerized serverless deploy, <span class="mono">K_SERVICE</span> auto-detect</td></tr>
+        <tr><td>Dataset engineering</td><td><span class="mono">extract_recognition_crops_v2</span> → <span class="mono">split_recognition_dataset_v2</span> → <span class="mono">curate_recognition_v2</span></td><td>in-repo</td><td>Serve-matched extraction, leak-free source-image split, manifest-synced curation</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout good">
+    <strong>License summary:</strong> every model architecture is permissively licensed — no AGPL in anything actually
+    served (D-FINE = MIT, RF-DETR = Apache-2.0, MobileNet/ResNet = BSD-3). The system is 100% usable commercially,
+    and that constraint was designed in <em>on day one</em> rather than discovered later.
+  </div>
+</section>
+
+</main>
+
+<button class="totop" id="btnTopFloat">↑ Back to top</button>
+<span class="counter" id="counter"><b id="cur">1</b> / <span id="tot">35</span> · <span id="curTitle">Cover</span></span>
+
+<script>
+(function(){
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  var curEl = document.getElementById('cur');
+  var curTitleEl = document.getElementById('curTitle');
+  var totEl = document.getElementById('tot');
+  var bar = document.getElementById('progress');
+  var pills = document.getElementById('navpills');
+  var counter = document.getElementById('counter');
+  var btnTF = document.getElementById('btnTopFloat');
+  var current = 0;
+  totEl.textContent = slides.length;
+
+  slides.forEach(function(s, idx){
+    s.id = 's' + (idx + 1);
+    var num = document.createElement('div');
+    num.className = 'secnum';
+    num.textContent = (idx + 1) + ' / ' + slides.length;
+    s.insertBefore(num, s.firstChild);
+  });
+
+  slides.forEach(function(s, idx){
+    var b = document.createElement('button');
+    b.textContent = (idx + 1) + '. ' + (s.dataset.title || ('Section ' + (idx + 1)));
+    if (/^(Act|Epilogue|Appendix|Prologue)/.test(s.dataset.title || '')) b.className = 'sep';
+    b.title = s.dataset.title || '';
+    b.onclick = function(){ jump(idx); };
+    pills.appendChild(b);
+  });
+  var pillEls = Array.prototype.slice.call(pills.children);
+
+  var HEADER_OFFSET = window.matchMedia('(max-width:1024px)').matches ? 68 : 28;
+
+  function jump(idx){
+    var el = slides[idx];
+    var y = el.getBoundingClientRect().top + (window.pageYOffset || document.documentElement.scrollTop || 0) - HEADER_OFFSET;
+    window.scrollTo({top: Math.max(0, y), behavior:'smooth'});
+    current = idx;
+    paint(idx, true);
+  }
+
+  function paint(idx, scrollPill){
+    if (curEl.textContent !== String(idx + 1)) curEl.textContent = idx + 1;
+    curTitleEl.textContent = slides[idx].dataset.title || '';
+    pillEls.forEach(function(p, k){ p.classList.toggle('active', k === idx); });
+    if (scrollPill) pillEls[idx].scrollIntoView({block:'nearest'});
+  }
+
+  var ticking = false;
+  function onScroll(){
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(function(){
+      ticking = false;
+      var doc = document.documentElement;
+      var max = doc.scrollHeight - window.innerHeight;
+      var y = window.scrollY || doc.scrollTop;
+      bar.style.width = (max > 0 ? Math.min(100, (y / max) * 100) : 0) + '%';
+      btnTF.classList.toggle('show', y > 420);
+      counter.classList.toggle('show', y > 90);
+
+      var probe = y + 110, found = 0;
+      for (var k = 0; k < slides.length; k++){
+        if (slides[k].offsetTop <= probe) found = k; else break;
+      }
+      if (found !== current){
+        current = found;
+        paint(found, true);
+        if (history.replaceState) history.replaceState(null, '', '#s' + (found + 1));
+      }
+    });
+  }
+  window.addEventListener('scroll', onScroll, {passive:true});
+  window.addEventListener('resize', onScroll, {passive:true});
+
+  document.getElementById('btnPrint').onclick = function(){ window.print(); };
+  document.getElementById('btnTop').onclick = function(){ window.scrollTo({top:0, behavior:'smooth'}); };
+  btnTF.onclick = function(){ window.scrollTo({top:0, behavior:'smooth'}); };
+
+  document.addEventListener('keydown', function(e){
+    if (e.target && /INPUT|TEXTAREA/.test(e.target.tagName)) return;
+    var k = e.key.toLowerCase();
+    if (k === 'g') { window.scrollTo({top:0, behavior:'smooth'}); }
+    else if (k === 'j') { jump(Math.min(slides.length - 1, current + 1)); }
+    else if (k === 'k') { jump(Math.max(0, current - 1)); }
+  });
+
+  var m = /^#s?(\d+)$/.exec(location.hash);
+  if (m){
+    var n = parseInt(m[1], 10) - 1;
+    if (n >= 0 && n < slides.length){
+      window.scrollTo(0, 0);
+      setTimeout(function(){ jump(n); }, 60);
+    }
+  }
+  onScroll();
+})();
+</script>
+
+<script>
+/* mobile section picker (the sidebar is hidden below 1024px) */
+(function(){
+  var sel = document.getElementById('jumpSel');
+  if (!sel) return;
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  slides.forEach(function(s, i){
+    var o = document.createElement('option');
+    o.value = 's' + (i + 1);
+    o.textContent = (i + 1) + '. ' + (s.dataset.title || ('Section ' + (i + 1)));
+    sel.appendChild(o);
+  });
+  sel.addEventListener('change', function(){
+    var el = document.getElementById(sel.value);
+    if (!el) return;
+    var y = el.getBoundingClientRect().top + (window.pageYOffset || document.documentElement.scrollTop || 0) - 68;
+    window.scrollTo({top: Math.max(0, y), behavior:'smooth'});
+  });
+  window.addEventListener('scroll', function(){
+    var probe = (window.pageYOffset || 0) + 90, best = 1;
+    slides.forEach(function(s, i){ if (s.offsetTop <= probe) best = i + 1; });
+    if (sel.value !== 's' + best) sel.value = 's' + best;
+  }, {passive:true});
+})();
+</script>
+</body>
+</html>
