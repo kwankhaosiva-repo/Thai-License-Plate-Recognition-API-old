@@ -1,0 +1,1501 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Thai &amp; Lao LPR — เรื่องเล่าเชิงวิศวกรรม</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Sarabun:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  /* ---------- professional light palette ---------- */
+  --bg:#ffffff;
+  --bg-soft:#f8fafc;
+  --bg-sunk:#f1f5f9;
+  --ink:#0f172a;
+  --body:#334155;
+  --muted:#64748b;
+  --faint:#94a3b8;
+  --line:#e5e7eb;
+  --line-2:#cbd5e1;
+  --accent:#1d4ed8;
+  --accent-2:#1e40af;
+  --accent-soft:#eff6ff;
+  --accent-line:#bfdbfe;
+  --good:#047857; --good-soft:#ecfdf5; --good-line:#a7f3d0;
+  --warn:#b45309; --warn-soft:#fffbeb; --warn-line:#fde68a;
+  --bad:#b91c1c;  --bad-soft:#fef2f2;  --bad-line:#fecaca;
+  --purple:#6d28d9; --purple-soft:#f5f3ff; --purple-line:#ddd6fe;
+  --font-sans:'Sarabun','Inter','Noto Sans Thai',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
+  --font-mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --r:8px;
+  --side:272px;
+  --bar:56px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{color-scheme:light}
+body{
+  font-family:var(--font-sans);font-size:16px;line-height:1.75;
+  background:var(--bg);color:var(--body);
+  -webkit-font-smoothing:antialiased;
+}
+
+/* ---------- sidebar table of contents ---------- */
+.side{position:fixed;inset:0 auto 0 0;width:var(--side);background:#fff;
+  border-right:1px solid var(--line);display:flex;flex-direction:column;z-index:60}
+.side-head{padding:20px 18px 14px;border-bottom:1px solid var(--line)}
+.side-brand{font-weight:700;font-size:14.5px;color:var(--ink);line-height:1.35}
+.side-brand small{display:block;font-weight:500;font-size:11.5px;color:var(--faint);margin-top:3px}
+.side-links{display:flex;gap:6px;margin-top:12px}
+.lang{font-size:11.5px;font-weight:600;color:var(--muted);text-decoration:none;
+  border:1px solid var(--line-2);border-radius:5px;padding:2px 9px}
+.lang:hover{color:var(--accent);border-color:var(--accent-line);background:var(--accent-soft)}
+.lang.on{color:#fff;background:var(--accent);border-color:var(--accent)}
+.navpills{display:flex;flex-direction:column;overflow-y:auto;flex:1;padding:12px 10px 16px;gap:1px}
+.navpills button{text-align:left;font:inherit;font-size:12.8px;line-height:1.45;color:var(--body);
+  background:none;border:0;border-radius:6px;padding:6px 10px;cursor:pointer;
+  transition:background .15s,color .15s}
+.navpills button:hover{background:var(--bg-sunk);color:var(--ink)}
+.navpills button.active{background:var(--accent-soft);color:var(--accent-2);font-weight:700}
+.navpills button.sep{margin-top:9px;padding-top:10px;border-top:1px solid var(--line)}
+.side-foot{padding:12px 14px;border-top:1px solid var(--line);display:flex;gap:8px}
+.side-foot button{flex:1;font:inherit;font-size:12px;font-weight:600;color:var(--body);background:#fff;
+  border:1px solid var(--line-2);border-radius:6px;padding:7px 10px;cursor:pointer;transition:all .15s}
+.side-foot button:hover{border-color:var(--accent);color:var(--accent)}
+
+/* ---------- mobile top bar ---------- */
+.mobilebar{display:none;position:fixed;top:0;left:0;right:0;height:var(--bar);z-index:65;
+  align-items:center;gap:10px;padding:0 14px;background:rgba(255,255,255,.94);
+  backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.mb-title{font-size:13.5px;font-weight:700;color:var(--ink);white-space:nowrap}
+.mobilebar select{flex:1;min-width:0;font:inherit;font-size:13px;color:var(--body);
+  background:#fff;border:1px solid var(--line-2);border-radius:6px;padding:6px 8px}
+.progress{position:fixed;top:0;left:var(--side);right:0;height:3px;width:0;z-index:70;
+  background:var(--accent);transition:width .1s linear}
+
+.deck{margin-left:var(--side)}
+.slide{position:relative;max-width:960px;margin:0 auto;padding:64px 48px 72px;
+  border-top:1px solid var(--line);scroll-margin-top:24px}
+.slide:first-child{border-top:0;padding-top:56px}
+
+/* ---------- chapter dividers ---------- */
+.act{background:var(--bg-soft)}
+.act .rnum{font-family:var(--font-mono);font-size:44px;font-weight:700;line-height:1;
+  letter-spacing:.06em;color:#cbd5e1;margin-bottom:4px}
+.act.neg .rnum{color:#fca5a5}
+.act.win .rnum{color:#86efac}
+.act h1{font-size:clamp(24px,3vw,34px);margin-bottom:10px}
+.act .q{font-size:17px;color:var(--accent);font-weight:600;margin-bottom:18px}
+.act.neg .q{color:var(--bad)}
+.act.win .q{color:var(--good)}
+.act .rule{height:1px;width:100%;background:var(--line-2);margin-bottom:22px}
+
+.beat{display:flex;gap:16px;align-items:flex-start;margin-bottom:16px}
+.beat .when{flex:0 0 104px;font-family:var(--font-mono);font-size:11.5px;font-weight:600;
+  color:var(--accent-2);background:var(--accent-soft);border:1px solid var(--accent-line);
+  border-radius:999px;padding:3px 0;text-align:center;margin-top:3px}
+.beat .what{flex:1;min-width:0}
+.beat .what h3{margin-bottom:2px}
+.beat.bad .when{color:var(--bad);background:var(--bad-soft);border-color:var(--bad-line)}
+.beat.good .when{color:var(--good);background:var(--good-soft);border-color:var(--good-line)}
+
+.lesson{border-left:3px solid var(--purple);background:var(--purple-soft);
+  padding:12px 18px;border-radius:0 6px 6px 0;margin:16px 0}
+.lesson .lt{font-size:11px;font-weight:700;letter-spacing:.12em;color:var(--purple);
+  text-transform:uppercase;margin-bottom:4px}
+.lesson p{margin:0;color:var(--ink);font-weight:600}
+
+.eyebrow{display:inline-block;font-size:11.5px;font-weight:600;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--muted);background:var(--bg-sunk);
+  border:1px solid var(--line);padding:3px 10px;border-radius:4px;margin-bottom:16px}
+h1{font-size:clamp(26px,3.2vw,40px);line-height:1.28;font-weight:700;color:var(--ink);letter-spacing:-.2px}
+h2{font-size:clamp(21px,2.2vw,27px);line-height:1.4;font-weight:700;color:var(--ink);margin-bottom:12px}
+h3{font-size:16px;font-weight:700;color:var(--ink);margin:0 0 6px}
+p{color:var(--body);margin-bottom:12px;max-width:92ch}
+p strong,li strong{color:var(--ink);font-weight:700}
+.lead{font-size:17.5px;color:var(--body);max-width:80ch;margin-bottom:22px}
+.muted{color:var(--muted);font-size:13.5px}
+ul,ol{margin:0 0 12px 0;padding-left:22px;color:var(--body)}
+li{margin-bottom:6px}
+li::marker{color:var(--faint)}
+code,.mono{font-family:var(--font-mono);font-size:.87em}
+code{background:var(--bg-sunk);border:1px solid var(--line);border-radius:4px;padding:1px 5px;color:#1e3a8a}
+a{color:var(--accent)}
+.sub{font-size:12.5px;color:var(--muted);margin-top:5px}
+
+.grid{display:grid;gap:14px}
+.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.g4{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media(max-width:1080px){.g3,.g4{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:760px){.g2,.g3,.g4{grid-template-columns:1fr}}
+
+.card{background:#fff;border:1px solid var(--line);border-radius:var(--r);padding:16px 18px}
+.card.accent{background:var(--accent-soft);border-color:var(--accent-line)}
+.card.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.card.bad{background:var(--bad-soft);border-color:var(--bad-line)}
+.card.good{background:var(--good-soft);border-color:var(--good-line)}
+.card.purple{background:var(--purple-soft);border-color:var(--purple-line)}
+.card h3{display:flex;align-items:center;gap:8px}
+.card ul{padding-left:18px;margin-bottom:0}
+.card p:last-child{margin-bottom:0}
+.card.tight{padding:13px 15px}
+
+.stat{text-align:center;padding:16px 12px}
+.stat .v{font-family:var(--font-mono);font-size:clamp(22px,2.5vw,30px);font-weight:700;
+  line-height:1.15;color:var(--accent)}
+.stat .v.green{color:var(--good)} .stat .v.amber{color:var(--warn)}
+.stat .v.red{color:var(--bad)} .stat .v.purple{color:var(--purple)}
+.stat .l{font-size:12.5px;color:var(--muted);margin-top:7px;line-height:1.45}
+.stat .n{font-size:11.5px;color:var(--faint);font-family:var(--font-mono);margin-top:3px}
+
+.tw{overflow-x:auto;background:#fff;border:1px solid var(--line);
+  border-radius:var(--r);margin-bottom:16px}
+.tw.compact table{font-size:12.4px;min-width:680px}
+.tw.compact thead th{white-space:normal}
+.tw.compact thead th,.tw.compact tbody td{padding:8px 10px}
+.tw.compact th:last-child,.tw.compact td:last-child{white-space:normal}
+table{width:100%;border-collapse:collapse;font-size:13.5px;min-width:560px}
+thead th{background:var(--bg-soft);font-size:11px;text-transform:uppercase;letter-spacing:.07em;
+  color:var(--muted);font-weight:700;text-align:left;padding:10px 13px;
+  border-bottom:1px solid var(--line-2);white-space:nowrap}
+tbody td{padding:10px 13px;border-bottom:1px solid var(--line);color:var(--body);vertical-align:top}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:hover td{background:var(--bg-soft)}
+td.num,th.num{font-family:var(--font-mono);text-align:right;white-space:nowrap}
+td.ok{color:var(--good);font-weight:600}
+td.no{color:var(--bad);font-weight:600}
+td.hi{color:var(--accent);font-weight:600}
+.pill{display:inline-block;font-size:11px;font-weight:700;padding:1px 8px;border-radius:4px;
+  border:1px solid;font-family:var(--font-mono)}
+.pill.p0{color:var(--bad);border-color:var(--bad-line);background:var(--bad-soft)}
+.pill.p1{color:var(--warn);border-color:var(--warn-line);background:var(--warn-soft)}
+.pill.p2{color:var(--accent);border-color:var(--accent-line);background:var(--accent-soft)}
+.pill.ok{color:var(--good);border-color:var(--good-line);background:var(--good-soft)}
+
+.callout{border-left:3px solid var(--accent);background:var(--accent-soft);padding:12px 16px;
+  border-radius:0 6px 6px 0;margin:14px 0;font-size:14px;color:var(--body)}
+.callout.warn{border-color:var(--warn);background:var(--warn-soft)}
+.callout.bad{border-color:var(--bad);background:var(--bad-soft)}
+.callout.good{border-color:var(--good);background:var(--good-soft)}
+.callout strong{color:var(--ink)}
+
+.plate{display:inline-flex;align-items:center;gap:10px;background:#fff;color:#111827;
+  border:2px solid #111827;border-radius:6px;padding:6px 14px;font-weight:700;
+  font-size:20px;letter-spacing:.06em}
+.plate.wrong{border-color:var(--bad);background:var(--bad-soft)}
+.plate.right{border-color:var(--good);background:var(--good-soft)}
+.plate .note{font-size:11px;font-weight:600;letter-spacing:0;color:var(--muted)}
+.chip{display:inline-block;font-family:var(--font-mono);font-size:12.5px;background:var(--bg-sunk);
+  border:1px solid var(--line);border-radius:4px;padding:2px 7px;color:#1e3a8a;margin:2px 4px 2px 0}
+.chip.r{color:var(--bad);border-color:var(--bad-line);background:var(--bad-soft)}
+.chip.a{color:var(--warn);border-color:var(--warn-line);background:var(--warn-soft)}
+
+.flow{display:flex;flex-direction:column;gap:10px;margin-bottom:18px}
+.frow{display:flex;align-items:stretch;gap:9px;flex-wrap:wrap}
+.node{flex:1 1 150px;min-width:130px;background:#fff;border:1px solid var(--line);
+  border-left:3px solid var(--line-2);border-radius:var(--r);padding:11px 13px}
+.node .tag{font-size:10px;font-weight:700;letter-spacing:.1em;color:var(--faint);text-transform:uppercase}
+.node .nm{font-size:14px;font-weight:700;color:var(--ink);margin:2px 0 3px}
+.node .ds{font-size:12.5px;color:var(--muted);line-height:1.55}
+.node.a{border-left-color:var(--accent)}
+.node.b{border-left-color:var(--good)}
+.node.c{border-left-color:var(--purple)}
+.node.w{border-left-color:var(--warn)}
+.arrow{align-self:center;color:var(--faint);font-size:16px;padding:0 2px}
+
+.barwrap{display:flex;flex-direction:column;gap:9px}
+.bar{display:grid;grid-template-columns:160px 1fr 82px;gap:10px;align-items:center;font-size:13px}
+@media(max-width:760px){.bar{grid-template-columns:1fr 54px;grid-template-areas:'l v' 't t';row-gap:4px}
+  .bar .bl{grid-area:l}.bar .bt{grid-area:t}.bar .bv{grid-area:v}}
+.bar .bl{color:var(--body);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar .bt{height:8px;border-radius:999px;background:var(--bg-sunk);overflow:hidden}
+.bar .bf{height:100%;border-radius:999px;background:var(--accent)}
+.bar .bf.g{background:var(--good)}
+.bar .bf.a{background:var(--warn)}
+.bar .bf.r{background:var(--bad)}
+.bar .bv{font-family:var(--font-mono);font-size:12.5px;text-align:right;color:var(--ink)}
+
+/* ---------- utilities ---------- */
+.totop{position:fixed;right:22px;bottom:22px;z-index:70;font:inherit;font-size:13px;font-weight:600;
+  color:var(--ink);background:#fff;border:1px solid var(--line-2);border-radius:6px;
+  padding:9px 14px;cursor:pointer;box-shadow:0 2px 10px rgba(15,23,42,.08);
+  opacity:0;pointer-events:none;transform:translateY(6px);
+  transition:opacity .2s,transform .2s,border-color .15s}
+.totop.show{opacity:1;pointer-events:auto;transform:none}
+.totop:hover{border-color:var(--accent);color:var(--accent)}
+.counter{position:fixed;right:22px;bottom:66px;z-index:70;font-family:var(--font-mono);font-size:11.5px;
+  color:var(--muted);background:#fff;border:1px solid var(--line);border-radius:6px;
+  padding:4px 10px;box-shadow:0 2px 8px rgba(15,23,42,.06);opacity:0;transition:opacity .2s}
+.counter.show{opacity:1}
+.counter b{color:var(--accent);font-weight:700}
+.secnum{position:absolute;top:26px;right:48px;font-family:var(--font-mono);font-size:11.5px;
+  color:var(--faint);letter-spacing:.06em}
+.footer-note{margin-top:26px;padding-top:14px;border-top:1px solid var(--line);
+  font-size:12px;color:var(--faint)}
+
+/* ---------- responsive ---------- */
+@media(max-width:1024px){
+  .side{display:none}
+  .deck{margin-left:0;padding-top:var(--bar)}
+  .progress{left:0}
+  .mobilebar{display:flex}
+  .slide{padding:48px 24px 56px}
+  .slide:first-child{padding-top:36px}
+  .act{padding:56px 24px 48px}
+  .secnum{position:static;margin:0 0 10px;font-size:11px}
+}
+@media(max-width:760px){.footer-note{font-size:11px}}
+
+@media print{
+  .side,.mobilebar,.totop,.counter,.progress{display:none}
+  .deck{margin-left:0;padding-top:0}
+  .slide{max-width:none;padding:16px 0;page-break-after:always;page-break-inside:avoid}
+  .slide:first-child{padding-top:0}
+  .act{background:#fff}
+  a{color:inherit;text-decoration:none}
+}
+</style>
+</head>
+<body>
+
+<aside class="side">
+  <div class="side-head">
+    <div class="side-brand">Thai &amp; Lao LPR<small>เรื่องเล่าเชิงวิศวกรรม · 136 commits</small></div>
+    <div class="side-links">
+      <a class="lang on" href="presentation.html">ไทย</a>
+      <a class="lang" href="presentation_en.html">English</a>
+    </div>
+  </div>
+  <nav class="navpills" id="navpills"></nav>
+  <div class="side-foot">
+    <button id="btnPrint">พิมพ์ / PDF</button>
+    <button id="btnTop" title="หรือกด g">กลับด้านบน</button>
+  </div>
+</aside>
+
+<header class="mobilebar">
+  <span class="mb-title">Thai &amp; Lao LPR</span>
+  <select id="jumpSel" aria-label="ไปยังส่วน"></select>
+  <a class="lang" href="presentation_en.html">EN</a>
+</header>
+
+<div class="progress" id="progress"></div>
+
+<main class="deck" id="deck">
+
+<!-- ===== COVER ===== -->
+<section class="slide act" data-title="ปก">
+  <span class="eyebrow">🛠️ Engineering Story · 136 commits · ธ.ค. 2025 → ก.ย. 2026</span>
+  <h1>“ทำไมเราถึงสร้างมันแบบนี้”<br><span style="color:var(--text-3);font-size:.62em;font-weight:600">เรื่องเล่าการตัดสินใจของระบบอ่านป้ายทะเบียนไทย–ลาว<br>จาก 7 ยุคที่ล้มเหลว สู่สถาปัตยกรรมที่ส่งของได้จริง</span></h1>
+
+  <div class="grid g3" style="margin:22px 0 14px">
+    <div class="card bad"><h3>😵 6 ยุคที่ลองแล้วพัง</h3><p class="muted">AABB → OBB → whole-plate OCR → DLT banner code → blind CTC → merged box</p></div>
+    <div class="card warn"><h3>🎯 ผู้กำกับตัวจริง</h3><p class="muted">ไม่ใช่ benchmark แต่คือ 3 ข้อจำกัด: <strong>License</strong> · <strong>CPU</strong> · <strong>C# / ONNX Runtime</strong></p></div>
+    <div class="card good"><h3>✅ สิ่งที่ส่งมอบได้</h3><p class="muted">CPU ~75–95 ms · ONNX Opset 18 รันบน .NET · license เชิงพาณิชย์ 100%</p></div>
+  </div>
+
+  <div class="callout">
+    <strong>วิธีอ่านเด็คชุดนี้:</strong> องก์ที่ 1–4 = <em>“เราเจออะไร”</em> (ปัญหาจริงพร้อมหลักฐาน)<br>
+    องก์ที่ 5–7 = <em>“เราแก้ยังไง และทำไมวิธีนั้น”</em> · เอพิล็อก = <em>“ทำไมเลือกใช้ library นี้ ไม่ใช้อันนั้น”</em><br>
+    ภาคผนวก A–F = ตารางอ้างอิงทั้งหมด (สเปก · augmentation · ตัวเลขวัด · แผน v6 · tech stack)
+  </div>
+  <div class="footer-note">ที่มา: <span class="mono">README.md</span> · <span class="mono">presentation_briefing.md</span> · <span class="mono">docs/IMPROVEMENT_ANALYSIS_V6.md</span> · <span class="mono">git log</span> (136 commits)</div>
+</section>
+
+<!-- ===== PROLOGUE: WHY ===== -->
+<section class="slide" data-title="โจทย์ตั้งต้น">
+  <span class="eyebrow">Prologue · โจทย์ตั้งต้น</span>
+  <h2>เราเริ่มจากอะไร — ไม่ใช่ “อยากทำโมเดล AI”</h2>
+
+  <div class="beat good">
+    <div class="when">2025-12-04</div>
+    <div class="what">
+      <h3>Commit แรก: “first commit” → “preprocess fix” → “train fix” → “api add”</h3>
+      <p class="muted">เริ่มจาก prototype อ่านป้าย + FastAPI — ยังไม่รู้ว่าปัญหาจริงซ่อนอยู่ตรงไหน ทั้งหมดนี้คือการ “ลองของ”</p>
+    </div>
+  </div>
+
+  <div class="callout">
+    <strong>โจทย์ธุรกิจจริง:</strong> กล้อง CCTV ตามด่าน/ทางเข้า → อ่านป้าย <strong>ไทยและลาว</strong> →
+    เก็บประวัติ + ค้นหาได้ → และต้อง <strong>ฝังเข้าไปในระบบที่มีอยู่ของลูกค้า</strong>
+    ซึ่งเขียนด้วย <strong>C# (.NET)</strong>
+  </div>
+
+  <div class="grid g2" style="margin-top:16px">
+    <div class="card accent">
+      <h3>ระบบต้องทำอะไร</h3>
+      <ul>
+        <li>รับภาพ/สตรีม RTSP → ตรวจจับแผ่นป้ายในภาพถนนจริง</li>
+        <li>ปรับมุมป้ายให้ตรง แล้วแยกบรรทัดตัวอักษรกับบรรทัดจังหวัด</li>
+        <li>อ่าน “หมวดอักษร–ตัวเลข” และ “จังหวัด” ให้ถูกทั้งคู่</li>
+        <li>บันทึกแบบ real-time + ทำ analytics (Firestore + BigQuery)</li>
+      </ul>
+    </div>
+    <div class="card purple">
+      <h3>กติกาการทำงานที่โครงการนี้ยึดตั้งแต่ต้น</h3>
+      <ul>
+        <li><strong>Config-driven</strong> — ตัวแปรสำคัญอยู่ใน config ไม่กระจายในโค้ด</li>
+        <li><strong>Validate + Regression check</strong> ทุกครั้งก่อนส่ง</li>
+        <li><strong>Test ก่อนเสมอ</strong> ก่อนรันเต็มรูปแบบ</li>
+        <li>สรุปไฟล์ที่แก้ + วิธีรันทดสอบ ทุกครั้งที่ส่งงาน</li>
+      </ul>
+      <p class="muted" style="margin-top:6px">วินัยนี้คือเหตุผลที่องก์ที่ 5–7 ของเรื่องนี้ “มีตัวเลขวัดจริง” ให้เล่าได้</p>
+    </div>
+  </div>
+</section>
+
+<!-- ===== 3 CONSTRAINTS ===== -->
+<section class="slide" data-title="3 ข้อจำกัด">
+  <span class="eyebrow">Prologue · เข็มทิศ</span>
+  <h2>3 ข้อจำกัดที่กำหนดทุกการตัดสินใจในระบบนี้</h2>
+  <p class="lead">โมเดลที่แม่นที่สุดในโลกจะไร้ค่าทันที ถ้าติดข้อใดข้อหนึ่งในสามข้อนี้ —
+  นี่คือสิ่งที่ทำให้โปรเจกต์นี้ “เลือกของไม่เหมือนคนอื่น”</p>
+
+  <div class="grid g3">
+    <div class="card accent">
+      <h3>① License เชิงพาณิชย์</h3>
+      <p>ลูกค้าภาคอุตสาหกรรม → ห้ามมี AGPL และห้ามมี Royalty</p>
+      <p class="muted"><strong>ผลที่ตามมา:</strong> Ultralytics YOLO (AGPL-3.0) ใช้ได้แค่ “เครื่องมือเทรนเทียบ”
+      ส่วน weights ที่ serve ต้องเป็น MIT / Apache-2.0 / BSD-3 เท่านั้น</p>
+      <div class="sub mono">D-FINE = MIT · RF-DETR = Apache-2.0 · MobileNet/ResNet = BSD-3</div>
+    </div>
+    <div class="card accent">
+      <h3>② CPU ไม่มี GPU</h3>
+      <p>เป้าหมายคือ Cloud Run / edge box — ไม่มี GPU ให้ใช้</p>
+      <p class="muted"><strong>ผลที่ตามมา:</strong> งบเวลา ~75–95 ms ต่อภาพ คือเพดานที่ทำให้
+      Transformer detector ตัวใหญ่ (84–108 ms/สเตจ) ตกรอบทันที</p>
+      <div class="sub mono">FORCE_CPU=True · warmup ตอน startup</div>
+    </div>
+    <div class="card accent">
+      <h3>③ ต้องรันบน C# .NET</h3>
+      <p>ทุกโมเดลต้อง export <strong>ONNX (Opset 18)</strong> แล้วรันด้วย
+      <span class="mono">Microsoft.ML.OnnxRuntime</span> + <span class="mono">OpenCvSharp4</span></p>
+      <p class="muted"><strong>ผลที่ตามมา (สำคัญสุด):</strong> โมเดลที่พึ่ง custom C++ operator
+      จะตายตรงนี้ — และโชคดีที่มันตายตอน <em>ทดลอง</em> ไม่ใช่ตอน <em>ส่งมอบ</em></p>
+      <div class="sub mono">docs/csharp_integration_guide.md · ไม่ต้องมี Python ที่เครื่องลูกค้า</div>
+    </div>
+  </div>
+
+  <div class="lesson">
+    <div class="lt">เข็มทิศ</div>
+    <p>“ข้อจำกัดการ deploy” ต้องเป็นผู้ตัดสินสถาปัตยกรรม ไม่ใช่ leaderboard</p>
+  </div>
+</section>
+
+<!-- ===== ACT I ===== -->
+<section class="slide act neg" data-title="องก์ 1">
+  <div class="rnum">ACT I</div>
+  <h1>ป้ายไม่ได้ตรงอย่างที่คิด</h1>
+  <div class="q">คำถามขององก์นี้: “ทำไมอ่านตัวอักษรที่ชัดแล้วยังผิด?”</div>
+  <div class="rule"></div>
+  <p class="lead">ยุคแรกเราเชื่อว่า “หาแผ่นป้ายเจอ → ครอบตัด → ส่ง OCR” จบ —
+  และใช้เวลาไม่นานก็รู้ว่าความผิดพลาดเกือบครึ่งไม่ได้เกิดจากตัวอ่าน แต่อยู่ที่ <strong>เรขาคณิตของภาพที่ป้อนเข้าไป</strong></p>
+</section>
+
+<!-- ===== ACT I content ===== -->
+<section class="slide" data-title="ยุค 1: AABB">
+  <span class="eyebrow">Act I · ยุคที่ 1</span>
+  <h2>❌ ยุคที่ 1 — AABB ทั่วไป แล้วครอบตัดตรงๆ</h2>
+
+  <div class="grid g2" style="margin-bottom:14px">
+    <div class="card bad">
+      <h3>สิ่งที่ทำ</h3>
+      <p>โมเดลตรวจจับให้กรอบสี่เหลี่ยมตรง (Axis-Aligned Bounding Box) → ขยายกรอบเล็กน้อย → ครอป → ส่งเข้า OCR</p>
+    </div>
+    <div class="card bad">
+      <h3>สิ่งที่เจอ</h3>
+      <p>เมื่อกล้องติดตั้งแบบก้ม/เฉียง หรือรถกำลังเลี้ยว ป้ายจะกลายเป็น
+      <strong>สี่เหลี่ยมคางหมู</strong> — ตัวอักษรถูกบิดยืด แต่ละตัวสูงไม่เท่ากัน</p>
+      <div class="stat" style="padding:6px 0"><div class="v red">&gt; 40%</div><div class="l">อัตราอ่านผิดเมื่อป้ายเอียง</div></div>
+    </div>
+  </div>
+
+  <div class="beat bad">
+    <div class="when">2026-09-03</div>
+    <div class="what">
+      <h3>Commit: <span class="mono">feat: implement perspective transform pipeline</span></h3>
+      <p class="muted">วันนั้นเราเลิก “ครอบตัด” แล้วเริ่ม “แปลงมุมมอง” — เป็นจุดเปลี่ยนครั้งแรกของสถาปัตยกรรม</p>
+    </div>
+  </div>
+
+  <div class="lesson">
+    <div class="lt">บทเรียนขององก์นี้</div>
+    <p>ก่อนจะเปลี่ยนโมเดล ให้ตรวจก่อนว่า “ภาพที่ป้อนเข้าโมเดล” ยังเป็นปัญหาอยู่ไหม</p>
+  </div>
+</section>
+
+<!-- ===== ACT II ===== -->
+<section class="slide act neg" data-title="องก์ 2">
+  <div class="rnum">ACT II</div>
+  <h1>ทางที่ดูดีที่สุด แต่ตันที่สุด</h1>
+  <div class="q">คำถามขององก์นี้: “ทำไมโมเดลที่แม่นในโน้ตบุ๊ก ส่งของไม่ถึงมือลูกค้าได้?”</div>
+  <div class="rule"></div>
+  <p class="lead">คำตอบคือ Rotated NMS — custom operator ของ C++ ที่ไม่มีใน ONNX Runtime มาตรฐาน
+  โมเดล OBB ทำงานสวยงามใน PyTorch แต่ <strong>พังตอน export</strong> และนั่นคือวันที่ “ข้อจำกัด C#” กลายเป็นผู้กำกับเรื่องราวทั้งหมด</p>
+</section>
+
+<!-- ===== ACT II content ===== -->
+<section class="slide" data-title="ยุค 2: OBB">
+  <span class="eyebrow">Act II · ยุคที่ 2</span>
+  <h2>❌ ยุคที่ 2 — 1-Stage Rotated Bounding Box (OBB) / Segmentation</h2>
+
+  <div class="grid g2" style="margin-bottom:14px">
+    <div class="card bad">
+      <h3>เหตุผลที่คิดว่าดี</h3>
+      <ul>
+        <li>ให้กรอบแบบหมุนได้ → ครอบป้ายเอียงได้ในโมเดลเดียว</li>
+        <li>segmentation ให้ mask ของป้าย → rectify ตรงจาก mask ได้</li>
+        <li>“จบในหนึ่งโมเดล” ดูเรียบง่ายกว่า</li>
+      </ul>
+    </div>
+    <div class="card bad">
+      <h3>สองกำแพงที่ชน</h3>
+      <ul>
+        <li><strong>ช้าบน CPU:</strong> ~90–120 ms ต่อภาพ เกินงบ real-time</li>
+        <li><strong>Export ไม่ผ่าน:</strong> ONNX ต้องใช้ <span class="mono">Rotated NMS</span>
+        เป็น custom operator (C++) ซึ่ง ONNX Runtime มาตรฐานไม่มี</li>
+      </ul>
+      <p class="muted">→ รันบน C# / .NET ยากมาก พังบ่อยตอน deploy · commit
+      <span class="mono">fcf9857 · efc2e47</span> คือช่วงที่เราไปลองของตระกูล OBB จริง</p>
+    </div>
+  </div>
+
+  <div class="callout bad">
+    <strong>ความจริงที่เจ็บ:</strong> เราเสียเวลากับเส้นทางที่ “accuracy ดี” แต่ “ส่งได้ไม่จริง” —
+    และถ้าเราเริ่มจาก benchmark แทนที่จะเริ่มจากข้อจำกัดการ deploy เราจะเสียเวลานี้ไปทั้งเดือน
+  </div>
+
+  <div class="lesson">
+    <div class="lt">บทเรียนขององก์นี้</div>
+    <p>ลอง export + รันจากภาษาปลายทางตั้งแต่ <em>วันแรก</em> — ไม่ใช่หลังเทรนเสร็จ</p>
+  </div>
+</section>
+
+<!-- ===== ACT II solution ===== -->
+<section class="slide" data-title="ยุค 2: ทางออก">
+  <span class="eyebrow">Act II · ทางออก</span>
+  <h2>✅ ทางที่ชนะ: 2-Stage Light Keypoint Regressor</h2>
+  <p class="lead">ถ้า ONNX Runtime ทำ Rotated NMS ไม่ได้ — งั้น “เราจะหมุนภาพเอง” ด้วย OpenCV
+  และให้โมเดลทำแค่ <strong>ทำนาย 4 จุด</strong> ซึ่งเป็น regression ธรรมดาที่ export ได้ทุก runtime</p>
+
+  <div class="flow">
+    <div class="frow">
+      <div class="node a"><div class="tag">Stage 1</div><div class="nm">AABB Detector</div><div class="ds">D-FINE-Nano ~27 ms · หากรอบป้ายตรง + margin 12%</div></div>
+      <span class="arrow">→</span>
+      <div class="node a"><div class="tag">Stage 1.1</div><div class="nm">Corner Regressor</div><div class="ds">MobileNetV3-Small ทำนาย 8 ค่า (4 มุม) ใน 3.2 ms</div></div>
+      <span class="arrow">→</span>
+      <div class="node b"><div class="tag">Pure OpenCV</div><div class="nm">warpPerspective</div><div class="ds">หมุนป้ายให้ตรงเป๊ะ — ไม่ต้องมี custom op ใน ONNX</div></div>
+    </div>
+  </div>
+
+  <div class="grid g3">
+    <div class="card good"><h3>เร็ว</h3><p class="muted">รวมสองขั้นตอน ~30 ms — เร็วกว่า OBB 3–4 เท่า</p></div>
+    <div class="card good"><h3>พกพาได้</h3><p class="muted">เป็น regression + homography ล้วน → รันบน ONNX Runtime, OpenCvSharp4, มือถือ หรือเบราว์เซอร์ได้</p></div>
+    <div class="card good"><h3>ได้ของแถม</h3><p class="muted">ภาพ rectify 320×160 ที่ “ตรงเป๊ะ” กลายเป็น input ที่ทุกสเตจหลังจากนั้นใช้ร่วมกัน</p></div>
+  </div>
+
+  <div class="beat">
+    <div class="when">09-13 / 09-17</div>
+    <div class="what">
+      <h3>Commit: <span class="mono">feat: add PlateQuadNet detection pipeline, C# reference example</span> → <span class="mono">feat: add PlateCornerRegressor</span></h3>
+      <p class="muted">หมายเหตุว่าวันเดียวกันเราสร้าง <strong>C# reference example</strong> ไปด้วย — เพราะข้อจำกัด C# ถูกหยิบมาเป็นข้อกำหนดตั้งแต่ยังไม่เขียนโมเดล ไม่ใช่ทีหลัง</p>
+    </div>
+  </div>
+</section>
+
+<!-- ===== ACT III ===== -->
+<section class="slide act neg" data-title="องก์ 3">
+  <div class="rnum">ACT III</div>
+  <h1>อ่านทั้งป้ายรวดเดียวไม่ได้</h1>
+  <div class="q">คำถามขององก์นี้: “ทำไมตัวเลขทะเบียนถึงมีชื่อจังหวัดปนอยู่?”</div>
+  <div class="rule"></div>
+  <p class="lead">ป้ายไทยมี 2 บรรทัด (หมวดอักษร–ตัวเลข / จังหวัด) และป้ายรถบรรทุกมีขีดกลาง —
+  เมื่อป้อนทั้งผืนให้ OCR มัน “อ่านต่อกันเป็นประโยคเดียว” แล้วสลับบรรทัดกันเอง</p>
+</section>
+
+<section class="slide" data-title="ยุค 3: แยกโซน">
+  <span class="eyebrow">Act III · ยุคที่ 3</span>
+  <h2>❌ ยุคที่ 3 — OCR อ่านข้อความทั้งป้าย โดยไม่แบ่ง Component</h2>
+
+  <div class="grid g2" style="margin-bottom:14px">
+    <div class="card bad">
+      <h3>อาการที่เจอ</h3>
+      <ul>
+        <li>อ่านชื่อจังหวัดปนเข้าไปในเลขทะเบียน</li>
+        <li>สลับบรรทัดบน–ล่างกัน</li>
+        <li>ป้ายบรรทุกที่มีขีดกลาง → โมเดลพยายามอ่านขีดเป็นตัวอักษร</li>
+      </ul>
+    </div>
+    <div class="card good">
+      <h3>ทางออก: Model 2 (Component Detector)</h3>
+      <p>เพิ่มสเตจที่ทำหน้าที่เดียว — แยกโซน <span class="mono">plate_char</span>
+      กับ <span class="mono">province</span> ออกจากกันอย่างเด็ดขาด แล้วให้โมเดลเฉพาะทางอ่านคนละส่วน</p>
+      <div class="sub mono">commit 2026-09-04 “add code for model 2 plate and province charactor”</div>
+    </div>
+  </div>
+
+  <div class="callout">
+    <strong>นี่คือครั้งแรกที่เราเปลี่ยน “วิธีคิด” ไม่ใช่ “โมเดล”:</strong>
+    เราไม่ได้พยายามทำโมเดลให้เก่งขึ้น แต่ <em>แบ่งงานให้ถูกคน</em> —
+    และมันแก้ปัญหาที่การเพิ่ม capacity แก้ไม่ได้
+  </div>
+
+  <div class="lesson">
+    <div class="lt">บทเรียนขององก์นี้</div>
+    <p>เมื่อโมเดลหนึ่งตัวถูกขอให้ทำสองอย่างพร้อมกัน ความผิดพลาดของมันจะซับซ้อนจนหาสาเหตุไม่ได้</p>
+  </div>
+</section>
+
+<!-- ===== ACT IV ===== -->
+<section class="slide act neg" data-title="องก์ 4">
+  <div class="rnum">ACT IV</div>
+  <h1>ยุคที่โมเดล “ประดิษฐ์คำตอบ”</h1>
+  <div class="q">คำถามขององก์นี้: “ทำไมระบบถึงอ่านสิ่งที่ไม่มีอยู่บนป้ายได้อย่างมั่นใจ?”</div>
+  <div class="rule"></div>
+  <p class="lead">เมื่อเราให้โมเดล “ต้องตอบเสมอ” ในสเตจปลายทาง ความผิดพลาดเล็กๆ
+  จะถูกยกระดับเป็นคำตอบที่ <em>ดูน่าเชื่อถือ</em> — และมันแย่กว่าการบอกว่า “อ่านไม่ได้” เพราะไม่มีใครรู้ว่ามันผิด</p>
+</section>
+
+<section class="slide" data-title="ยุค 4–6: 3 ภาพหลอน">
+  <span class="eyebrow">Act IV · 3 ความล้มเหลว</span>
+  <h2>ยุคที่ 4, 5, 6 — ปัญหาต่างกัน แต่รากเดียวกัน</h2>
+
+  <div class="beat bad">
+    <div class="when">ยุคที่ 4</div>
+    <div class="what">
+      <h3>❌ พึ่ง DLT Top Banner Code (รหัส 2 หลักข้างคำว่า THAILAND)</h3>
+      <p class="muted">ตัวเลขนี้เล็กมากและมักถูกหัวน็อตยึดป้ายเจาะทับ → อ่าน <span class="mono">70</span> (ราชบุรี)
+      กลายเป็น <span class="mono">55</span> (น่าน) แล้วระบบเอาไป <strong>override ชื่อจังหวัดที่อ่านถูกแล้ว</strong></p>
+      <p class="muted"><strong>ความน่าสนใจ:</strong> commit 09-09 <span class="mono">feat: implement DLT truck province code extraction</span>
+      แต่ 09-17 <span class="mono">feat: … remove DLT truck extraction logic</span> — <em>เราสร้างมัน แล้วเราลบมัน</em></p>
+    </div>
+  </div>
+  <div class="beat bad">
+    <div class="when">ยุคที่ 5</div>
+    <div class="what">
+      <h3>❌ Blind CTC Insertion — เติมตัวอักษรที่กล่องหายไปแบบไม่ตรวจสอบ</h3>
+      <p class="muted">หัวน็อต/กรอบสะท้อนแสงถูก CTC มองเป็นตัวเลข: ป้ายจริง <span class="mono">กย 588</span> → <span class="mono">5กย 4588</span> ·
+      ป้ายบรรทุก <span class="mono">70-1737</span> ขีดกลางถูกอ่านเป็นพยัญชนะ → <span class="mono">70ษย7ม</span> (ผิดกฎหมายอย่างสิ้นเชิง)</p>
+    </div>
+  </div>
+  <div class="beat bad">
+    <div class="when">ยุคที่ 6</div>
+    <div class="what">
+      <h3>❌ Merged Box กลืนตัวอักษร + Classifier ขาดสมดุล</h3>
+      <p class="muted">ตัวอักษรชิดกัน (<span class="mono">97</span>) ถูกทำนายเป็นกล่องกว้าง 1 กล่อง
+      (<span class="mono">w &gt; 1.6 × median</span>) แล้ว NMS กลืนกล่องลูก 2 ตัวข้างในทิ้ง |
+      ป้ายอักษรเดี่ยว <span class="mono">ณ 4100</span> ถูกหลอนเป็น <span class="mono">74-0001</span></p>
+    </div>
+  </div>
+
+  <div class="callout bad">
+    <strong>แพตเทิร์นร่วมของทั้งสามยุค:</strong> มีสเตจปลายทางที่ “มีอำนาจ override ของจริง”
+    โดยไม่ตรวจสอบว่าผลลัพธ์ที่ได้<em>เป็นไปได้หรือไม่</em> ตามกฎของป้ายทะเบียน
+  </div>
+</section>
+
+<!-- ===== ACT IV solutions ===== -->
+<section class="slide" data-title="ยุค 7: ทางแก้">
+  <span class="eyebrow">Act IV · ทางออก</span>
+  <h2>✅ ยุคที่ 7 — สอนระบบให้ “รู้ว่าอะไรเป็นไปไม่ได้”</h2>
+
+  <div class="grid g2">
+    <div class="card good">
+      <h3>1 · Subsumed Composite Box Filter</h3>
+      <p>ตรวจกล่องที่กว้างผิดปกติและ<strong>ครอบกล่องย่อย 2 กล่องไว้ข้างใน</strong> → ทิ้งกล่องรวม
+      เพื่อรักษาตัวอักษรเดี่ยวทั้งสองตัว</p>
+      <div class="sub mono">commit 09-21: add greedy NMS and wide box splitting</div>
+    </div>
+    <div class="card good">
+      <h3>2 · DLT Syntax Placement Guard</h3>
+      <p><span class="mono">has_invalid_thai_consonant_placement()</span> — ล็อกกฎไวยากรณ์ป้ายส่วนบุคคล:
+      ห้ามพยัญชนะตามหลังตัวเลข 2 หลัก และห้ามรูปแบบ <span class="mono">\d[พยัญชนะ]\d{4}</span></p>
+    </div>
+    <div class="card good">
+      <h3>3 · Protected Sequence Reconciliation</h3>
+      <p>ปกป้องป้ายพยัญชนะไทยแท้ เช่น <span class="mono">ณ 4100</span> หรือ <span class="mono">ผว 7697</span>
+      ไม่ให้ถูก “ภาพหลอนป้ายรถบรรทุก” สวมรอยทับ</p>
+    </div>
+    <div class="card good">
+      <h3>4 · Autocontrast Normalization</h3>
+      <p>ขยาย dynamic range ของ crop ตัวอักษรที่มีเงาทึบก่อนเข้า classifier —
+      เชื่อมกับ commit 09-09 <span class="mono">add low-light CLAHE enhancement</span></p>
+    </div>
+  </div>
+
+  <div class="lesson">
+    <div class="lt">บทเรียนขององก์นี้</div>
+    <p>ระบบที่ “ต้องตอบเสมอ” จะ hallucinate — ต้องมีทั้งกฎที่บอกว่า “เป็นไปไม่ได้”
+    และทางออกที่บอกว่า “ไม่รู้”</p>
+  </div>
+</section>
+
+<!-- ===== ACT V ===== -->
+<section class="slide act" data-title="องก์ 5">
+  <div class="rnum" style="color:transparent">ACT V</div>
+  <h1>จุดเปลี่ยน: เลิกจูนโมเดล หันมาดูข้อมูล</h1>
+  <div class="q">คำถามขององก์นี้: “ถ้าสถาปัตยกรรมถูกแล้ว ทำไม accuracy ยังไม่ขึ้น?”</div>
+  <div class="rule"></div>
+  <p class="lead">หลังจากแก้สถาปัตยกรรมเสร็จ เราก็ยังเห็นโมเดลทายพลาดในคลาสเดิมๆ ซ้ำๆ —
+  จึงตัดสินใจ “ตรวจบ้านหลังที่เราสร้างขึ้นมา” และเจอความจริงที่อึดอัด 4 ข้อ</p>
+</section>
+
+<section class="slide" data-title="ตรวจบ้าน">
+  <span class="eyebrow">Act V · บทตรวจสอบ</span>
+  <h2>สิ่งที่เราพบตอน audit dataset (และมันเปลี่ยนทุกอย่าง)</h2>
+
+  <div class="grid g2">
+    <div class="card bad">
+      <h3>① Class imbalance ที่รุนแรงเกินจินตนาการ</h3>
+      <p>ชุดเทรนตัวอักษร: ตัวเลขมี ~180–214 crops/คลาส แต่ <span class="mono">ง ฟ ธ ค ฐ น พ ป</span>
+      มีเพียง <strong>1 crop</strong> — อัตราส่วน <strong>200 : 1</strong></p>
+      <p>ชุดเทรนจังหวัด: กรุงเทพ 470 crops เทียบจังหวัดเล็ก <strong>1 crop</strong> — <strong>470 : 1</strong></p>
+      <p class="muted">→ คลาสที่เหลือรอดจาก “การจดจำรูป” ไม่ใช่ “การเรียนรู้ป้ายจังหวัดนั้น”</p>
+    </div>
+    <div class="card bad">
+      <h3>② Train/Serve Crop Mismatch</h3>
+      <p>dataset เดิมถูกวาดกรอบด้วยมือบน Roboflow แต่ production ใช้กฎ crop ของตัวเอง
+      (insets / padding / min-y gating)</p>
+      <p class="muted">→ โมเดลจังหวัดเก่งใน dataset แต่ <strong>อ่านป้ายจริงบนถนนพลาด</strong>
+      เพราะการกระจายของข้อมูลไม่เหมือนกัน — ปัญหานี้เกิดจาก <em>เราสร้างข้อมูลไม่ตรงกับที่เราใช้</em></p>
+    </div>
+    <div class="card bad">
+      <h3>③ Split Leakage ที่ซ่อนอยู่</h3>
+      <p>ภาพจากวินาทีจับเดียวกัน (รถคันเดียวกันจากวิดีโอเดียวกัน) หลุดอยู่ทั้ง train และ valid ·
+      province crop ที่ byte-identical อยู่สองฝั่ง · การสุ่มแบบ per-crop ทำให้ crop ของป้ายเดียวกันกระจายข้าม split</p>
+      <p class="muted">→ <strong>validation accuracy เดิมสูงเกินจริงและเปรียบเทียบกันไม่ได้เลย</strong></p>
+    </div>
+    <div class="card warn">
+      <h3>④ Junk ที่ classifier ถูกบังคับให้แปลเป็นตัวอักษร</h3>
+      <p>กล่องรูปขีด “-” เศษขอบป้าย หรือสกรู ถูกแปะด้วย NMS ไม่หมด →
+      classifier มีแค่ 50 คลาส (เลข+พยัญชนะ ไม่มีคลาส “ขยะ”) จึงถูกบังคับให้ทายเป็นเลข</p>
+      <p class="muted">→ นี่คือต้นตอของเลขเกิน/รูปทรงเพี้ยนที่เราเห็นบนหน้าจอ</p>
+    </div>
+  </div>
+
+  <div class="beat bad">
+    <div class="when">2026-09-23</div>
+    <div class="what">
+      <h3>Commit: <span class="mono">feat: add v2 recognition dataset extraction, splitting, tests, and documentation</span></h3>
+      <p class="muted">วันนี้คือจุดที่โครงการเปลี่ยนจาก “architecture-centric” เป็น <strong>data-centric</strong></p>
+    </div>
+  </div>
+</section>
+
+<!-- ===== ACT V pipeline ===== -->
+<section class="slide" data-title="v2 Retrain Pipeline">
+  <span class="eyebrow">Act V · วิธีแก้</span>
+  <h2>สร้าง “สายพานข้อมูล” 3 ขั้น ที่เชื่อได้</h2>
+
+  <div class="grid g3" style="margin-bottom:16px">
+    <div class="card accent">
+      <h3>Step 1 · Extract</h3>
+      <p class="mono" style="font-size:12.5px">extract_recognition_crops_v2.py</p>
+      <p>crop ด้วย <strong>กฎ SERVE เป๊ะๆ</strong> (ไม่ใช่กรอบที่คนวาด) +
+      ออก <span class="mono">manifest.csv</span> กำกับที่มาของทุก crop</p>
+      <p class="muted">แก้ข้อ ② โดยตรง</p>
+    </div>
+    <div class="card accent">
+      <h3>Step 2 · Split</h3>
+      <p class="mono" style="font-size:12.5px">split_recognition_dataset_v2.py</p>
+      <p>แบ่งแบบ <strong>source-image grouped</strong> — ภาพจากรถคันเดียวกัน/วิดีโอเดียวกัน
+      อยู่ฝั่งเดียวกันเสมอ</p>
+      <p class="muted">แก้ข้อ ③ โดยตรง</p>
+    </div>
+    <div class="card accent">
+      <h3>Step 3 · Curate</h3>
+      <p class="mono" style="font-size:12.5px">curate_recognition_v2.py</p>
+      <p>ตรวจ/แก้ label error อย่างปลอดภัย โดย <strong>sync กับ manifest เสมอ</strong>
+      ไม่แก้ไฟล์ลอยๆ</p>
+      <p class="muted">commit 2026-09-26</p>
+    </div>
+  </div>
+
+  <div class="grid g2">
+    <div class="card purple">
+      <h3>จากนั้นจึงเติมข้อมูล — ด้วย 2 วิธีที่ไม่โกงตัวเอง</h3>
+      <ul>
+        <li><strong>Self-Labeling Harvest:</strong> รัน pipeline <em>เดียวกับ serve</em>
+        (M3A box → geometric filter → classifier) บนภาพจริงเพิ่ม เก็บเฉพาะ <span class="mono">conf ≥ 0.70</span>
+        พร้อม manifest ที่มาทุก crop</li>
+        <li><strong>Augmented-Variant Balancing:</strong> เติมคลาสที่ขาดด้วยภาพที่ผ่านการหมุน/สเกล/jitter/blur
+        — <strong>ไม่ใช่การคัดลอกรูปซ้ำ</strong></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>ทำไมไม่ “ก็อปปี้รูปให้เท่ากัน”</h3>
+      <p>คัดลอกซ้ำทำให้คลาสเล็ก <strong>overfit ภาพเดียว</strong> โดยไม่เพิ่มความหลากหลายให้โมเดลเรียนรู้
+      — ได้ตัวเลข train ดีขึ้นแต่ generalise แย่ลง</p>
+      <p class="muted">และนั่นคือเหตุผลที่ use <span class="mono">WeightedRandomSampler</span> +
+      class weighting ที่ระดับ loss แทนการเพิ่มจำนวนไฟล์</p>
+    </div>
+  </div>
+
+  <div class="lesson">
+    <div class="lt">บทเรียนขององก์นี้</div>
+    <p>ความหลากหลายของข้อมูล แก้ปัญหาที่การปรับ architecture/hyperparameter แก้ไม่ได้</p>
+  </div>
+</section>
+
+<!-- ===== ACT VI ===== -->
+<section class="slide act win" data-title="องก์ 6">
+  <div class="rnum">ACT VI</div>
+  <h1>ผลลัพธ์ที่วัดได้</h1>
+  <div class="q">คำถามขององก์นี้: “ทั้งหมดที่ทำมา มันได้ผลจริงไหม?”</div>
+  <div class="rule"></div>
+  <p class="lead">ทุกตัวเลขด้านล่างมาจากการรัน eval ใหม่บน valid split เท่านั้น
+  ด้วย dataset class + transform + decode เดียวกับตอนเทรน (autocontrast, GrayscaleSmartResize, best_path_decode)
+  เพื่อให้เทียบกันได้แบบ apples-to-apples</p>
+</section>
+
+<section class="slide" data-title="v3 → v4 → v5">
+  <span class="eyebrow">Act VI · ผลวัดจริง</span>
+  <h2>v3 → v4: พิสูจน์ว่า “แก้ที่ข้อมูล” ได้ผล</h2>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th>Model</th><th class="num">v4 (valid ใหม่)</th><th class="num">v3 (ชุดเดียวกัน)</th><th>เรื่องที่เกิดขึ้น</th></tr></thead>
+      <tbody>
+        <tr><td>Thai Char Cls (50 cls)</td><td class="num ok">99.71%</td><td class="num">96.71%</td>
+          <td>คลาส rare ที่เคยพังหายวบ (v3: <span class="mono">ธ 0/18</span>, <span class="mono">ป 0/3</span>, <span class="mono">ค 1/12</span>) ถูกแก้ที่ root cause — แย่สุดของ v4 คือ <span class="mono">ด 3/4</span>, <span class="mono">ฆ 13/14</span></td></tr>
+        <tr><td>Thai Province R34</td><td class="num ok">99.90%</td><td class="num">98.90%</td>
+          <td>v3 พังซ้ำเป็นชุดที่ กรุงเทพ→มหาสารคาม จาก class imbalance · v4 เหลือ error เดียว (ชุมพร→สกลนคร)</td></tr>
+        <tr><td>Thai Province R18</td><td class="num">99.80%</td><td class="num">99.50%</td><td>R34 v4 ยังเป็น best → คงใช้ R34 ต่อ</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>v5: harvest เพิ่มอีก 13.5k char / 2.3k province crops</h3>
+  <div class="tw">
+    <table>
+      <thead><tr><th>Model</th><th class="num">v5</th><th class="num">v4 ชุดเดียวกัน</th><th>สรุป</th></tr></thead>
+      <tbody>
+        <tr><td>Thai Char Cls (50 cls)</td><td class="num">99.54% Top-1</td><td class="num">99.54%</td><td>➖ เสมอ — ดีขึ้นที่ <span class="mono">บ</span>, ลดลงที่ <span class="mono">ป</span> → เก็บ v5 (ข้อมูลสะอาดกว่า)</td></tr>
+        <tr><td>Thai Province R34</td><td class="num ok">100.00%</td><td class="num">99.61%</td><td>error ชุด ชุมพร/นครราชสีมา หายหมด</td></tr>
+        <tr><td>Thai Province R18</td><td class="num ok">100.00%</td><td class="num">98.99%</td>
+          <td class="hi">R18 แม่นเท่า R34 แล้ว + เร็วกว่า → production ใช้ R18</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout warn">
+    <strong>แต่เดี๋ยวก่อน —</strong> ตัวเลข 100% เหล่านี้วัดบน valid ที่ <em>ยังมี leakage</em>
+    (เราจะเปิดความจริงนี้ในองก์ที่ 7) — และนั่นทำให้ตัวเลขนี้ใช้เป็น “หลักฐานปิดงาน” ไม่ได้
+  </div>
+</section>
+
+<section class="slide" data-title="M3A Benchmark">
+  <span class="eyebrow">Act VI · Benchmark ตัดสินใจ</span>
+  <h2>เลือก char-box detector: recall ก่อน precision</h2>
+  <p class="muted">charbox valid 131 ภาพ / GT 655 กล่อง — ใช้ serve preprocessing จริง ·
+  commit 09-21 <span class="mono">add greedy NMS and wide box splitting</span></p>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th>Detector</th><th class="num">P@0.5</th><th class="num">R@0.5</th><th class="num">Duplicate %</th><th>ทำไม (ไม่) เลือก</th></tr></thead>
+      <tbody>
+        <tr><td class="hi">dfine_small_v2 ⭐</td><td class="num">0.518</td><td class="num ok">0.994</td><td class="num">50.8% → 1–3%</td><td>กล่องครบ + NMS ตัด duplicate จนสะอาด → <strong>ได้ทั้ง recall และ precision จริง</strong></td></tr>
+        <tr><td>dfine_nano_v2</td><td class="num">0.596</td><td class="num">0.989</td><td class="num">47.2%</td><td>recall ดีแต่ duplicate เยอะกว่า</td></tr>
+        <tr><td>picodet_s_v2</td><td class="num ok">0.762</td><td class="num no">0.930</td><td class="num ok">0.8%</td><td class="no">precision สูงสุด แต่กล่องหาย ~7% → ป้ายอ่านไม่ครบ</td></tr>
+        <tr><td>picodet_m_v2</td><td class="num">0.540</td><td class="num">0.884</td><td class="num">1.6%</td><td>recall ต่ำสุด</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid g2">
+    <div class="card accent">
+      <h3>ทำไม “duplicate 50%” ไม่ได้แย่อย่างที่เห็น</h3>
+      <p>เพราะ duplicate ที่เหลือถูกตัดด้วย <span class="mono">charbox_greedy_nms (IoU 0.35)</span>
+      เหลือ 1–3% — ในขณะที่ “กล่องที่หาย 7%” <strong>กู้คืนไม่ได้เลย</strong></p>
+      <p class="muted">นี่คือกรณีศึกษา: ตัวเลข metric ตัวเดียวไม่เคยพอ ต้องดูว่าข้อผิดพลาดแบบไหน “ซ่อมได้”</p>
+    </div>
+    <div class="card good">
+      <h3>ตัวช่วยคุณภาพกล่อง</h3>
+      <p><span class="mono">filter_implausible_char_boxes()</span> กรองกล่องที่เรขาคณิตเป็นตัวอักษรไม่ได้:
+      dash sliver · แถบขอบป้าย · เศษเส้นย่อย &lt; 40% median · composite เหนียว</p>
+      <p class="muted">วัดผลบน 100 ภาพ: box-count match GT <strong>81.3% → 84.6%</strong>
+      และ <strong>ไม่มี false-drop ตัวอักษรจริง</strong></p>
+    </div>
+  </div>
+</section>
+
+<!-- ===== ACT VII ===== -->
+<section class="slide act" data-title="องก์ 7">
+  <div class="rnum" style="color:transparent">ACT VII</div>
+  <h1>ความจริงที่ต้องกล้าเปิด</h1>
+  <div class="q">คำถามขององก์นี้: “ตัวเลข 100% ที่เราภูมิใจ ใช้ได้จริงแค่ไหน?”</div>
+  <div class="rule"></div>
+  <p class="lead">นี่คือองก์ที่ยากที่สุดของโปรเจกต์ — การวัด “ของจริง” บนภาพจริง
+  และการเขียนข้อจำกัดไว้ข้างๆ ตัวเลข ไม่ใช่ซ่อนไว้ในหมายเหตุท้ายไฟล์</p>
+</section>
+
+<section class="slide" data-title="End-to-End 481">
+  <span class="eyebrow">Act VII · วัดบนภาพจริง</span>
+  <h2>รันครบ Pipeline บนภาพรถจริง 481 ภาพ (valid ของ v5i)</h2>
+  <p class="lead">ภาพรถเต็มที่โมเดลไม่เคยเห็น → M1 → M1.5 → M2 → M3 ทั้งหมด →
+  เทียบกับ GT คู่: ข้อความทั้งป้าย + จังหวัด</p>
+
+  <div class="grid g4" style="margin-bottom:16px">
+    <div class="card stat"><div class="v amber">91.89%</div><div class="l">จังหวัด (481 คัน)</div><div class="n">442 / 481</div></div>
+    <div class="card stat"><div class="v amber">92.78%</div><div class="l">จังหวัด (374 ที่มี GT)</div><div class="n">347 / 374</div></div>
+    <div class="card stat"><div class="v">51.60%</div><div class="l">ป้ายถูกทั้งป้าย</div><div class="n">193 / 374</div></div>
+    <div class="card stat"><div class="v purple">84.88%</div><div class="l">ตัวอักษรรายตัว</div><div class="n">1,908 / 2,248</div></div>
+  </div>
+
+  <h3>39 ภาพที่ทายจังหวัดผิด — แยกสาเหตุ</h3>
+  <div class="barwrap" style="margin-bottom:14px">
+    <div class="bar"><span class="bl">M1 หาป้ายไม่เจอเลย</span><span class="bt"><span class="bf r" style="width:100%"></span></span><span class="bv">14</span></div>
+    <div class="bar"><span class="bl">ทายเป็น ระนอง</span><span class="bt"><span class="bf r" style="width:86%"></span></span><span class="bv">12</span></div>
+    <div class="bar"><span class="bl">จังหวัดไทยอื่นผิด</span><span class="bt"><span class="bf a" style="width:79%"></span></span><span class="bv">11</span></div>
+    <div class="bar"><span class="bl">ถูก flip เป็น ลาว</span><span class="bt"><span class="bf a" style="width:14%"></span></span><span class="bv">2</span></div>
+  </div>
+
+  <div class="grid g2">
+    <div class="card bad">
+      <h3>สิ่งที่ไม่ใช่เรื่องบังเอิญ</h3>
+      <ul>
+        <li><strong>ทั้ง 14 ภาพที่ M1 มองไม่เห็น เป็นภาพ 192×99 ทั้งหมด</strong> → input เล็กเกินไป ไม่ใช่โมเดลแย่</li>
+        <li>ทาย <span class="mono">ระนอง</span> 12 ครั้ง ทั้งที่ GT ระนอง = <strong>0 ภาพ</strong> — คลาสนี้มี source จริงแค่ 3 ภาพ จึงกลายเป็น “ตัวดูด” (attractor)</li>
+        <li>2 ภาพที่ flip เป็นลาว มี <span class="mono">country_confidence 0.616</span> แต่ระบบยังตัดสิน</li>
+      </ul>
+    </div>
+    <div class="card good">
+      <h3>ของฟรีที่เจอทันที (ไม่ต้องเทรนใหม่)</h3>
+      <p>ขยายภาพเล็ก 3× (INTER_LANCZOS4) ก่อน M1 เฉพาะภาพที่เล็ก:
+      กู้คืนการตรวจจับได้ <strong>8/14</strong> และทายจังหวัดถูกเพิ่ม <strong>5 ภาพ</strong></p>
+      <div class="stat" style="padding:8px 0"><div class="v green">91.89% → 92.93%</div><div class="n">447 / 481 · ต้นทุน compute จิ๋ว (เฉพาะภาพเล็ก)</div></div>
+      <p class="muted">บทเรียน: ยังมี “แต้มฟรี” ในฝั่ง pre/post-processing อีกเยอะ ก่อนจะลงทุนเทรนโมเดลใหม่</p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" data-title="ข้อจำกัด 4 ข้อ">
+  <span class="eyebrow">Act VII · ความซื่อสัตย์</span>
+  <h2>4 ข้อจำกัดที่ต้องอ่านก่อนอ้างอิงตัวเลข</h2>
+
+  <div class="grid g2">
+    <div class="card bad">
+      <h3>① ความละเอียดของชุดวัด</h3>
+      <p><strong>97% ของชุด v5i (ทั้ง train และ valid) เป็นภาพ 192×99 px</strong> (thumbnail จาก Roboflow) —
+      แผ่นป้ายกว้างเพียง ~50 px และแถบจังหวัดสูง ~15 px</p>
+      <p class="muted">→ 91.89% คือตัวเลข <em>stress test บนภาพความละเอียดต่ำ</em>
+      <strong>ไม่ใช่ค่าที่คาดหวังบน production</strong> (ภาพจริงคมกว่า 4–10 เท่า)</p>
+    </div>
+    <div class="card warn">
+      <h3>② Ground Truth ของ “ข้อความทั้งป้าย” เป็น pseudo-label</h3>
+      <p><span class="mono">full_ocr_text</span> มาจาก <span class="mono">candidates_metadata.csv</span>
+      ซึ่งเป็น <strong>output ของโมเดล</strong> (มีคอลัมน์ <span class="mono">confidence</span>, ไฟล์ขึ้นต้น <span class="mono">auto_*</span>)</p>
+      <p class="muted">→ 51.60% / 84.88% <strong>ปนความผิดของ GT เอง</strong>
+      (เช่น GT <span class="mono">ฆช 8734</span> ที่อักษร ฆ แทบไม่ปรากฏบนป้ายจริง) ตัวเลขจริงควรสูงกว่านี้ แต่ไม่รู้เท่าไรจนกว่าจะมีชุด human-verified</p>
+    </div>
+    <div class="card warn">
+      <h3>③ In-dataset 100% ยังมี leakage</h3>
+      <p>province <strong>62/77 คลาส (81%)</strong> และ char <strong>46/48 (96%)</strong>
+      แชร์ภาพต้นทางกันระหว่าง train/valid</p>
+      <p class="muted">บางคลาสมี unique source แค่ 1–5 ภาพ — <strong>6 คลาสมี 1 ภาพ</strong>
+      (31 crops = ภาพเดียว + aug 30 แบบ) → 100.00% เป็นค่าที่มองโลกในแง่ดีเกินจริง</p>
+    </div>
+    <div class="card bad">
+      <h3>④ ยังไม่มีตัวเลข production-resolution</h3>
+      <p>เพราะทั้งข้อ ① และ ② — เราจึง<strong>ยังไม่มี</strong>ตัวเลขที่ใช้ตัดสินใจเลือก config/โมเดลได้</p>
+      <p class="muted">นี่คือเหตุผลที่ “การทดลอง E1” (ชุดวัดที่คนยืนยัน GT + ความละเอียดเท่า production)
+      ต้องทำ <em>ก่อน</em> ทุกอย่างอื่น</p>
+    </div>
+  </div>
+
+  <div class="callout good">
+    <strong>ทำไมการเปิดข้อจำกัดคือจุดแข็ง ไม่ใช่จุดอ่อน:</strong>
+    ตัวเลขที่ซื่อสัตย์พร้อมระบุว่ามันใช้ได้แค่ไหน ตรวจสอบได้ และต่อยอดได้ —
+    ต่างจากตัวเลขสวยที่ไม่รู้ว่ามาจากไหน และพังตอนลูกค้าเอาไปใช้จริง
+  </div>
+</section>
+
+<section class="slide" data-title="เคสจริง 2 เคส">
+  <span class="eyebrow">Act VII · บั๊กสุดท้าย</span>
+  <h2>สองเคสบน serve ที่ทำให้ต้องกลับมาแก้ fusion</h2>
+
+  <div class="grid g2">
+    <div class="card good">
+      <h3>เคส A · ป้ายถูกอ่านเป็น “ตัวอักษรซ้ำ”</h3>
+      <p>box เห็น <span class="mono">2 ถ ล [ล] 1 2 3 8</span> (มี ล สองตัว) + CTC อ่าน <span class="mono">2ถล1238</span> —
+      <span class="mono">difflib</span> จับ match ยาวสุด <span class="mono">ล1238</span>
+      ทำให้ ล ตัวเกิน “หลุดผ่าน” ทั้ง replace-tail และ equal block โดยไม่โดน syntax guard</p>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:10px 0">
+        <span class="plate wrong">2ถลล1238 <span class="note">Custom / Unstandardized</span></span>
+        <span class="arrow">→</span>
+        <span class="plate right">2ถล 1238 <span class="note">NCC NNNN · รถยนต์ส่วนบุคคล</span></span>
+      </div>
+      <p class="muted">แก้ด้วย <em>final syntax repair</em> ใน <span class="mono">align_and_fuse_thai_sequences()</span> —
+      ดึง box-extra ที่ทำให้ pattern ผิดกฎ DLT ออก <strong>หลัง fusion จบ</strong>
+      · commit 09-28</p>
+    </div>
+    <div class="card good">
+      <h3>เคส B · ป้ายพยัญชนะถูก truck-refiner เขียนทับ</h3>
+      <p>ป้าย <span class="mono">5ศ 7856</span>: fusion คืน <span class="mono">57856</span> ภายใน
+      แต่ call-site guard เห็นว่าปลายทางมีพยัญชนะถูกตำแหน่ง + <span class="mono">is_valid_plate</span> ผ่าน
+      → <strong>ห้าม truck-refiner เขียนทับ</strong></p>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:10px 0">
+        <span class="plate right">5ศ 7856 <span class="note">NC NNNN · Trailer / Special</span></span>
+      </div>
+      <p class="muted">ตรวจซ้ำแล้วไม่ regress: <span class="mono">1กข 1234</span>,
+      <span class="mono">กข 4962</span>, <span class="mono">83-4203</span> ให้ผลเหมือนเดิม
+      · commit 09-28 <span class="mono">fix: prevent truck refiner from overriding valid letter plates</span></p>
+    </div>
+  </div>
+
+  <div class="callout warn">
+    <strong>หนี้ทางเทคนิคที่ยังค้าง:</strong> <span class="mono">has_invalid_thai_consonant_placement()</span> rule 4
+    ยังห้ามรูปแบบ <span class="mono">NC NNNN</span> แต่ <span class="mono">is_valid_plate()</span>
+    ยอมรับ (<span class="mono">PATTERN_NC_NNNN</span>) → <strong>สองฟังก์ชันขัดกันเอง</strong>
+    และถูกกลบไว้ด้วย letter-plate guard — ทำงานได้ แต่อยู่บนสมมติฐานที่ยังไม่มีคนยืนยัน
+  </div>
+</section>
+
+<!-- ===== EPILOGUE ===== -->
+<section class="slide act win" data-title="เอพิล็อก">
+  <div class="rnum">EPILOGUE</div>
+  <h1>6 หลักคิดที่ได้จากโปรเจกต์นี้</h1>
+  <div class="q">และมันอธิบายได้ว่าทำไมทุกการเลือก library ถึงเป็นแบบนี้</div>
+  <div class="rule"></div>
+
+  <div class="grid g2">
+    <div class="card"><h3>1 · ข้อจำกัดการ deploy เป็นผู้ตัดสินสถาปัตยกรรม</h3>
+      <p class="muted">C#/ONNX ที่ต้อง “just work” กำจัด OBB และ Transformer ตัวใหญ่ ทิ้งไปก่อนที่เราจะเสียเวลากับมันมากกว่านี้</p></div>
+    <div class="card"><h3>2 · License เป็นข้อจำกัดทางวิศวกรรม ไม่ใช่เรื่องกฎหมายทีหลัง</h3>
+      <p class="muted">ถ้ารอจนโมเดลเสร็จแล้วเพิ่งรู้ว่าติด AGPL คุณต้องรื้อทั้งระบบ — เราจึงเลือก MIT/Apache/BSD ตั้งแต่วันแรก</p></div>
+    <div class="card"><h3>3 · แยกงานให้ถูกสเตจ ดีกว่าขยายโมเดล</h3>
+      <p class="muted">M2 component detector แก้ปัญหาที่การเพิ่ม capacity แก้ไม่ได้ — เช่นเดียวกับ 2-stage keypoint ที่แก้ปัญหาที่ OBB แก้ไม่ได้</p></div>
+    <div class="card"><h3>4 · โมเดลที่ต้องตอบเสมอ จะ hallucinate</h3>
+      <p class="muted">ยุค 4–6 คือราคาของ “ระบบที่ห้ามไม่รู้” → ต้องมี syntax guard, junk class และทาง “ไม่ตอบ”</p></div>
+    <div class="card"><h3>5 · เมื่อ dataset คือคอขวด data-centric ชนะ architecture-centric</h3>
+      <p class="muted">harvest + balance + leak-free split ให้ 96.71% → 99.71% โดยไม่แตะสถาปัตยกรรมเลย</p></div>
+    <div class="card"><h3>6 · ตัวเลขที่ซื่อสัตย์ มีค่ามากกว่าตัวเลขที่สวย</h3>
+      <p class="muted">การเขียน “91.89% วัดบนภาพ 192×99 และ GT เป็น pseudo-label” ไว้ข้างตัวเลข
+      ทำให้เรารู้ว่าต้องทำอะไรต่อ — ตัวเลข 100% ที่ไม่บอกข้อจำกัด ไม่บอกอะไรเราเลย</p></div>
+  </div>
+</section>
+
+<!-- ===== DECISION TRACE ===== -->
+<section class="slide" data-title="ทำไมเลือก library นี้">
+  <span class="eyebrow">Epilogue · Decision Trace</span>
+  <h2>ข้อจำกัด → ทางเลือกที่ตกไป → สิ่งที่เลือกใช้จริง → ราคาที่จ่าย</h2>
+
+  <div class="tw compact">
+    <table>
+      <thead><tr><th>ข้อจำกัด / ปัญหา</th><th>ทางที่ “ดูดี” แต่ตกไป</th><th>สิ่งที่เลือกใช้</th><th>License</th><th>ราคาที่จ่าย</th></tr></thead>
+      <tbody>
+        <tr><td>ต้องรันบน C# / ONNX Runtime</td><td class="no">OBB · Rotated NMS (custom C++ op)</td><td class="hi">2-Stage: AABB + MobileNetV3 Keypoint + OpenCV warp</td><td class="ok">MIT / BSD-3</td><td>ต้องมี 2 โมเดลแทน 1</td></tr>
+        <tr><td>CPU ~75–95 ms, ไม่มี GPU</td><td class="no">RF-DETR-S (84 ms) · RT-DETRv2 (108 ms) · D-FINE-S (63 ms)</td><td class="hi">D-FINE-Nano (27 ms, 15 MB)</td><td class="ok">MIT</td><td>mAP ต่ำกว่า Transformer เล็กน้อย</td></tr>
+        <tr><td>License เชิงพาณิชย์ 100%</td><td class="no">Ultralytics YOLO</td><td class="hi">LibreYOLO (D-FINE/PicoDet) + RF-DETR</td><td class="no">AGPL-3.0 → <span class="ok">MIT / Apache-2.0</span></td><td>ใช้เครื่องมือเทรนที่ชุมชนเล็กกว่า</td></tr>
+        <tr><td>ต้องมีภาพตัวอักษรสะอาด</td><td class="no">Connected Component Analysis</td><td class="hi">D-FINE-Small + greedy NMS + subsumed-box filter</td><td class="ok">MIT</td><td>duplicate เยอะ (ต้องพึ่ง NMS)</td></tr>
+        <tr><td>OCR อ่านปนบรรทัด</td><td class="no">Whole-plate OCR ตัวใหญ่ขึ้น</td><td class="hi">M2 Component Detector แยกโซน</td><td class="ok">MIT</td><td>เพิ่ม 1 สเตจ (~18 ms)</td></tr>
+        <tr><td>DLT banner code อ่านผิด</td><td class="no">พึ่งรหัส 2 หลักด้านบน</td><td class="hi">Province Classifier อ่านชื่อจังหวัดตรงๆ</td><td class="ok">BSD-3</td><td>ต้องเก็บข้อมูลจังหวัดเพิ่ม</td></tr>
+        <tr><td>จังหวัดข้อมูลน้อย 1–5 ภาพ</td><td class="no">คัดลอกรูปซ้ำให้เท่ากัน</td><td class="hi">Harvest real crops + augmented variants + weighted loss</td><td>—</td><td>ต้องสร้าง pipeline ข้อมูล 3 ขั้น</td></tr>
+        <tr><td>ระบบชอบ “เดา” เมื่อไม่มั่นใจ</td><td class="no">ปล่อยให้เลือก 1 ใน 77 เสมอ</td><td class="hi">Syntax guard + filter (ทำแล้ว) · <em>abstain (ยังรออนุมัติ)</em></td><td>—</td><td>ต้องมีคนตอบนโยบาย</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout">
+    <strong>อ่านตารางนี้ให้เป็นเรื่องเดียว:</strong> คอลัมน์ “ทางที่ตกไป” เกือบทั้งหมดคือสิ่งที่
+    <em>แม่นกว่าหรือทันสมัยกว่า</em> แต่แพ้เพราะข้อจำกัดด้านบน —
+    สถาปัตยกรรมนี้ไม่ได้เกิดจาก “โมเดลที่ดีที่สุด” แต่เกิดจาก “ชุดข้อจำกัดที่แคบที่สุด”
+  </div>
+</section>
+
+<!-- ===== NEXT CHAPTER ===== -->
+<section class="slide" data-title="บทต่อไป v6">
+  <span class="eyebrow">Epilogue · บทต่อไป</span>
+  <h2>บทต่อไป: v6 — แก้ที่ root cause ที่วัดได้ ไม่ใช่ที่รู้สึกได้</h2>
+
+  <div class="tw compact">
+    <table>
+      <thead><tr><th>ลำดับ</th><th>สาเหตุราก</th><th>หลักฐานชี้ขาด</th><th>สิ่งที่ต้องทำ</th></tr></thead>
+      <tbody>
+        <tr><td><span class="pill p0">P0</span></td>
+          <td><strong>คลาสจังหวัดมี “ภาพต้นทางจริง” แค่ 1–5 ภาพ</strong></td>
+          <td>6 คลาสมี unique source = <strong>1 ภาพ</strong> / 31 crops (น่าน, พังงา, อุตรดิตถ์, นครพนม, ปัตตานี, แม่ฮ่องสอน) · 36/77 คลาส ≤ 5 sources</td>
+          <td>หา <strong>ภาพจริงใหม่</strong> ต่อคลาส (เป้า ≥ 30 unique source) + ยืนยันด้วย pHash</td></tr>
+        <tr><td><span class="pill p0">P0</span></td>
+          <td><strong>Resolution domain gap</strong></td>
+          <td>71% ของ province train crop มาจากภาพ 192px (native 61×29 → ถูก upscale 4.2×) แต่ serve เห็น crop คม</td>
+          <td>harvest จากภาพ <strong>full-res เท่านั้น</strong> + ใส่ resolution-degradation augmentation</td></tr>
+        <tr><td><span class="pill p1">P1</span></td>
+          <td>ตัวเลข in-dataset 100% มองโลกในแง่ดีเกินจริง</td>
+          <td>province 81% / char 96% แชร์ source กัน</td>
+          <td>re-split แบบ <strong>source-disjoint</strong> แล้ววัดใหม่</td></tr>
+        <tr><td><span class="pill p1">P1</span></td>
+          <td><strong>Input เล็ก → M1 หาป้ายไม่เจอเลย</strong></td>
+          <td>14/39 error = <span class="mono">detected=False</span> ทั้งหมด 192×99 · upscale 3× กู้ได้ 8/14 (91.89% → 92.93%)</td>
+          <td>gate ความละเอียดขั้นต่ำ + upscale ก่อน M1 เมื่อ input เล็ก</td></tr>
+        <tr><td><span class="pill p2">P2</span></td>
+          <td>คลาสข้อมูลน้อยกลายเป็น <strong>attractor</strong></td>
+          <td>ทาย ระนอง 12 ครั้ง ทั้งที่ GT = 0 (คลาสนี้มี unique source 3 ภาพ)</td>
+          <td>เพิ่มคลาส <strong>unknown/unreadable</strong> + prior correction สำหรับคลาสที่ sources &lt; 5</td></tr>
+        <tr><td><span class="pill p2">P2</span></td>
+          <td>ตัวอักษรผิด 1 ตัว = ป้ายผิดทั้งป้าย (last mile)</td>
+          <td>181/374 ป้ายผิด → 98 ป้าย (54%) <strong>ผิดตัวเดียว</strong> · 72 ผิดหลายตัว · 11 ได้ข้อความว่าง</td>
+          <td>beam/top-k + ใช้ <span class="mono">alt_candidates</span> ให้ validator เลือก + retrain OCR</td></tr>
+        <tr><td><span class="pill p2">P2</span></td>
+          <td>GT whole-plate เป็น pseudo-label</td>
+          <td>เช่น GT <span class="mono">ฆช 8734</span> (ฆ แทบไม่ปรากฏบนป้ายจริง = GT ผิด)</td>
+          <td>สร้างชุด <strong>human-verified 200–300 ป้าย</strong> เป็น headline metric</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid g3">
+    <div class="card accent"><h3>E1 — ทำก่อนทุกอย่าง</h3><p class="muted">ชุดวัด real-photo 30–50 คัน + GT ที่คนยืนยัน → เลือก R18/R34, autocontrast A/B, upscale A/B จากชุดนี้เท่านั้น</p></div>
+    <div class="card accent"><h3>E2–E4 — แก้ที่ข้อมูล</h3><p class="muted">re-split source-disjoint · harvest full-res ~1,000 ภาพ → retrain province v6 · char v6 เพิ่ม junk class</p></div>
+    <div class="card accent"><h3>E5 — แก้ที่การตัดสินใจ</h3><p class="muted">abstain + country gate + ใช้ <span class="mono">alt_candidates</span> จริง + นโยบาย NC NNNN — ถูกและไม่ต้องเทรน</p></div>
+  </div>
+</section>
+
+<!-- ===== DECISIONS ===== -->
+<section class="slide" data-title="ประเด็นที่ต้องตัดสินใจ">
+  <span class="eyebrow">Epilogue · ต้องการคำยืนยัน</span>
+  <h2>4 ประเด็นที่ต้องมีคนตอบ — ไม่ใช่เรื่องเทคนิค แต่เป็นนโยบาย</h2>
+
+  <div class="grid g2">
+    <div class="card warn">
+      <h3>① ป้าย <span class="mono">NC NNNN</span> (เช่น <span class="mono">5ศ 7856</span>, <span class="mono">8ว 7687</span>) ถูกกฎหมายไหม?</h3>
+      <p class="muted"><strong>ถ้าใช่</strong> → แก้ <span class="mono">has_invalid_thai_consonant_placement()</span> rule 4
+      ให้สอดคล้องกับ <span class="mono">is_valid_plate()</span><br>
+      <strong>ถ้าไม่ใช่</strong> → ต้องเพิ่ม guard ไม่ให้ป้ายที่ box เห็นพยัญชนะถูกกู้คืน
+      (ปัจจุบันโค้ดตั้งสมมติฐานว่า “ใช่” เพราะมี letter-plate guard)</p>
+    </div>
+    <div class="card warn">
+      <h3>② ยอมให้ระบบ “ไม่ตอบ” ได้ไหม?</h3>
+      <p class="muted">ถ้า workflow ปลายทางต้องการคำตอบเสมอ → ต้องเปลี่ยนไปใช้
+      <strong>prior correction</strong> แทน (ให้คะแนนหลบคลาสข้อมูลน้อย แต่ยังตอบทุกครั้ง)</p>
+    </div>
+    <div class="card warn">
+      <h3>③ เปลี่ยนจาก autocontrast เป็น CLAHE ได้ไหม?</h3>
+      <p class="muted">CLAHE (<span class="mono">clipLimit 2.0, tile 4×4</span>) หรือ autocontrast แบบ masked เฉพาะ ROI ตัวอักษร
+      อาจดีกว่า autocontrast global ที่ทำให้ตัวอักษรจมเมื่อ crop ติดกรอบขาว —
+      <strong>แต่ถ้าเลือก ต้องเทรนใหม่ทั้งชุดให้ contract ตรงกัน</strong></p>
+    </div>
+    <div class="card warn">
+      <h3>④ มีงบเก็บภาพจริงเพิ่ม ~1,000 ภาพไหม?</h3>
+      <p class="muted">สำหรับ 36 คลาสจังหวัดที่ขาด (เน้น 12 คลาสที่แย่สุด) —
+      ถ้าไม่มี ต้องยอมรับเพดานที่ต่ำลงและใช้ abstain แทน</p>
+    </div>
+  </div>
+
+  <div class="callout">
+    <strong>ทำไมต้องถามก่อน:</strong> ทั้ง 4 ข้อเป็นการเลือกว่าจะให้ระบบ “เดาให้เสมอ”
+    หรือ “ยอมบอกว่าไม่รู้” — โค้ดเขียนได้ทั้งสองทาง แต่เลือกแทนกันไม่ได้
+  </div>
+</section>
+
+<!-- ===== CLOSING ===== -->
+<section class="slide" data-title="ปิด">
+  <span class="eyebrow">Closing</span>
+  <h2>สรุปเรื่องนี้ใน 5 บรรทัด</h2>
+
+  <div class="grid g2" style="margin-bottom:16px">
+    <div class="card">
+      <h3>เรื่องย่อ</h3>
+      <ol style="margin-bottom:0">
+        <li>เริ่มจากโจทย์ CCTV อ่านป้ายไทย–ลาว ที่ต้องฝังในระบบ <strong>C#</strong> ของลูกค้า</li>
+        <li>ลองผิดมา 6 ยุค — ทุกยุคแพ้เพราะข้อจำกัด (license / CPU / ONNX) ไม่ใช่เพราะ accuracy</li>
+        <li>แก้ด้วยการ <strong>แยกงานให้ถูกสเตจ</strong> (2-stage keypoint, M2 component, dual-engine OCR)</li>
+        <li>จากนั้นพบว่าคอขวดจริงคือ <strong>ข้อมูล</strong> — สร้างสายพานข้อมูล leak-free + harvest + balance</li>
+        <li>วัดของจริงแบบซื่อสัตย์ แล้วได้ทั้งแต้มฟรี (upscale) และรายการงานที่ต้องทำต่อ (v6)</li>
+      </ol>
+    </div>
+    <div class="card good">
+      <h3>สิ่งที่พร้อมส่งมอบแล้ววันนี้</h3>
+      <ul>
+        <li><strong>Latency:</strong> ~75–95 ms end-to-end บน CPU ทั่วไป</li>
+        <li><strong>โมเดล:</strong> ครบทุกสเตจ export ONNX (Opset 18) + คู่มือ C# (.NET) พร้อมใช้</li>
+        <li><strong>License:</strong> MIT / Apache-2.0 / BSD-3 ทั้งหมด — เชิงพาณิชย์ 100%</li>
+        <li><strong>ระบบ:</strong> FastAPI + Dashboard debug รายสเตจ + Firestore/BigQuery + Cloud Run</li>
+        <li><strong>ข้อมูล:</strong> pipeline retrain ที่ตรวจสอบย้อนกลับได้ทุก crop</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="callout warn">
+    <strong>ประโยคที่ควรพูดกับลูกค้าให้ตรง:</strong> ระบบพร้อมใช้งานจริงในเชิงวิศวกรรม —
+    แต่ <strong>ตัวเลขความแม่นยำที่จะใช้ตัดสินราคา/สัญญา ต้องรอชุดวัดที่ความละเอียดเท่า production
+    และ GT ที่คนยืนยัน (E1)</strong> · ตัวเลขที่มีตอนนี้คือ 91.89% province และ 51.60% whole-plate
+    บนภาพ 192×99 ที่ GT ยังปน noise
+  </div>
+
+  <div class="footer-note">ภาคผนวกด้านหลัง: A สเปกโมเดล · B Preprocessing contract · C Augmentation · D ตัวเลขวัดทั้งหมด · E แผน v6 · F Tech stack &amp; License</div>
+</section>
+
+<!-- ================= APPENDIX ================= -->
+<section class="slide act" data-title="ภาคผนวก">
+  <div class="rnum" style="color:transparent">APPENDIX</div>
+  <h1>ภาคผนวก — ตารางอ้างอิง</h1>
+  <div class="q">สำหรับตอบคำถามเชิงลึกหลังการนำเสนอ</div>
+  <div class="rule"></div>
+  <div class="grid g3">
+    <div class="card tight"><h3>A · สเปกโมเดล</h3><p class="muted">Input resolution, ขนาดไฟล์, framework, output แต่ละสเตจ</p></div>
+    <div class="card tight"><h3>B · Preprocessing contract</h3><p class="muted">4 วิธีเตรียมภาพ + กฎ STRETCH + ขนาด tensor ของแต่ละโมเดล</p></div>
+    <div class="card tight"><h3>C · Augmentation</h3><p class="muted">ของเดิมที่ใช้ + แกนที่ขาดและเสนอเพิ่มใน v6</p></div>
+    <div class="card tight"><h3>D · ตัวเลขวัดทั้งหมด</h3><p class="muted">v3/v4/v5, M3A benchmark, end-to-end 481 ภาพ + error breakdown</p></div>
+    <div class="card tight"><h3>E · แผน v6</h3><p class="muted">P0/P1/P2, การทดลอง E1–E5, ตัวชี้วัดเป้าหมาย</p></div>
+    <div class="card tight"><h3>F · Tech stack &amp; License</h3><p class="muted">ทุกไลบรารีที่ใช้จริง + สถานะ license + บทบาท</p></div>
+  </div>
+</section>
+
+<!-- A: SPECS -->
+<section class="slide" data-title="A · สเปกโมเดล">
+  <span class="eyebrow">Appendix A</span>
+  <h2>สเปกโมเดลทั้งหมดที่ใช้จริง</h2>
+  <p class="muted" style="margin-bottom:12px">Convention: Input Resolution = <strong>(W × H)</strong> — ค่าจริงจาก checkpoint / ONNX / <span class="mono">src/preprocess_registry.py</span> · โมเดล detection ทุกตัวใช้ tensor จัตุรัสแบบ <strong>stretch</strong> (ไม่ letterbox)</p>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th>Stage</th><th>โมเดล</th><th>Input (W×H)</th><th class="num">ขนาด</th><th>Framework</th><th>Output</th></tr></thead>
+      <tbody>
+        <tr><td>1 · Plate</td><td class="hi">D-FINE-Nano</td><td class="mono">640×640 (stretch)</td><td class="num">15.0 MB</td><td>PyTorch / LibreYOLO</td><td>Detection [1,300,4]</td></tr>
+        <tr><td><em>alt</em> 1</td><td>PicoDet-S</td><td class="mono">416×416</td><td class="num">3.8 MB</td><td>LibreYOLO</td><td>Detection [1,3598,5]</td></tr>
+        <tr><td>1.1 · Corner</td><td>MobileNetV3-S Head</td><td class="mono">224×224 (bbox+12%)</td><td class="num">4.0 MB</td><td>torchvision</td><td>8-D Regression</td></tr>
+        <tr><td>1.5 · Country</td><td>MobileNetV3-S</td><td class="mono">256×128</td><td class="num">3.8 MB</td><td>torchvision</td><td>Binary Cls</td></tr>
+        <tr><td>2 · Component</td><td>D-FINE-Nano</td><td class="mono">640×640</td><td class="num">15.0 MB</td><td>D-FINE Engine</td><td>plate_char / province</td></tr>
+        <tr><td>3A · Char Box</td><td>D-FINE-Small v2</td><td class="mono">2088×560 (3.7:1)</td><td class="num">~40 MB</td><td>LibreYOLO</td><td>Char boxes</td></tr>
+        <tr><td>3A · Char Cls</td><td>MobileNetV2 (50 cls)</td><td class="mono">64×64 (square-pad)</td><td class="num">9.0 MB</td><td>torchvision</td><td>50-Class Softmax</td></tr>
+        <tr><td>3A · OCR</td><td>ResNet18+BiLSTM+CTC</td><td class="mono">256×64 grayscale</td><td class="num">54.8 MB</td><td>PyTorch custom</td><td>CTC logits [T,1,71]</td></tr>
+        <tr><td>3A · Lao Char</td><td>MobileNetV2 (30 cls)</td><td class="mono">64×64</td><td class="num">8.9 MB</td><td>torchvision</td><td>34-Class Softmax</td></tr>
+        <tr><td>3B · Thai Prov</td><td>ResNet18 Grayscale</td><td class="mono">256×80</td><td class="num">42.9 MB</td><td>torchvision</td><td>77-Class Softmax</td></tr>
+        <tr><td>3B · Lao Prov</td><td>ResNet18 Grayscale</td><td class="mono">256×64</td><td class="num">42.7 MB</td><td>torchvision</td><td>18-Class Softmax</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout warn">
+    <strong>⚠️ กับดักที่เคยพลาด:</strong> province ไทยใช้ <span class="mono">256×80</span>
+    <strong>ไม่ใช่ 256×64</strong> — และ serve ต้องแยก transform ต่อประเทศ
+    (<span class="mono">tf_prov_thai</span> / <span class="mono">tf_prov_lao</span>) ห้ามแชร์ตัวเดียวกัน
+  </div>
+</section>
+
+<!-- B: PREPROCESSING -->
+<section class="slide" data-title="B · Preprocessing">
+  <span class="eyebrow">Appendix B</span>
+  <h2>Preprocessing contract — 4 วิธีเฉพาะทาง</h2>
+
+  <div class="grid g2">
+    <div class="card"><h3>1 · Smart Padding Homography Crop</h3>
+      <p>ขยาย BBox จาก M1 ออก <strong>12% margin</strong> รอบด้านก่อนส่ง Corner Regressor เพื่อไม่ให้มุมป้ายหลุดขอบภาพ</p></div>
+    <div class="card"><h3>2 · Four-Point Clockwise Quad Sorting</h3>
+      <p>จัดมุม <span class="mono">TL → TR → BR → BL</span> ด้วยผลรวม <span class="mono">x+y</span> และผลต่าง <span class="mono">y−x</span>
+      ก่อน <span class="mono">cv2.getPerspectiveTransform</span> — กันมุมสลับที่ทำให้ภาพบิด</p></div>
+    <div class="card"><h3>3 · Grayscale Smart-Resize + Ambient Background Filling</h3>
+      <p>ถ้าถมขอบดำ โมเดลจังหวัดจะสับสนกับตัวหนังสือ →
+      อ่านค่าสีจากมุมทั้ง 4 ของภาพจริง (<span class="mono">np.median(corners)</span>) แล้วใช้สีนั้นเป็นพื้นหลัง canvas padding</p>
+      <div class="sub">ไทย <span class="mono">(256, 80)</span> · ลาว <span class="mono">(256, 64)</span> · norm 0.5/0.25</div></div>
+    <div class="card"><h3>4 · Serve-Geometry Upscale (Stage 2 / 3A)</h3>
+      <p>rectified plate 320×160 → <strong>1280×640</strong> ก่อน M2 แล้ว divide boxes กลับรายแกน ·
+      char row → <strong>2088×560</strong> ก่อน RF-DETR</p>
+      <div class="sub">ทั้งหมด <strong>STRETCH เท่านั้น</strong> — ห้าม letterbox/pad เพราะโมเดลเทรนด้วย stretch</div></div>
+  </div>
+
+  <div class="grid g2" style="margin-top:14px">
+    <div class="card accent"><h3>ไลบรารีที่ใช้ใน preprocessing</h3>
+      <ul>
+        <li><strong>OpenCV (cv2)</strong> — decoding, BGR→RGB/LAB, CLAHE, perspective transform, deskew</li>
+        <li><strong>NumPy</strong> — matrix แปลงพิกัดมุม, vectorization, box sorting, NMS</li>
+        <li><strong>Pillow</strong> — resize คุณภาพสูง (BICUBIC), grayscale, dynamic canvas padding</li>
+        <li><strong>TorchVision Transforms</strong> — normalization, tensor formatting</li>
+      </ul></div>
+    <div class="card good"><h3>การทดสอบสัญญานี้</h3>
+      <p>มีเทสต์ค้ำไว้จริง — commit 09-20 <span class="mono">test: add preprocessing contract tests and update model input specs</span></p>
+      <div class="sub mono">python src/test_preprocess_registry.py<br>python src/test_classifier_preprocess.py</div>
+      <p class="muted" style="margin-top:8px">เหตุผลที่ต้องมีเทสต์คือ “geometry” เป็นบั๊กที่เงียบที่สุด — ดูเหมือนทำงาน แต่ตัวเลขเพี้ยน</p></div>
+  </div>
+</section>
+
+<!-- C: AUGMENTATION -->
+<section class="slide" data-title="C · Augmentation">
+  <span class="eyebrow">Appendix C</span>
+  <h2>Augmentation — ที่ใช้อยู่ และแกนที่ยังขาด</h2>
+
+  <div class="grid g2" style="margin-bottom:14px">
+    <div class="card"><h3>ที่ใช้อยู่จริงตอนนี้</h3>
+      <ul>
+        <li><strong>Province</strong> (<span class="mono">train_grayscale_province_thai.py</span>):
+        RandomAffine 5°, translate .03/.04 · ColorJitter .3 · RandomAdjustSharpness 2.0 (p=.5) · RandomAutocontrast (p=.5)</li>
+        <li><strong>Char</strong> (<span class="mono">train_character_classifier.py</span>):
+        RandomAffine 6° scale .95–1.05 · ColorJitter .35 · RandomGrayscale .15 · RandomPerspective .12 (p=.3)</li>
+      </ul>
+      <div class="callout bad" style="margin-bottom:0">
+        <strong>ช่องว่าง:</strong> <strong>ไม่มี Gaussian blur · ไม่มี motion blur · ไม่มีการลด/เพิ่ม scale · ไม่มี perspective ใน province</strong>
+        — ขาดแกนที่ตรงกับ domain gap ที่วัดได้พอดี
+      </div>
+    </div>
+    <div class="card purple"><h3>แกนที่เสนอเพิ่มใน v6</h3>
+      <div class="tw" style="border:none;margin:6px 0 0">
+        <table style="min-width:0;font-size:12.5px">
+          <tbody>
+            <tr><td><strong>Resolution degradation</strong> (สำคัญสุด)</td><td class="mono muted">downscale s=0.15–0.5 (INTER_AREA) → resample กลับขนาด contract · p=0.5</td></tr>
+            <tr><td>Gaussian blur</td><td class="mono muted">radius 0.5–2.0 · p=0.4</td></tr>
+            <tr><td>Motion blur</td><td class="mono muted">kernel 3–9, มุมสุ่ม · p=0.15</td></tr>
+            <tr><td>JPEG artifact</td><td class="mono muted">quality 30–70 · p=0.3</td></tr>
+            <tr><td>Specular glare / shadow</td><td class="mono muted">RandomShadow / highlight blend · p=0.2</td></tr>
+            <tr><td>RandomErasing (occlusion)</td><td class="mono muted">scale 2–8% · p=0.15</td></tr>
+            <tr><td>Scale + perspective (province)</td><td class="mono muted">scale 0.8–1.2 + RandomPerspective 0.1 · p=0.3</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout">
+    <strong>ข้อควรระวัง 2 ข้อ:</strong> (1) อย่าลบ augmentation เดิมที่ทำงานอยู่ ·
+    (2) อย่า augment ที่ native ความละเอียดต่ำแล้วค่อย upscale ทีหลัง — ให้ augment <strong>หลัง</strong> downscale step เสมอ
+  </div>
+</section>
+
+<!-- D: METRICS -->
+<section class="slide" data-title="D · ตัวเลขทั้งหมด">
+  <span class="eyebrow">Appendix D</span>
+  <h2>ตัวเลขที่วัดได้ทั้งหมด (ใช้ Benchmarking Suite ในโปรเจกต์)</h2>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th>ชุดข้อมูล</th><th>Model</th><th class="num">ผลวัด</th><th>ที่มา</th></tr></thead>
+      <tbody>
+        <tr><td>v3 valid</td><td>Thai Char Cls</td><td class="num">89.09% Top-1 (n=541)</td><td class="mono">eval_v3_all.py</td></tr>
+        <tr><td>v3 valid</td><td>Thai Province R18 / R34</td><td class="num">99.68% / 99.84%</td><td class="mono">eval_v3_all.py</td></tr>
+        <tr><td>v3 valid</td><td>Thai OCR CTC</td><td class="num">CER 0.0893 · Fmt 98.17%</td><td class="mono">eval_v3_all.py</td></tr>
+        <tr><td>v4 valid</td><td>Thai Char Cls</td><td class="num ok">99.71% Top-1 (n=3,468)</td><td class="mono">eval_v4_all.py</td></tr>
+        <tr><td>v4 valid</td><td>Thai Province R34 / R18</td><td class="num ok">99.90% / 99.80% (n=1,002)</td><td class="mono">eval_v4_all.py</td></tr>
+        <tr><td>v5 valid</td><td>Thai Char Cls</td><td class="num">99.54% Top-1 (n=3,511)</td><td class="mono">eval_v4_all.py</td></tr>
+        <tr><td>v5 valid</td><td>Thai Province R18 / R34</td><td class="num ok">100.00% (n=1,285)</td><td class="mono">eval_v4_all.py</td></tr>
+        <tr><td>charbox valid (131 ภาพ / 655 กล่อง)</td><td>dfine_small_v2 / picodet_s_v2</td><td class="num">R 0.994 / R 0.930</td><td class="mono">eval_m3a_v2.py</td></tr>
+        <tr><td>v5i valid (481 ภาพจริง)</td><td>Province end-to-end</td><td class="num amber">91.89% (442/481)</td><td class="mono">eval_v5i_e2e_results.csv</td></tr>
+        <tr><td>v5i 374 ภาพที่มี GT</td><td>Whole-plate exact</td><td class="num">51.60% (193/374)</td><td class="mono">eval_v5i_model3_results.csv</td></tr>
+        <tr><td>v5i 374 ภาพ</td><td>Char-level recall</td><td class="num purple">84.88% (1,908/2,248)</td><td class="mono">eval_v5i_model3_results.csv</td></tr>
+        <tr><td>v5i 481 ภาพ + upscale 3×</td><td>Province end-to-end</td><td class="num ok">92.93% (447/481)</td><td>ทดลอง 2026-09-29</td></tr>
+        <tr><td>Lao valid</td><td>Lao Char / Lao Prov</td><td class="num">99.41% / 99.78%</td><td class="mono">eval_v3_all.py</td></tr>
+        <tr><td>Lao OCR</td><td>ResNet18+BiLSTM+CTC</td><td class="num">CER 0.0102 · Fmt 100%</td><td class="mono">eval_v3_all.py</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout warn">
+    <strong>ข้อควรระวังในการอ้างอิง:</strong> ตัวเลขในแต่ละ “ชุดข้อมูล” วัดบน valid คนละชุด —
+    <strong>ห้ามเทียบข้ามคอลัมน์</strong> · และตัวเลข v5 (100.00%) ยังมี leakage 81%/96%
+    ซึ่งเป็นสิ่งที่ E2 ต้องพิสูจน์ซ้ำแบบ source-disjoint
+  </div>
+</section>
+
+<!-- E: V6 PLAN -->
+<section class="slide" data-title="E · แผน v6">
+  <span class="eyebrow">Appendix E</span>
+  <h2>แผน v6 — ตัวชี้วัดเป้าหมาย</h2>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th>ตัวชี้วัด</th><th>ตอนนี้</th><th>เป้า</th></tr></thead>
+      <tbody>
+        <tr><td>Province unique sources ต่อคลาส (ต่ำสุด)</td><td class="num no">1</td><td class="num ok">≥ 30</td></tr>
+        <tr><td>Province accuracy บนชุด real-photo (E1)</td><td class="num">ยังไม่มี (91.89% เป็น 192px)</td><td class="num ok">≥ 95%</td></tr>
+        <tr><td>M1 no-detect rate</td><td class="num no">2.9% (14/481, ภาพเล็ก)</td><td class="num ok">≤ 0.5% หลัง upscale gate</td></tr>
+        <tr><td>Attractor error (ทายคลาสที่มี source &lt; 5)</td><td class="num no">12 / 481</td><td class="num ok">0</td></tr>
+        <tr><td>ป้ายผิดแบบ “ผิดตัวเดียว”</td><td class="num no">98 / 374 (54%)</td><td class="num ok">≤ 40%</td></tr>
+        <tr><td>Char unique source ต่อคลาส (ต่ำสุด)</td><td class="num">ไม่ทราบ (ต้องนับ; crop ต่ำสุด 52)</td><td class="num ok">≥ 25</td></tr>
+        <tr><td>GT quality ของชุดวัด</td><td class="num no">pseudo-label (<span class="mono">full_ocr_text</span>)</td><td class="num ok">human-verified 200–300 ป้าย</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid g2">
+    <div class="card accent"><h3>ปริมาณงาน harvest ที่ต้องหา</h3>
+      <p>36 คลาสจังหวัดที่มี ≤ 5 unique sources × ~25 ภาพ ≈ <strong>~900–1,200 ภาพจริง</strong>
+      — เน้น 12 คลาสที่แย่สุด: อุตรดิตถ์, พังงา, น่าน, นครพนม, ปัตตานี, แม่ฮ่องสอน,
+      ร้อยเอ็ด, แพร่, สตูล, พัทลุง, กาฬสินธุ์, นราธิวาส</p>
+      <p class="muted">คุณภาพการ harvest ใหม่: รับเฉพาะภาพต้นทาง ≥ 1000 px ด้านยาว ·
+      ปฏิเสธ crop ที่ province strip native &lt; 96 px หรือ char crop native &lt; 24 px ·
+      บันทึก <span class="mono">native_w, native_h, blur_var, source_hash</span> ต่อ crop</p></div>
+    <div class="card purple"><h3>การเพิ่มคลาสเพื่อ “ปฏิเสธ”</h3>
+      <ul>
+        <li><strong>char: เพิ่มคลาส <span class="mono">junk/background</span></strong> — เศษขอบป้าย, dash, สกรู, แถบสี
+        (ปัจจุบัน 50 คลาสถูกบังคับให้ map junk เป็นตัวอักษรจริง → ต้นเหตุ <span class="mono">7→ษ</span>, <span class="mono">1→ข</span>, <span class="mono">2→ก</span>)</li>
+        <li><strong>province: เพิ่มคลาส <span class="mono">unknown/unreadable</span></strong> — ให้โมเดลมีทาง “ไม่รู้”
+        แทนการถูกบังคับให้เลือก <span class="mono">ระนอง</span></li>
+      </ul></div>
+  </div>
+</section>
+
+<!-- F: TECH STACK -->
+<section class="slide" data-title="F · Tech Stack">
+  <span class="eyebrow">Appendix F</span>
+  <h2>Tech stack ทั้งหมด และสถานะ license</h2>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th>หมวด</th><th>เทคโนโลยี</th><th>License</th><th>บทบาทในระบบ</th></tr></thead>
+      <tbody>
+        <tr><td>Web API</td><td>FastAPI + Uvicorn</td><td class="ok">BSD-3</td><td>REST microservice + Swagger docs + Web Dashboard</td></tr>
+        <tr><td></td><td>Pydantic · python-multipart · python-dotenv · PyJWT</td><td class="ok">MIT / BSD</td><td>Request validation, upload, config, auth</td></tr>
+        <tr><td>ML Core</td><td>PyTorch + TorchVision</td><td class="ok">BSD-3</td><td>เทรน/เซิร์ฟโมเดลทุก stage (MPS / CUDA / CPU)</td></tr>
+        <tr><td></td><td>RF-DETR (<span class="mono">rfdetr[train]</span>)</td><td class="ok">Apache-2.0</td><td>Char box detector (Stage 3A) + ทางเลือก Stage 1</td></tr>
+        <tr><td></td><td>LibreYOLO (D-FINE / PicoDet / RT-DETRv2)</td><td class="ok">MIT</td><td>Plate + component detectors (Stage 1 / 2)</td></tr>
+        <tr><td></td><td>Ultralytics YOLO / RT-DETR</td><td class="no">AGPL-3.0</td><td class="muted">เฉพาะเครื่องมือเทรนเทียบ — <strong>ไม่ใช้ใน weights ที่ serve</strong></td></tr>
+        <tr><td>Inference Runtime</td><td>ONNX (Opset 18) + ONNX Runtime + onnxslim</td><td class="ok">MIT</td><td>Standalone export, cross-platform (Python + C# .NET)</td></tr>
+        <tr><td>Vision / Data</td><td>OpenCV (<span class="mono">opencv-python-headless</span>)</td><td class="ok">Apache-2.0</td><td>Homography warp, flip-and-detect, motion gating</td></tr>
+        <tr><td></td><td>NumPy · Pandas · scikit-learn</td><td class="ok">BSD-3</td><td>Box math, imbalance analysis, metrics</td></tr>
+        <tr><td></td><td>Pillow</td><td class="ok">MIT-CM</td><td>Smart resize, canvas padding</td></tr>
+        <tr><td></td><td>editdistance · tqdm · requests</td><td class="ok">MIT</td><td>CTC evaluation, progress, data download</td></tr>
+        <tr><td>Cloud (GCP)</td><td>Cloud Firestore</td><td>GCP ToS</td><td>Real-time document store (ประวัติ + base64 crop)</td></tr>
+        <tr><td></td><td>Cloud BigQuery · Cloud Storage</td><td>GCP ToS</td><td>ตาราง analytics / SQL reporting · คลัง weights</td></tr>
+        <tr><td>Deployment</td><td>Docker + Cloud Run + Cloud Build</td><td>—</td><td>Containerized serverless deploy, <span class="mono">K_SERVICE</span> auto-detect</td></tr>
+        <tr><td>Dataset Engineering</td><td><span class="mono">extract_recognition_crops_v2</span> → <span class="mono">split_recognition_dataset_v2</span> → <span class="mono">curate_recognition_v2</span></td><td>ในโปรเจกต์</td><td>Serve-matched extraction, leak-free source-image split, manifest-synced curation</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout good">
+    <strong>สรุป license:</strong> โครงสร้างโมเดลทั้งหมดเป็น permissive license —
+    ไม่มี AGPL ใน weights ที่ใช้จริง (D-FINE = MIT, RF-DETR = Apache-2.0, MobileNet/ResNet = BSD-3)
+    ระบบจึงนำไปใช้เชิงพาณิชย์ได้ 100% — และนี่คือข้อจำกัดที่ถูกออกแบบ <em>ตั้งแต่วันแรก</em> ไม่ใช่มาตรวจทีหลัง
+  </div>
+</section>
+
+</main>
+
+<button class="totop" id="btnTopFloat">↑ กลับด้านบน</button>
+<span class="counter" id="counter"><b id="cur">1</b> / <span id="tot">35</span> · <span id="curTitle">ปก</span></span>
+
+<script>
+(function(){
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  var curEl = document.getElementById('cur');
+  var curTitleEl = document.getElementById('curTitle');
+  var totEl = document.getElementById('tot');
+  var bar = document.getElementById('progress');
+  var pills = document.getElementById('navpills');
+  var counter = document.getElementById('counter');
+  var btnTF = document.getElementById('btnTopFloat');
+  var current = 0;
+  totEl.textContent = slides.length;
+
+  // --- section anchors (so #12 in the URL is shareable) ---
+  slides.forEach(function(s, idx){
+    s.id = 's' + (idx + 1);
+    var num = document.createElement('div');
+    num.className = 'secnum';
+    num.textContent = (idx + 1) + ' / ' + slides.length;
+    s.insertBefore(num, s.firstChild);
+  });
+
+  // --- top nav pills ---
+  slides.forEach(function(s, idx){
+    var b = document.createElement('button');
+    b.textContent = (idx + 1) + '. ' + (s.dataset.title || ('ส่วนที่ ' + (idx + 1)));
+    if (/^(องก์|เอพิล็อก|ภาคผนวก)/.test(s.dataset.title || '')) b.className = 'sep';
+    b.title = s.dataset.title || '';
+    b.onclick = function(){ jump(idx); };
+    pills.appendChild(b);
+  });
+  var pillEls = Array.prototype.slice.call(pills.children);
+
+  var HEADER_OFFSET = window.matchMedia('(max-width:1024px)').matches ? 68 : 28;
+
+  function jump(idx){
+    var el = slides[idx];
+    var y = el.getBoundingClientRect().top + (window.pageYOffset || document.documentElement.scrollTop || 0) - HEADER_OFFSET;
+    window.scrollTo({top: Math.max(0, y), behavior:'smooth'});
+    current = idx;
+    paint(idx, true);
+  }
+
+  function paint(idx, scrollPill){
+    if (curEl.textContent !== String(idx + 1)) curEl.textContent = idx + 1;
+    curTitleEl.textContent = slides[idx].dataset.title || '';
+    pillEls.forEach(function(p, k){ p.classList.toggle('active', k === idx); });
+    if (scrollPill) pillEls[idx].scrollIntoView({block:'nearest', inline:'center'});
+  }
+
+  // --- scroll spy + progress bar ---
+  var ticking = false;
+  function onScroll(){
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(function(){
+      ticking = false;
+      var doc = document.documentElement;
+      var max = doc.scrollHeight - window.innerHeight;
+      var y = window.scrollY || doc.scrollTop;
+      bar.style.width = (max > 0 ? Math.min(100, (y / max) * 100) : 0) + '%';
+
+      var show = y > 420;
+      btnTF.classList.toggle('show', show);
+      counter.classList.toggle('show', y > 90);
+
+      // active section = last one whose top passed the sticky header
+      var probe = y + 110, found = 0;
+      for (var k = 0; k < slides.length; k++){
+        if (slides[k].offsetTop <= probe) found = k; else break;
+      }
+      if (found !== current){
+        current = found;
+        paint(found, true);
+        if (history.replaceState) history.replaceState(null, '', '#s' + (found + 1));
+      }
+    });
+  }
+  window.addEventListener('scroll', onScroll, {passive:true});
+  window.addEventListener('resize', onScroll, {passive:true});
+
+  document.getElementById('btnPrint').onclick = function(){ window.print(); };
+  document.getElementById('btnTop').onclick = function(){ window.scrollTo({top:0, behavior:'smooth'}); };
+  btnTF.onclick = function(){ window.scrollTo({top:0, behavior:'smooth'}); };
+
+  // ปล่อยให้ scroll/PageDown/Space ทำงานตามธรรมชาติ — เพิ่มแค่ทางลัด
+  document.addEventListener('keydown', function(e){
+    if (e.target && /INPUT|TEXTAREA/.test(e.target.tagName)) return;
+    var k = e.key.toLowerCase();
+    if (k === 'g') { window.scrollTo({top:0, behavior:'smooth'}); }
+    else if (k === 'j') { jump(Math.min(slides.length - 1, current + 1)); }
+    else if (k === 'k') { jump(Math.max(0, current - 1)); }
+  });
+
+  // --- deep link ---
+  var m = /^#s?(\d+)$/.exec(location.hash);
+  if (m){
+    var n = parseInt(m[1], 10) - 1;
+    if (n >= 0 && n < slides.length){
+      window.scrollTo(0, 0);
+      setTimeout(function(){ jump(n); }, 60);
+    }
+  }
+  onScroll();
+})();
+</script>
+
+<script>
+/* mobile section picker (sidebar is hidden under 1024px) */
+(function(){
+  var sel = document.getElementById('jumpSel');
+  if (!sel) return;
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  slides.forEach(function(s, i){
+    var o = document.createElement('option');
+    o.value = 's' + (i + 1);
+    o.textContent = (i + 1) + '. ' + (s.dataset.title || ('ส่วนที่ ' + (i + 1)));
+    sel.appendChild(o);
+  });
+  sel.addEventListener('change', function(){
+    var el = document.getElementById(sel.value);
+    if (!el) return;
+    var y = el.getBoundingClientRect().top + (window.pageYOffset || document.documentElement.scrollTop || 0) - 68;
+    window.scrollTo({top: Math.max(0, y), behavior:'smooth'});
+  });
+  window.addEventListener('scroll', function(){
+    var probe = (window.pageYOffset || 0) + 90, best = 1;
+    slides.forEach(function(s, i){ if (s.offsetTop <= probe) best = i + 1; });
+    if (sel.value !== 's' + best) sel.value = 's' + best;
+  }, {passive:true});
+})();
+</script>
+</body>
+</html>
