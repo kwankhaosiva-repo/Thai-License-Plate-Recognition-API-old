@@ -25,7 +25,7 @@ class Config:
     #   "plate_detector_rtdetrv2_r18.pt"     ← RT-DETRv2-R18 (Apache-2.0)
     #   "plate_detector_rfdetr.pt"           ← RF-DETR-Base (More accurate, heavier)
     #   "plate_detector_rtdetr.pt"           ← RT-DETR-L (Older baseline)
-    MODEL_1_FILENAME = "plate_detector_picodet_s_v2.pt"
+    MODEL_1_FILENAME = "plate_detector_picodet_s_v6aug.pt"
 
     # --- Model 2: Component Detector (plate_char / province bbox) ---
     #   "component_detector_dfine_nano.pt"     ← D-FINE-Nano (⚡ recommended: MIT, ultra-fast & high mAP)
@@ -33,7 +33,7 @@ class Config:
     #   "component_detector_rfdetr_small.pt"   ← RF-DETR-Small
     #   "component_detector_rfdetr.pt"         ← RF-DETR-Base
     #   "component_detector_rtdetr.pt"         ← RT-DETR-L (older)
-    MODEL_2_FILENAME = "component_detector_picodet_s_v2.pt"
+    MODEL_2_FILENAME = "component_detector_picodet_s_v6frame.pt"
 
     # --- Model 3A: Character Box Detector ---
     #   "character_box_detector_picodet_s_v2.pt" ← PicoDet-S v2 (⚡ BEST measured on val: P=0.81/R=0.93 with NMS, dup~0%)
@@ -48,7 +48,7 @@ class Config:
     #   "character_box_detector_rtdetr.pt"      ← RT-DETR-L (older)
     # NOTE: filename must be the EXACT weight filename (no "...pt_v2.pt" mistakes —
     # a nonexistent name silently falls back to an older checkpoint via ACTIVE_CHAR_BOX_MODEL_PATH).
-    MODEL_3A_FILENAME = "character_box_detector_dfine_small_v2.pt"
+    MODEL_3A_FILENAME = "character_box_detector_picodet_s_v6new.pt"
 
     # --- Model 3A: Character Classifier (MobileNetV2) ---
     #   "character_classifier.pth" ← MobileNetV2 (50 Thai character & digit classes)
@@ -57,7 +57,7 @@ class Config:
     #     (h4_) + per-class augmentation to ≥50 crops/class. Valid Top-1 99.71% on the
     #     re-split set (v3 scores 96.71% on the same set; rare classes ธ ป ค fixed).
     #     Raw v3-eval numbers (89.09%) were on the OLD split — not comparable.
-    CHAR_CLASSIFIER_THAI_FILENAME = "character_classifier_v5.pth"
+    CHAR_CLASSIFIER_THAI_FILENAME = "character_classifier_v6.pth"
 
     # --- Model 3A: OCR (CTC Text Recognition) ---
     #   v3 = train/serve-matched retrain on ocr_v3 leak-free split (436 train plates).
@@ -121,6 +121,125 @@ class Config:
     BIGQUERY_DATASET = os.environ.get("BIGQUERY_DATASET", "lpr_query")
     BIGQUERY_TABLE = os.environ.get("BIGQUERY_TABLE", "lpr_history")
     GCP_CLOUD_SYNC_ENABLED = os.environ.get("GCP_CLOUD_SYNC_ENABLED", "1") == "1"
+
+    # ============================================================
+    # OPENCV PRE-PROCESS & HEURISTIC AUGMENTATION TOGGLES
+    # ============================================================
+    # Mode to toggle OpenCV pre-processing, ambient padding, CLAHE,
+    # and contour/stroke post-processing.
+    # Set PURE_MODEL_MODE = True to benchmark "Pure Models" (วัดด้วยโมเดลเพียว ๆ)
+    # without any OpenCV preprocessing assists or heuristic rules.
+    # Can also be set via environment variable: LPR_PURE_MODEL_MODE=1
+    PURE_MODEL_MODE = os.environ.get("LPR_PURE_MODEL_MODE", "0").lower() in ("1", "true", "yes")
+
+    # Granular toggles (active when PURE_MODEL_MODE is False; or can be toggled individually):
+    # Set any of these to False to disable that specific technique:
+    ENABLE_OPENCV_CLAHE = False           # CLAHE Luminance Equalization (M1 recovery & truck banner)
+    # ENABLE_AMBIENT_CORNER_PAD must stay True. The province trainers
+    # (train_grayscale_province_thai.py / _lao.py) ALWAYS letterbox the crop into
+    # the model's tensor size, filling the bars with the crop's own corner-median
+    # background tone, and they have NO toggle. Serve resolves THIS flag inside
+    # src/preprocess.py:GrayscaleSmartResize, so False silently swaps letterbox
+    # for a pure STRETCH. Measured on 120 v5i-valid images (scratch/ab_flag_matrix.py):
+    #   province 105/120 = 87.5%  ->  112/120 = 93.3%   just by turning it on,
+    #   with 120/120 IDENTICAL plate_text (so it costs nothing on characters).
+    # Reason: the native province crop is ~118x30 (aspect 4.24) but the tensor is
+    # 256x80 (3.20) -> stretching squashes the glyphs 1.33x horizontally, a
+    # geometry the classifier never saw. It also gates the M3A per-character
+    # square pad (api_server.py:2178) that the square 64x64 char crops rely on.
+    ENABLE_AMBIENT_CORNER_PAD = True      # 4-corner median background padding (M3A char & M3B province)
+    ENABLE_GRAYSCALE_PROV_NORM = True    # Grayscale conversion for province classification (False = raw RGB)
+    ENABLE_STROKE_DISAMBIGUATION = False  # cv2.findContours / apex geometric analysis for ambiguous chars (ฬ/ผ, ข/ช, ป/บ)
+
+    # ── PLATE RECTIFICATION: A GEOMETRY CONTRACT, NOT AN ACCURACY KNOB ──────
+    # `ENABLE_HOMOGRAPHY_DESKEW` and `ENABLE_RESIDUAL_DESKEW` used to be ONE
+    # switch that bundled two unrelated operations:
+    #   (1) quad detection + warp_perspective_plate()  -> defines "the plate crop"
+    #   (2) fine_deskew_plate()                        -> independent ±8° search
+    # Bundling them is why the flag looked load-bearing: with it OFF the plate
+    # "wasn't straight", so the flag was credited with straightening. It isn't.
+    # Turning the bundle OFF does not give you a *raw* pipeline — it gives M2/M3A
+    # a rotated AABB crop that no training image has ever contained
+    # (measured: 33/120 plate_text changes, province 112 -> 104 / 120,
+    #  scratch/ab_flag_matrix.py mode B). That is a broken branch, not a gain.
+    #
+    # (1) is the crop DEFINITION. Keep True. It has no effect on accuracy and
+    #     must never be A/B tested as if it did.
+    ENABLE_HOMOGRAPHY_DESKEW = True      # 4-corner perspective unwarping (crop definition)
+    # (2) is the actual crutch: a per-crop projection-variance argmax over
+    #     ±8° in 0.25° steps. It rotates every plate by a DIFFERENT angle and it
+    #     was masking an undertrained corner regressor. Rotation tolerance
+    #     belongs in TRAIN augmentation (see docs/PREPROCESSING_CONTRACT.md §3).
+    #     OFF by default; re-enable only with a measured A/B on record.
+    ENABLE_RESIDUAL_DESKEW = False       # fine_deskew_plate(): post-warp residual rotation search
+    ENABLE_AUTOCONTRAST = True            # PIL ImageOps.autocontrast(cutoff=2) train/serve contract for characters
+    ENABLE_REGEX_REPAIR = True            # DLT syntax rule guard & outer frame artifact repair
+    ENABLE_FALLBACK = True                # Fall back to CTC OCR when box prediction violates Thai syntax
+    ENABLE_RECONCILIATION = True          # Sequence alignment & fusion between Box and CTC OCR
+
+    @property
+    def USE_CLAHE(self) -> bool:
+        return not self.PURE_MODEL_MODE and self.ENABLE_OPENCV_CLAHE
+
+    @property
+    def USE_AMBIENT_PADDING(self) -> bool:
+        return not self.PURE_MODEL_MODE and self.ENABLE_AMBIENT_CORNER_PAD
+
+    @property
+    def USE_GRAYSCALE_NORM(self) -> bool:
+        return not self.PURE_MODEL_MODE and self.ENABLE_GRAYSCALE_PROV_NORM
+
+    @property
+    def USE_STROKE_DISAMBIGUATION(self) -> bool:
+        return not self.PURE_MODEL_MODE and self.ENABLE_STROKE_DISAMBIGUATION
+
+    @property
+    def USE_HOMOGRAPHY_DESKEW(self) -> bool:
+        return not self.PURE_MODEL_MODE and self.ENABLE_HOMOGRAPHY_DESKEW
+
+    @property
+    def USE_RESIDUAL_DESKEW(self) -> bool:
+        return not self.PURE_MODEL_MODE and self.ENABLE_RESIDUAL_DESKEW
+
+    @property
+    def USE_AUTOCONTRAST(self) -> bool:
+        return not self.PURE_MODEL_MODE and self.ENABLE_AUTOCONTRAST
+
+    @property
+    def USE_REGEX_REPAIR(self) -> bool:
+        return not self.PURE_MODEL_MODE and self.ENABLE_REGEX_REPAIR
+
+    @classmethod
+    def is_clahe_enabled(cls) -> bool:
+        return not cls.PURE_MODEL_MODE and cls.ENABLE_OPENCV_CLAHE
+
+    @classmethod
+    def is_ambient_padding_enabled(cls) -> bool:
+        return not cls.PURE_MODEL_MODE and cls.ENABLE_AMBIENT_CORNER_PAD
+
+    @classmethod
+    def is_grayscale_norm_enabled(cls) -> bool:
+        return not cls.PURE_MODEL_MODE and cls.ENABLE_GRAYSCALE_PROV_NORM
+
+    @classmethod
+    def is_stroke_disambiguation_enabled(cls) -> bool:
+        return not cls.PURE_MODEL_MODE and cls.ENABLE_STROKE_DISAMBIGUATION
+
+    @classmethod
+    def is_homography_deskew_enabled(cls) -> bool:
+        return not cls.PURE_MODEL_MODE and cls.ENABLE_HOMOGRAPHY_DESKEW
+
+    @classmethod
+    def is_residual_deskew_enabled(cls) -> bool:
+        return not cls.PURE_MODEL_MODE and cls.ENABLE_RESIDUAL_DESKEW
+
+    @classmethod
+    def is_autocontrast_enabled(cls) -> bool:
+        return not cls.PURE_MODEL_MODE and cls.ENABLE_AUTOCONTRAST
+
+    @classmethod
+    def is_regex_repair_enabled(cls) -> bool:
+        return not cls.PURE_MODEL_MODE and cls.ENABLE_REGEX_REPAIR
 
     # ============================================================
     # SERVE / PRE-PROCESS GEOMETRY — READ THIS BEFORE A/B TESTING

@@ -53,7 +53,8 @@ class CharacterDataset(Dataset):
             if folder.is_dir() and folder.name in class_to_idx:
                 label = class_to_idx[folder.name]
                 for img_p in list(folder.glob("*.jpg")) + list(folder.glob("*.png")):
-                    self.samples.append((img_p, label))
+                    if img_p.is_file() and (not img_p.is_symlink() or img_p.resolve().exists()):
+                        self.samples.append((img_p, label))
 
     def __len__(self):
         return len(self.samples)
@@ -161,6 +162,10 @@ def train_character_classifier(
     print(f"Total Character Classes: {n_classes}")
 
     # 2. Transforms (Input 64x64) - natural transforms with mild geometric & photometric variation
+    # ROTATION TOLERANCE LIVES HERE, NOT AT SERVE — see docs/PREPROCESSING_CONTRACT.md.
+    # The pipeline used to rotate each rectified plate by a per-image ±8 deg search at
+    # serve time (Config.ENABLE_RESIDUAL_DESKEW, now default False). Measured max 2.75 deg;
+    # degrees=6 covers it. Scale jitter covers the residual corner-regressor error.
     train_tf = transforms.Compose([
         transforms.Resize((64, 64)),
         transforms.RandomAffine(degrees=6, translate=(0.04, 0.04), scale=(0.95, 1.05)),

@@ -558,7 +558,7 @@
     if (!res) return;
 
     const totalMs = res.timing ? res.timing.total_ms : '--';
-    totalLatencyPill.innerHTML = `เวลาประมวลผล: <span class="mono">${totalMs} ms</span>`;
+    totalLatencyPill.innerHTML = `<span data-i18n="pipe_latency">${t('pipe_latency', 'Latency:')}</span> <span class="mono">${totalMs} ms</span>`;
 
     // Stage 0
     if (res.crops && res.crops.raw) {
@@ -572,7 +572,7 @@
     }
     timeRaw.textContent = `${totalMs} ms`;
     metaStatus.textContent = res.detected ? t('plate_found', 'Plate detected') : t('not_found_status', 'No plate');
-    metaStatus.style.color = res.detected ? 'var(--accent-green)' : 'var(--accent-red)';
+    metaStatus.style.color = res.detected ? 'var(--emerald)' : 'var(--danger)';
     metaRes.textContent = res.detected ? '320x160' : '--';
 
     if (!res.detected) {
@@ -584,9 +584,9 @@
       if (resultProvince) resultProvince.textContent = '—';
       if (resultBadge) {
         resultBadge.textContent = t('no_plate', 'NO PLATE');
-        resultBadge.style.color = '#f87171';
-        resultBadge.style.background = 'var(--accent-red-dim)';
-        resultBadge.style.borderColor = 'rgba(239, 68, 68, 0.4)';
+        resultBadge.style.color = 'var(--danger)';
+        resultBadge.style.background = 'var(--danger-dim)';
+        resultBadge.style.borderColor = 'transparent';
       }
       if (patternText) patternText.textContent = '--';
       if (confPlate) confPlate.textContent = '--';
@@ -607,17 +607,18 @@
 
     if (res.country && badgeCountry) {
       const isThai = res.country === 'Thai';
+      const isoCode = isThai ? 'TH' : 'LA';
       badgeCountry.className = `badge-country ${isThai ? 'thai' : 'laos'}`;
-      badgeCountry.textContent = `${res.country_flag || ''} ${isThai ? t('country_th', 'Thai') : t('country_lao', 'Lao')}`;
+      badgeCountry.textContent = `${isoCode} · ${isThai ? t('country_th', 'Thai') : t('country_lao', 'Lao')}`;
 
       const cConf = res.country_confidence ? (res.country_confidence * 100).toFixed(1) + '%' : '99.9%';
       if (countryMeta) {
-        countryMeta.textContent = `${res.country_flag || ''} ${isThai ? t('country_th', 'Thai') : t('country_lao', 'Lao')} (${cConf})`;
-        countryMeta.style.color = isThai ? 'var(--accent)' : '#f87171';
+        countryMeta.textContent = `${isoCode} · ${isThai ? t('country_th', 'Thai') : t('country_lao', 'Lao')} (${cConf})`;
+        countryMeta.style.color = isThai ? 'var(--accent-signal)' : 'var(--amber)';
       }
       if (layoutMeta) {
         layoutMeta.textContent = isThai ? `${t('layout_std', 'Standard')}` : `${t('layout_inv', 'Inverted')}`;
-        layoutMeta.style.color = isThai ? 'var(--accent)' : 'var(--accent-amber)';
+        layoutMeta.style.color = isThai ? 'var(--accent-signal)' : 'var(--amber)';
       }
       if (labelCharBox && labelProvBox) {
         labelCharBox.textContent = isThai ? t('lbl_char_top', 'Chars (Top)') : t('lbl_char_bot', 'Chars (Bottom)');
@@ -654,19 +655,19 @@
 
     if (res.is_valid) {
       resultBadge.textContent = t('res_valid', 'VALID FORMAT');
-      resultBadge.style.color = '#34d399';
-      resultBadge.style.background = 'var(--accent-green-dim)';
-      resultBadge.style.borderColor = 'rgba(16, 185, 129, 0.4)';
+      resultBadge.style.color = 'var(--emerald)';
+      resultBadge.style.background = 'var(--emerald-dim)';
+      resultBadge.style.borderColor = 'transparent';
     } else if (res.low_confidence) {
       resultBadge.textContent = t('res_lowconf', 'LOW CONFIDENCE — SAVED FOR REVIEW');
-      resultBadge.style.color = '#fbbf24';
-      resultBadge.style.background = 'var(--accent-amber-dim)';
-      resultBadge.style.borderColor = 'rgba(245, 158, 11, 0.4)';
+      resultBadge.style.color = 'var(--amber)';
+      resultBadge.style.background = 'var(--amber-dim)';
+      resultBadge.style.borderColor = 'transparent';
     } else {
       resultBadge.textContent = t('res_invalid', 'NON-STANDARD');
-      resultBadge.style.color = '#fbbf24';
-      resultBadge.style.background = 'var(--accent-amber-dim)';
-      resultBadge.style.borderColor = 'rgba(245, 158, 11, 0.4)';
+      resultBadge.style.color = 'var(--amber)';
+      resultBadge.style.background = 'var(--amber-dim)';
+      resultBadge.style.borderColor = 'transparent';
     }
 
     patternText.textContent = res.pattern_name || '--';

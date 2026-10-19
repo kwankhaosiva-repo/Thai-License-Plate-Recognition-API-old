@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="th" data-lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anuphan:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<title>Thai &amp; Lao LPR Engine — Presentation</title>
+<style>
+  :root{
+    --accent:#1d4ed8;
+    --accent-soft:#eef2ff;
+    --accent-line:#bfdbfe;
+    --ink:#17203a;
+    --ink-soft:#4b5570;
+    --line:#e3e7ef;
+    --bg:#ffffff;
+    --bg-alt:#f7f8fb;
+    --card:#ffffff;
+    --good:#0f766e;
+    --good-soft:#ecfdf5;
+    --good-line:#a7f3d0;
+    --warn:#b45309;
+    --warn-soft:#fffbeb;
+    --warn-line:#fde68a;
+    --bad:#b91c1c;
+    --bad-soft:#fef2f2;
+    --bad-line:#fecaca;
+    --purple:#6d28d9;
+    --purple-soft:#f5f3ff;
+    --radius:10px;
+    --mono:'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  html[data-lang="th"] .en{display:none !important}
+  html[data-lang="en"] .th{display:none !important}
+  body{
+    font-family:"Inter","Anuphan",system-ui,-apple-system,"Segoe UI",sans-serif;
+    color:var(--ink);
+    background:var(--bg);
+    line-height:1.75;
+    font-size:16.5px;
+  }
+  /* progress bar */
+  #progress{position:fixed;top:0;left:0;height:3px;width:0;background:var(--accent);z-index:50;transition:width .1s linear}
+  /* header */
+  header{
+    position:sticky;top:0;z-index:40;
+    background:rgba(255,255,255,.94);backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--line);
+  }
+  .header-in{
+    max-width:980px;margin:0 auto;padding:12px 24px;
+    display:flex;align-items:center;justify-content:space-between;gap:16px;
+  }
+  .brand{font-weight:700;font-size:15px;letter-spacing:.02em}
+  .brand span{color:var(--accent)}
+  .brand small{display:inline-block;margin-left:8px;font-size:12px;font-weight:500;color:var(--ink-soft)}
+  .lang-toggle{display:flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;background:#fff}
+  .lang-toggle button{
+    border:0;background:transparent;cursor:pointer;
+    font:inherit;font-size:13px;font-weight:600;
+    padding:6px 16px;color:var(--ink-soft);
+  }
+  .lang-toggle button.active{background:var(--accent);color:#fff}
+  /* layout */
+  main{max-width:980px;margin:0 auto;padding:0 24px}
+  section{padding:72px 0;border-bottom:1px solid var(--line)}
+  section:last-of-type{border-bottom:0}
+  section.alt{background:var(--bg-alt);max-width:none}
+  section.alt > *{max-width:980px;margin-left:auto;margin-right:auto}
+  .kicker{
+    display:inline-block;font-size:12px;font-weight:700;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--accent);
+    background:var(--accent-soft);border-radius:999px;padding:4px 14px;margin-bottom:16px;
+  }
+  h1{font-size:clamp(30px,5vw,46px);line-height:1.25;letter-spacing:-.01em}
+  h2{font-size:clamp(24px,3.5vw,32px);line-height:1.3;margin-bottom:20px;letter-spacing:-.01em}
+  h3{font-size:18px;margin-bottom:8px}
+  p{margin-bottom:16px;color:var(--ink-soft)}
+  p.lead{font-size:18.5px;color:var(--ink);line-height:1.65}
+  strong{color:var(--ink)}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code,.mono{font-family:var(--mono);font-size:.88em}
+  code{background:#edf2f7;border:1px solid var(--line);border-radius:4px;padding:2px 6px;color:#1e3a8a}
+  ul.clean{list-style:none;margin:8px 0 16px}
+  ul.clean li{position:relative;padding-left:26px;margin-bottom:10px;color:var(--ink-soft)}
+  ul.clean li::before{
+    content:"";position:absolute;left:4px;top:11px;
+    width:8px;height:8px;border-radius:50%;background:var(--accent);
+  }
+  /* hero */
+  .hero{padding:88px 0 72px;border-bottom:1px solid var(--line)}
+  .hero .tag{font-size:14px;color:var(--ink-soft);margin-top:20px}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:24px}
+  .chip{
+    font-size:13px;font-weight:600;color:var(--ink);
+    background:#fff;border:1px solid var(--line);border-radius:999px;padding:5px 14px;
+  }
+  .chip.accent{background:var(--accent-soft);border-color:#dbe4ff;color:var(--accent)}
+  .chip.good{background:var(--good-soft);border-color:var(--good-line);color:var(--good)}
+  .chip.purple{background:var(--purple-soft);border-color:#ddd6fe;color:var(--purple)}
+  .scroll-hint{margin-top:44px;font-size:14px;color:var(--ink-soft);display:flex;align-items:center;gap:8px}
+  .scroll-hint .arrow{animation:bob 1.6s infinite;font-size:18px;color:var(--accent)}
+  @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(6px)}}
+  .toc{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;margin-top:40px}
+  .toc a{
+    display:block;font-size:14px;font-weight:600;text-decoration:none;color:var(--ink);
+    border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;background:#fff;
+    transition:border-color .15s, color .15s, transform .15s;
+  }
+  .toc a:hover{border-color:var(--accent);color:var(--accent);transform:translateY(-2px)}
+  .toc a small{display:block;font-weight:400;color:var(--ink-soft);font-size:12px;margin-top:2px}
+  /* cards */
+  .cards{display:grid;gap:16px;margin-top:24px}
+  .cards.two{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+  .cards.three{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+  .card{
+    background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    padding:22px 24px;
+  }
+  .card.accent{background:var(--accent-soft);border-color:#dbe4ff}
+  .card.good{background:var(--good-soft);border-color:var(--good-line)}
+  .card.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+  .card.bad{background:var(--bad-soft);border-color:var(--bad-line)}
+  .card.purple{background:var(--purple-soft);border-color:#ddd6fe}
+  .card .num{
+    display:inline-flex;align-items:center;justify-content:center;
+    width:26px;height:26px;border-radius:50%;
+    background:var(--accent);color:#fff;font-size:13px;font-weight:700;margin-bottom:10px;
+  }
+  .card .num.bad{background:var(--bad)}
+  .card .num.good{background:var(--good)}
+  .card .prob{color:var(--warn);font-weight:700;font-size:13px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px}
+  .card p{margin-bottom:0;font-size:15px}
+  .card .fix{margin-top:12px;padding-top:12px;border-top:1px dashed var(--line);font-size:15px;color:var(--ink-soft)}
+  .card .fix strong{color:var(--good)}
+  /* callout */
+  .callout{
+    background:var(--accent-soft);border-left:4px solid var(--accent);
+    border-radius:0 var(--radius) var(--radius) 0;
+    padding:18px 22px;margin:24px 0;font-size:16px;color:var(--ink);
+  }
+  .callout.good{background:var(--good-soft);border-left-color:var(--good)}
+  .callout.warn{background:var(--warn-soft);border-left-color:var(--warn)}
+  .callout.bad{background:var(--bad-soft);border-left-color:var(--bad)}
+  /* tables */
+  .table-wrap{overflow-x:auto;margin-top:24px;border:1px solid var(--line);border-radius:var(--radius);background:#fff}
+  table{width:100%;border-collapse:collapse;font-size:14.5px;min-width:660px}
+  th,td{text-align:left;padding:12px 16px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:var(--bg-alt);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft);font-weight:700}
+  tr:last-child td{border-bottom:0}
+  td:first-child{font-weight:700;color:var(--ink);white-space:nowrap}
+  td.num{font-family:var(--mono);text-align:right}
+  td.ok{color:var(--good);font-weight:700}
+  td.bad{color:var(--bad);font-weight:700}
+  td.hi{color:var(--accent);font-weight:700}
+  /* diagram */
+  .diagram{margin-top:28px;display:flex;flex-direction:column;align-items:center;gap:0}
+  .d-row{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
+  .d-node{
+    background:#fff;border:1px solid var(--line);border-radius:var(--radius);
+    padding:12px 20px;font-size:14.5px;font-weight:600;text-align:center;min-width:150px;
+    box-shadow:0 1px 2px rgba(23,32,58,.05);
+  }
+  .d-node small{display:block;font-weight:400;color:var(--ink-soft);font-size:12px;margin-top:2px}
+  .d-node.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .d-node.primary small{color:#dbe4ff}
+  .d-node.accent{background:var(--accent-soft);border-color:#dbe4ff}
+  .d-node.good{background:var(--good-soft);border-color:var(--good-line);color:var(--good)}
+  .d-arrow{color:var(--accent);font-size:20px;line-height:1;padding:8px 0;font-weight:700}
+  .d-steps{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;align-items:center}
+  .d-step{
+    background:#fff;border:1px solid var(--line);border-radius:8px;
+    padding:8px 12px;font-size:13px;font-weight:600;
+  }
+  .d-plus{color:var(--ink-soft);font-size:14px;padding:0 2px}
+  .d-side{
+    margin-top:14px;font-size:13px;color:var(--ink-soft);
+    background:var(--bg-alt);border:1px dashed var(--line);border-radius:var(--radius);
+    padding:10px 18px;text-align:center;max-width:720px;
+  }
+  /* steps (workflow) */
+  .steps{counter-reset:step;margin-top:24px}
+  .step{
+    position:relative;padding:0 0 26px 56px;border-left:2px solid var(--line);
+    margin-left:16px;
+  }
+  .step:last-child{border-left-color:transparent;padding-bottom:0}
+  .step::before{
+    counter-increment:step;content:counter(step);
+    position:absolute;left:-17px;top:0;
+    width:32px;height:32px;border-radius:50%;
+    background:#fff;border:2px solid var(--accent);color:var(--accent);
+    font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center;
+  }
+  .step h3{margin-bottom:4px}
+  .step p{font-size:15px;margin-bottom:0}
+  /* stats */
+  .grid4{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-top:24px}
+  .stat{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:20px;text-align:center}
+  .stat .big{font-size:28px;font-weight:800;color:var(--accent);line-height:1.2;font-family:var(--mono)}
+  .stat .lbl{font-size:14px;color:var(--ink-soft);margin-top:6px}
+  .stat .sub{font-size:12px;color:var(--ink-soft);margin-top:2px;font-family:var(--mono)}
+  /* plate pill preview */
+  .plate-pill{
+    display:inline-flex;align-items:center;gap:8px;padding:4px 12px;
+    background:#fff;border:2px solid #111827;border-radius:6px;font-weight:700;font-size:16px;
+  }
+  .plate-pill.wrong{border-color:var(--bad);background:var(--bad-soft);color:var(--bad)}
+  .plate-pill.right{border-color:var(--good);background:var(--good-soft);color:var(--good)}
+  /* footer */
+  footer{background:var(--bg-alt);border-top:1px solid var(--line);padding:36px 24px;text-align:center}
+  footer p{font-size:14px;margin:0 auto;max-width:760px}
+  @media (max-width:640px){
+    body{font-size:15.5px}
+    section{padding:56px 0}
+    .hero{padding:64px 0 56px}
+    .step{padding-left:44px}
+  }
+</style>
+</head>
+<body>
+<div id="progress"></div>
+
+<header>
+  <div class="header-in">
+    <div class="brand">Thai &amp; Lao <span>LPR</span> Engine <small>Engineering Story</small></div>
+    <div class="lang-toggle" role="group" aria-label="Language">
+      <button id="btn-th" class="active" onclick="setLang('th')">ไทย</button>
+      <button id="btn-en" onclick="setLang('en')">EN</button>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <!-- ============ HERO ============ -->
+  <section class="hero">
+    <div class="kicker"><span class="th">การนำเสนอโปรเจกต์ · Project Presentation</span><span class="en">Project Presentation · การนำเสนอโปรเจกต์</span></div>
+    <h1>Thai &amp; Lao License Plate Recognition Engine</h1>
+    <p class="lead" style="margin-top:16px">
+      <span class="th">ระบบอ่านป้ายทะเบียนรถยนต์ไทยและลาวความเร็วสูงระดับอุตสาหกรรม — จาก 7 ยุคที่ล้มเหลว สู่สถาปัตยกรรม <strong>Multi-Stage + Pure ONNX</strong> ที่รันบน CPU ได้เร็ว ~75–95 ms ต่อภาพ โดยไม่มีค่าลิขสิทธิ์เชิงพาณิชย์</span>
+      <span class="en">An industrial-grade, ultra-fast Thai and Lao License Plate Recognition system — from 7 failed eras to a robust <strong>Multi-Stage + Pure ONNX</strong> architecture running in ~75–95 ms on standard CPU with 100% commercial-friendly licensing.</span>
+    </p>
+    <div class="chips">
+      <span class="chip accent">CPU ~75–95 ms</span>
+      <span class="chip accent">ONNX Opset 18</span>
+      <span class="chip accent">C# .NET Ready</span>
+      <span class="chip good">Commercial License (MIT/Apache/BSD)</span>
+      <span class="chip purple">FastAPI</span>
+      <span class="chip purple">Google Cloud Run</span>
+      <span class="chip">PicoDet-S</span>
+      <span class="chip">D-FINE Small</span>
+      <span class="chip">ResNet18 / MobileNet</span>
+    </div>
+    <p class="tag">
+      <span class="th">เอกสารและโค้ดอ้างอิง: </span><span class="en">Documentation &amp; source: </span>
+      <a href="https://github.com/kwankhaosiva-repo/Thai-License-Plate-Recognition-API-old" target="_blank">Thai-License-Plate-Recognition-API-old</a>
+    </p>
+
+    <div class="toc">
+      <a href="#ch1"><span class="th">1 · ทำไมถึงเริ่มทำ</span><span class="en">1 · Why we started</span><small><span class="th">โจทย์กล้อง CCTV และ 3 ข้อจำกัดจริง</span><span class="en">CCTV reality and 3 hard constraints</span></small></a>
+      <a href="#ch2"><span class="th">2 · 7 ยุคแห่งความล้มเหลว</span><span class="en">2 · The 7 failed eras</span><small><span class="th">ปัญหาจริงที่เจอ + วิธีแก้ในโค้ด</span><span class="en">Real obstacles &amp; how they were fixed</span></small></a>
+      <a href="#ch3"><span class="th">3 · ทำไมต้องเป็นวิธีนี้</span><span class="en">3 · Why this approach</span><small><span class="th">Multi-Stage เหนือกว่า End-to-End อย่างไร</span><span class="en">Why Multi-Stage beats End-to-End</span></small></a>
+      <a href="#ch4"><span class="th">4 · ทำไมเลือกโมเดลและไลบรารีเหล่านี้</span><span class="en">4 · Why these models &amp; tools</span><small><span class="th">เปรียบเทียบกับทางเลือกที่ถูกคัดออก</span><span class="en">Compared with rejected alternatives</span></small></a>
+      <a href="#ch5"><span class="th">5 · สถาปัตยกรรมระบบ</span><span class="en">5 · System architecture</span><small><span class="th">ผังการทำงานครบวงจร 1 ภาพ</span><span class="en">Complete pipeline in one picture</span></small></a>
+      <a href="#ch6"><span class="th">6 · Tech Stack &amp; Licenses</span><span class="en">6 · Tech stack &amp; licenses</span><small><span class="th">เทคโนโลยีทั้งหมดและสถานะลิขสิทธิ์</span><span class="en">Every tool and license status</span></small></a>
+      <a href="#ch7"><span class="th">7 · Workflow การประมวลผล</span><span class="en">7 · Processing workflow</span><small><span class="th">จากภาพมุมเอียงสู่รหัสป้ายที่ถูกต้อง</span><span class="en">From skewed image to valid plate text</span></small></a>
+      <a href="#ch8"><span class="th">8 · ผลลัพธ์และบทเรียน</span><span class="en">8 · Outcomes &amp; lessons</span><small><span class="th">ตัวเลขวัดจริง และแผนปรับปรุง v6</span><span class="en">Benchmark metrics and v6 plan</span></small></a>
+    </div>
+
+    <div class="scroll-hint">
+      <span class="arrow">↓</span>
+      <span class="th">เลื่อนลงเพื่ออ่านเรื่องราวทั้งหมด</span>
+      <span class="en">Scroll down to read the whole story</span>
+    </div>
+  </section>
+
+  <!-- ============ CH1: WHY ============ -->
+  <section id="ch1">
+    <div class="kicker"><span class="th">บทที่ 1</span><span class="en">Chapter 1</span></div>
+    <h2><span class="th">ทำไมถึงเริ่มทำ — 3 ข้อจำกัดที่กำหนดทุกการตัดสินใจ</span><span class="en">Why we started — 3 hard constraints that drove everything</span></h2>
+    <p class="lead">
+      <span class="th">เราไม่ได้เริ่มจากความอยาก “ทดลองโมเดล AI ใหม่ล่าสุด” แต่เริ่มจากโจทย์ธุรกิจจริง: กล้อง CCTV บริเวณทางเข้าอาคารและด่านตรวจจับภาพรถยนต์ที่เคลื่อนที่ ต้องอ่านป้ายทะเบียนไทยและลาวให้ถูกต้อง แล้วส่งต่อเข้าระบบหลังบ้านที่มีอยู่เดิมของลูกค้า ซึ่งเขียนด้วย <strong>C# (.NET)</strong></span>
+      <span class="en">We didn't start with wanting to try the newest AI model, but from an industrial need: CCTV gate cameras capturing moving vehicles must recognize Thai and Lao plates accurately and feed into the client's existing backend built on <strong>C# (.NET)</strong>.</span>
+    </p>
+    <p>
+      <span class="th">โมเดลที่ได้ค่า Benchmark บนกระดาษสูงที่สุดในโลกจะไม่มีประโยชน์ทันที หากติด 1 ใน 3 ข้อจำกัดนี้:</span>
+      <span class="en">A model with the highest paper benchmark is immediately useless if it violates any of these 3 constraints:</span>
+    </p>
+    <div class="cards three">
+      <div class="card accent">
+        <h3><span class="th">① License เชิงพาณิชย์ 100%</span><span class="en">① 100% Commercial License</span></h3>
+        <p><span class="th">ระบบของลูกค้าเป็นซอฟต์แวร์เชิงพาณิชย์ <strong>ห้ามติดสัญญาอนุญาตแบบ AGPL-3.0</strong> (เช่น Ultralytics YOLO) และห้ามมีค่า Royalty รายครั้ง ทุกโมเดลและไลบรารีต้องเป็น MIT, Apache-2.0 หรือ BSD-3 เท่านั้น</span>
+           <span class="en">Commercial client system: <strong>no AGPL-3.0 copyleft licenses</strong> (e.g. Ultralytics YOLO) and no per-unit royalties. All models and libraries must strictly be MIT, Apache-2.0, or BSD-3.</span></p>
+      </div>
+      <div class="card accent">
+        <h3><span class="th">② รันบน CPU ไม่มี GPU</span><span class="en">② Standard CPU, No GPU</span></h3>
+        <p><span class="th">เป้าหมายคือ Edge box และ Cloud Run ที่ไม่มี GPU สำหรับอินเฟอเรนซ์ งบประมาณเวลาทั้งระบบต้องอยู่ภายใน <strong>~75–95 ms ต่อภาพ</strong> เพื่อรองรับรถยนต์ที่วิ่งผ่านอย่างต่อเนื่อง</span>
+           <span class="en">Targeted for edge boxes and Cloud Run instances with zero GPUs. The total end-to-end latency budget must strictly remain within <strong>~75–95 ms per frame</strong>.</span></p>
+      </div>
+      <div class="card accent">
+        <h3><span class="th">③ ต้อง Export เป็น Pure ONNX ได้</span><span class="en">③ Pure ONNX Compatible</span></h3>
+        <p><span class="th">ต้องรันผ่าน <span class="mono">Microsoft.ML.OnnxRuntime</span> (Opset 18) บน C# (.NET) ได้ <strong>ห้ามมี Custom C++ Operator</strong> เพราะจะทำให้การติดตั้งบนเครื่องปลายทางของลูกค้าล้มเหลว</span>
+           <span class="en">Must run cleanly via <span class="mono">Microsoft.ML.OnnxRuntime</span> (Opset 18) in C# (.NET) with <strong>zero custom C++ operators</strong> to guarantee plug-and-play client deployment.</span></p>
+      </div>
+    </div>
+    <div class="callout">
+      <span class="th"><strong>หลักคิดสำคัญ:</strong> “ข้อจำกัดในการ Deploy จริง ต้องเป็นผู้ตัดสินสถาปัตยกรรม ไม่ใช่ Leaderboard”</span>
+      <span class="en"><strong>Core Principle:</strong> "Deployment constraints must dictate architecture, not the Kaggle leaderboard."</span>
+    </div>
+  </section>
+
+  <!-- ============ CH2: PROBLEMS ============ -->
+  <section id="ch2" class="alt">
+    <div class="kicker"><span class="th">บทที่ 2</span><span class="en">Chapter 2</span></div>
+    <h2><span class="th">เจอปัญหาอะไรบ้าง — บทเรียนจาก 7 ยุคที่ล้มเหลว</span><span class="en">Problems we hit — lessons from 7 failed eras</span></h2>
+    <p>
+      <span class="th">เส้นทางสู่ความแม่นยำไม่ได้มาจากการเทรนรอบเดียว นี่คือ 7 อุปสรรคจริงที่เราลองผิดลองถูกและแก้ได้สำเร็จในโค้ด:</span>
+      <span class="en">Accuracy was never achieved on the first try. Here are 7 real-world failures and their definitive engineering solutions:</span>
+    </p>
+
+    <div class="cards two">
+      <div class="card">
+        <div class="num bad">1</div>
+        <div class="prob"><span class="th">ยุคที่ 1 · เรขาคณิต</span><span class="en">Era 1 · Geometry</span></div>
+        <h3><span class="th">AABB ครอปภาพตรงๆ แล้วส่งอ่าน</span><span class="en">Direct AABB cropping</span></h3>
+        <p><span class="th">เมื่อกล้องติดตั้งมุมก้มหรือรถเลี้ยว ป้ายกลายเป็นสี่เหลี่ยมคางหมู ตัวหนังสือถูกบิดยืด อ่านผิดพลาดมากกว่า 40%</span>
+           <span class="en">At tilted camera angles, plates become skewed trapezoids. Distorted letters caused over 40% recognition errors.</span></p>
+        <div class="fix"><strong><span class="th">แก้:</span><span class="en">Fix:</span></strong>
+          <span class="th">เปลี่ยนจากครอบตัดตรงๆ มาใช้ <strong>Perspective Transform</strong> คลี่ภาพป้ายเอียงให้กลับมาขนานในระนาบ 2D เสมอ</span>
+          <span class="en">Replaced direct bounding box cropping with <strong>Perspective Transform</strong> to flatten skewed plates into rectified 2D planes.</span></div>
+      </div>
+
+      <div class="card">
+        <div class="num bad">2</div>
+        <div class="prob"><span class="th">ยุคที่ 2 · การ Deploy</span><span class="en">Era 2 · Deployment</span></div>
+        <h3><span class="th">Rotated Bounding Box (OBB) ติดหล่ม C++</span><span class="en">Rotated Bounding Box (OBB) locked in C++</span></h3>
+        <p><span class="th">OBB ตรวจจับแผ่นป้ายเอียงได้ดีใน PyTorch แต่ <strong>พังตอน Export ONNX</strong> เพราะต้องใช้ Rotated NMS ซึ่งเป็น Custom C++ Op รันบน C# ไม่ได้</span>
+           <span class="en">OBB worked fine in PyTorch but <strong>failed at ONNX export</strong> due to custom C++ Rotated NMS operators unsupported in standard .NET.</span></p>
+        <div class="fix"><strong><span class="th">แก้:</span><span class="en">Fix:</span></strong>
+          <span class="th"><strong>2-Stage Keypoint Regressor:</strong> PicoDet-S หา AABB + MobileNetV3 ทายพิกัด 4 จุดมุม แล้วให้ OpenCV ทำ 8-point Homography Warp รัน C# ผ่าน ONNX ได้ทันที</span>
+          <span class="en"><strong>2-Stage Keypoint Regressor:</strong> PicoDet-S AABB + MobileNetV3 4-corner regression + OpenCV warp. Pure ONNX compatible.</span></div>
+      </div>
+
+      <div class="card">
+        <div class="num bad">3</div>
+        <div class="prob"><span class="th">ยุคที่ 3 · สถาปัตยกรรม</span><span class="en">Era 3 · Architecture</span></div>
+        <h3><span class="th">อ่านทั้งป้ายรวดเดียวปนสับสน</span><span class="en">Single OCR reading entire plate</span></h3>
+        <p><span class="th">ป้ายทะเบียนไทยมี 2 บรรทัด (หมวดอักษร-ตัวเลข ด้านบน และชื่อจังหวัด ด้านล่าง) โมเดล OCR อ่านปนกันเป็นประโยคเดียว หรือสลับบรรทัด</span>
+           <span class="en">Thai plates have 2 tiers: characters on top, province at the bottom. Single OCR read them as one mixed sequence or swapped tiers.</span></p>
+        <div class="fix"><strong><span class="th">แก้:</span><span class="en">Fix:</span></strong>
+          <span class="th">เพิ่ม <strong>Model 2 (Component Detector)</strong> แยกโซน <span class="mono">plate_char</span> กับ <span class="mono">province</span> ออกจากกันอย่างเด็ดขาด แล้วส่งให้โมเดลเฉพาะทางอ่าน</span>
+          <span class="en">Added <strong>Model 2 (Component Detector)</strong> to explicitly isolate character and province regions into specialized pipelines.</span></div>
+      </div>
+
+      <div class="card">
+        <div class="num bad">4</div>
+        <div class="prob"><span class="th">ยุคที่ 4 · กฎเกณฑ์เกินพอดี</span><span class="en">Era 4 · Flawed Heuristics</span></div>
+        <h3><span class="th">พึ่ง DLT Top Banner Code บนป้ายบรรทุก</span><span class="en">Over-reliance on DLT truck banner codes</span></h3>
+        <p><span class="th">พยายามอ่านตัวเลขรหัส 2 หลักข้างคำว่า THAILAND แต่ตัวเลขเล็กมากและมักถูกหัวน็อตเจาะทับ อ่านเพี้ยนแล้วไปทับชื่อจังหวัดที่ถูกต้อง</span>
+           <span class="en">Attempted reading tiny 2-digit truck codes, which were often punctured by bolts, causing hallucinated overrides over correct provinces.</span></p>
+        <div class="fix"><strong><span class="th">แก้:</span><span class="en">Fix:</span></strong>
+          <span class="th"><strong>ลบโค้ดส่วนนี้ทิ้งทั้งหมด</strong> แล้วเปลี่ยนมาเทรน ResNet18 Grayscale ให้จำแนกคำว่าชื่อจังหวัดทั้งแถบโดยตรง</span>
+          <span class="en"><strong>Completely stripped the heuristic</strong> and trained ResNet18 Grayscale to classify full province strips directly.</span></div>
+      </div>
+
+      <div class="card">
+        <div class="num bad">5</div>
+        <div class="prob"><span class="th">ยุคที่ 5 · การเดาคำ</span><span class="en">Era 5 · Hallucination</span></div>
+        <h3><span class="th">Blind CTC Insertion เติมตัวอักษรผี</span><span class="en">Blind CTC insertion creating phantom characters</span></h3>
+        <p><span class="th">เมื่อกล่องตัวอักษรหายไป ระบบพยายามให้ CTC แทรกตัวอักษรเข้ามา หัวน็อตจึงถูกอ่านเป็นเลข <span class="mono">กย 588</span> → <span class="mono">5กย 4588</span></span>
+           <span class="en">When boxes were dropped, CTC blindly inserted characters. Bolts were misread as numbers: <span class="mono">กย 588</span> became <span class="mono">5กย 4588</span>.</span></p>
+        <div class="fix"><strong><span class="th">แก้:</span><span class="en">Fix:</span></strong>
+          <span class="th">เพิ่ม <strong>DLT Syntax Placement Guard</strong> บังคับไวยากรณ์ป้ายทะเบียนไทย ห้ามพยัญชนะอยู่หลังตัวเลข 2 หลัก และห้ามรูปแบบผิดกฎหมาย</span>
+          <span class="en">Implemented <strong>DLT Syntax Placement Guard</strong> strictly enforcing Thai license syntax rules and rejecting invalid consonant patterns.</span></div>
+      </div>
+
+      <div class="card">
+        <div class="num bad">6</div>
+        <div class="prob"><span class="th">ยุคที่ 6 · การซ้อนทับ</span><span class="en">Era 6 · Box Merging</span></div>
+        <h3><span class="th">Merged Box กลืนตัวอักษรที่ชิดกัน</span><span class="en">Merged boxes swallowing adjacent characters</span></h3>
+        <p><span class="th">ตัวอักษรที่ชิดกัน (เช่น <span class="mono">97</span>) ถูก Detector ตรวจเป็นกล่องกว้าง 1 กล่อง แล้ว NMS กลืนกล่องเดี่ยว 2 ตัวข้างในทิ้ง</span>
+           <span class="en">Closely spaced glyphs (e.g. <span class="mono">97</span>) were grouped as one wide box, and standard NMS eliminated the two child boxes inside.</span></p>
+        <div class="fix"><strong><span class="th">แก้:</span><span class="en">Fix:</span></strong>
+          <span class="th"><strong>Subsumed Composite Box Filter:</strong> ตรวจสอบกล่องที่กว้างเกินปกติและครอบกล่องย่อยไว้ ให้ทิ้งกล่องรวมใหญ่เพื่อรักษาตัวอักษรเดี่ยวทั้งคู่</span>
+          <span class="en"><strong>Subsumed Composite Box Filter:</strong> detects oversized parent boxes containing child boxes, stripping the composite box to save both characters.</span></div>
+      </div>
+
+      <div class="card">
+        <div class="num bad">7</div>
+        <div class="prob"><span class="th">ยุคที่ 7 · สัญญาณข้อมูล</span><span class="en">Era 7 · Contract Mismatch</span></div>
+        <h3><span class="th">Train/Serve Crop Geometry Mismatch</span><span class="en">Train vs Serve Crop Geometry Mismatch</span></h3>
+        <p><span class="th">ชุดข้อมูลเทรนเดิมถูกตีกรอบด้วยมือบน Roboflow แต่ระบบ Serve ครอปด้วยสัดส่วนเฉพาะ ทำให้รูปทรงของอักขระบิดเบี้ยวจากที่โมเดลเคยเห็น</span>
+           <span class="en">Original training crops were hand-drawn on Roboflow, while production serving used algorithmic crops, breaking the geometric contract.</span></p>
+        <div class="fix"><strong><span class="th">แก้:</span><span class="en">Fix:</span></strong>
+          <span class="th"><strong>V2 Pipeline:</strong> สกัด crop ข้อมูลเทรนด้วย <em>โค้ดเดียวกันกับที่ Serve ใช้</em> 100% พร้อมจัดกลุ่มภาพป้องกัน Data Leakage ข้าม Split</span>
+          <span class="en"><strong>V2 Pipeline:</strong> extracted training crops using the <em>exact same serving code</em> and enforced source-image grouped splits to prevent leakage.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ CH3: WHY MULTI-STAGE ============ -->
+  <section id="ch3">
+    <div class="kicker"><span class="th">บทที่ 3</span><span class="en">Chapter 3</span></div>
+    <h2><span class="th">ทำไมต้องเป็นวิธีนี้ — Multi-Stage ดีกว่า End-to-End อย่างไร</span><span class="en">Why this approach — why Multi-Stage beats End-to-End</span></h2>
+    <p class="lead">
+      <span class="th">ในงานประมวลผลภาษาและภาพ มีแนวคิดหลัก 3 แบบ ซึ่งเราทดสอบและเปรียบเทียบข้อดีข้อเสียอย่างละเอียด:</span>
+      <span class="en">There are 3 competing paradigms for OCR and LPR. We weighed each one against our real-world constraints:</span>
+    </p>
+
+    <div class="cards two">
+      <div class="card">
+        <h3><span class="th">End-to-End Large OCR (Transformer / Vision-LLM)</span><span class="en">End-to-End Large OCR (Transformer / VLM)</span></h3>
+        <p><span class="th">รับภาพแผ่นป้ายแล้วทำนายข้อความออกมาเป็น Sequence ทันที ดูสวยงามและโค้ดน้อย</span>
+           <span class="en">Directly outputs sequence text from raw plate images. Elegant on paper with fewer code lines.</span></p>
+        <div class="fix">
+          <span class="th">❌ <strong>ข้อเสียร้ายแรง:</strong> ใช้เวลาอินเฟอเรนซ์บน CPU สูงเกินงบ (~150–350 ms), ต้องการ GPU, และมีโอกาส <strong>Hallucinate เดาตัวอักษรที่ไม่มีอยู่จริง</strong> เมื่อป้ายมีเงาหรือรอยสกรู</span>
+          <span class="en">❌ <strong>Fatal flaws:</strong> Exceeds latency budgets on CPU (~150–350 ms), requires GPU, and suffers from <strong>hallucination</strong> when encountering shadows or bolt marks.</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3><span class="th">Single-Stage Rotated Detector (OBB YOLO)</span><span class="en">Single-Stage Rotated Detector (OBB YOLO)</span></h3>
+        <p><span class="th">ตรวจจับแผ่นป้ายและมุมหมุนในโมเดลเดียว หวังจะจบขั้นตอนการ Rectify ในขั้นตอนเดียว</span>
+           <span class="en">Detects plates and rotation angles simultaneously in one model to eliminate multi-step rectification.</span></p>
+        <div class="fix">
+          <span class="th">❌ <strong>ข้อเสียร้ายแรง:</strong> ติด Custom C++ Op (Rotated NMS) ไม่สามารถรันบน ONNX Runtime มาตรฐานของ C# .NET ได้ และติดปัญหาลิขสิทธิ์ AGPL</span>
+          <span class="en">❌ <strong>Fatal flaws:</strong> Requires custom C++ ops (Rotated NMS), completely breaking vanilla ONNX Runtime on C# .NET, plus AGPL license restrictions.</span>
+        </div>
+      </div>
+
+      <div class="card good">
+        <h3><span class="th">Multi-Stage Pipeline + Closed-set Classifier (แนวทางของเรา)</span><span class="en">Multi-Stage Pipeline + Closed-set Classifier (Our Approach)</span></h3>
+        <p><span class="th">แบ่งหน้าที่เป็นขั้นตอนย่อย: หาป้าย → ปรับมุมมอง 4 จุด → แยกโซนบรรทัด → ตรวจกล่องตัวอักษร → จัดประเภทแบบ Closed-set (50 คลาสตัวอักษร, 77 คลาสจังหวัด)</span>
+           <span class="en">Deconstructs into explicit stages: Detect plate → 4-point Rectify → Segment zones → Detect char boxes → Closed-set Classification (50 chars, 77 provinces).</span></p>
+        <div class="fix">
+          <span class="th">✅ <strong>ข้อดีเหนือกว่า:</strong> ความเร็วอินเฟอเรนซ์บน CPU เพียง <strong>~75–95 ms</strong>, แต่ละตัวอักษรใช้เวลาจำแนก &lt;0.5 ms, ควบคุมเรขาคณิตได้ 100%, และ <strong>ไม่มีการเดาตัวอักษรผี</strong></span>
+          <span class="en">✅ <strong>Definitive benefits:</strong> Blazing ~75–95 ms CPU latency, &lt;0.5 ms per char classification, total geometric control, and <strong>zero hallucination</strong>.</span>
+        </div>
+      </div>
+
+      <div class="card good">
+        <h3><span class="th">ความสามารถในการตรวจสอบ (Debuggability)</span><span class="en">Full Pipeline Debuggability</span></h3>
+        <p><span class="th">เมื่อระบบอ่านผิดพลาดในภาพหน้างานจริง เราสามารถตรวจสอบภาพครอปในแต่ละ Stage ได้ทันทีว่าผิดพลาดที่จุดใด (มุมป้ายเพี้ยน, กล่องอักษรหลุด, หรือโมเดลจำแนกผิด) แตกต่างจาก End-to-End Black Box ที่ไม่สามารถระบุสาเหตุได้</span>
+           <span class="en">When a field image fails, we inspect intermediate crops at each stage (perspective, box recall, or classifier logits), unlike opaque end-to-end black boxes.</span></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ CH4: WHY LIBRARIES ============ -->
+  <section id="ch4" class="alt">
+    <div class="kicker"><span class="th">บทที่ 4</span><span class="en">Chapter 4</span></div>
+    <h2><span class="th">ทำไมเลือกโมเดลและไลบรารีเหล่านี้</span><span class="en">Why we chose these models and tools</span></h2>
+    <p><span class="th">ทุกชิ้นส่วนถูกเลือกจากข้อจำกัดจริง — ตารางนี้เปรียบเทียบกับทางเลือกที่ถูกคัดออก:</span>
+       <span class="en">Every component was chosen against real operational trade-offs — here is the comparison against rejected alternatives:</span></p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th><span class="th">หน้าที่</span><span class="en">Role</span></th>
+            <th><span class="th">โมเดล / ไลบรารีที่เลือก</span><span class="en">Selected Model / Tool</span></th>
+            <th><span class="th">ทางเลือกที่คัดออก</span><span class="en">Rejected Alternatives</span></th>
+            <th><span class="th">เหตุผลทางวิศวกรรม</span><span class="en">Engineering Rationale</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="th">ตรวจจับแผ่นป้าย (Stage 1)</span><span class="en">Plate Detection (Stage 1)</span></td>
+            <td><strong>PicoDet-S / D-FINE Nano</strong><br><small class="mono">Apache-2.0 / MIT</small></td>
+            <td>YOLOv8 / YOLOv11 (AGPL-3.0)</td>
+            <td><span class="th">อินเฟอเรนซ์บน CPU เพียง ~6.5 ms, ขนาดโมเดล 3.8 MB, ปราศจากข้อผูกมัด AGPL</span>
+                <span class="en">~6.5 ms inference on CPU, 3.8 MB model size, completely free from AGPL copyleft risks.</span></td>
+          </tr>
+          <tr>
+            <td><span class="th">ปรับมุมมอง 4 จุด (Stage 1.1)</span><span class="en">Corner Rectification (Stage 1.1)</span></td>
+            <td><strong>MobileNetV3-Small (8-pt)</strong><br><small class="mono">Apache-2.0 + OpenCV</small></td>
+            <td>Rotated Bounding Box (OBB)</td>
+            <td><span class="th">ทายพิกัดมุม 4 จุด (8 ค่า) ส่งให้ cv2.warpPerspective คลี่ภาพป้าย 320×160 px ไร้ Custom C++ Op รันบน C# ได้ 100%</span>
+                <span class="en">Predicts 4 corner points (8 scalars) fed into cv2.warpPerspective (320×160). Zero custom C++ ops.</span></td>
+          </tr>
+          <tr>
+            <td><span class="th">แยกกล่องตัวอักษร (Stage 3A)</span><span class="en">Char Box Detection (Stage 3A)</span></td>
+            <td><strong>D-FINE Small v2</strong><br><small class="mono">MIT (DETR-based)</small></td>
+            <td>PicoDet-S (Anchor-free)</td>
+            <td><span class="th"><strong>Recall สูงถึง 99.4%</strong> ดึงขอบกล่องระดับ Sub-pixel กล่องตัวอักษรไม่หลุดหาย ส่วนกล่องซ้ำลบออกด้วย Greedy NMS ใน &lt;1 ms</span>
+                <span class="en"><strong>Recall reaches 99.4%</strong> via Sub-pixel FDR. No dropped letters; duplicates stripped cleanly by Greedy NMS in &lt;1 ms.</span></td>
+          </tr>
+          <tr>
+            <td><span class="th">จำแนกตัวอักษร (Stage 3A)</span><span class="en">Char Classifier (Stage 3A)</span></td>
+            <td><strong>MobileNetV2 (50 Cls)</strong><br><small class="mono">BSD-3 (Closed-set 64×64)</small></td>
+            <td>Sequence OCR (CTC/TrOCR)</td>
+            <td><span class="th">Top-1 Accuracy 99.86% ใช้เวลาเพียง ~0.5 ms ต่อตัว ไร้ปัญหา Hallucination เดาตัวอักษร</span>
+                <span class="en">Top-1 Accuracy 99.86%, &lt;0.5 ms per glyph. Completely eliminates sequence hallucination.</span></td>
+          </tr>
+          <tr>
+            <td><span class="th">จำแนกจังหวัด (Stage 3B)</span><span class="en">Province Classifier (Stage 3B)</span></td>
+            <td><strong>ResNet18 Grayscale (77 Cls)</strong><br><small class="mono">BSD-3 (256×80 px)</small></td>
+            <td>DLT Banner Code / OCR</td>
+            <td><span class="th">Residual connections จับรูปร่างคำทั้งแถบ ตัดปัญหาสีป้ายทะเบียนหลอกตาด้วย Grayscale</span>
+                <span class="en">Residual blocks capture word-level topology across 256×80 px, color-invariant via Grayscale.</span></td>
+          </tr>
+          <tr>
+            <td><span class="th">สภาพแวดล้อม Deploy</span><span class="en">Deployment Stack</span></td>
+            <td><strong>ONNX Opset 18 + FastAPI</strong><br><small class="mono">Cloud Run / Edge C#</small></td>
+            <td>Heavy GPU Triton Server</td>
+            <td><span class="th">Serverless บน Cloud Run ปรับลดต้นทุนเมื่อไม่มีทราฟฟิก และพอร์ตเข้า C# .NET บนเครื่องลูกค้าได้โดยตรง</span>
+                <span class="en">Serverless auto-scaling on Cloud Run with zero idle costs, easily embeddable into .NET on customer edge.</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ CH5: ARCHITECTURE ============ -->
+  <section id="ch5">
+    <div class="kicker"><span class="th">บทที่ 5</span><span class="en">Chapter 5</span></div>
+    <h2><span class="th">สถาปัตยกรรมระบบ ใน 1 ภาพ</span><span class="en">The system architecture in one picture</span></h2>
+    <p><span class="th">การไหลของข้อมูลจากภาพมุมกล้องจริง สู่ผลลัพธ์ข้อความทะเบียนและชื่อจังหวัดที่ตรวจสอบแล้ว:</span>
+       <span class="en">The end-to-end data flow from real-world camera feeds to verified plate string and province:</span></p>
+
+    <div class="diagram">
+      <div class="d-row">
+        <span class="d-node">RTSP Stream <small>กล้อง CCTV ด่านตรวจ</small></span>
+        <span class="d-node">Image File / Web <small>API HTTP POST</small></span>
+        <span class="d-node">C# .NET Host <small>Desktop Client</small></span>
+      </div>
+      <div class="d-arrow">↓</div>
+      <div class="d-node accent">Stage 1 · Macro Detection <small>PicoDet-S / D-FINE Nano (AABB + 12% margin) ~6.5 ms</small></div>
+      <div class="d-arrow">↓</div>
+      <div class="d-node accent">Stage 1.1 · Corner Regressor <small>MobileNetV3-Small (ทำนาย 4 มุม = 8 พิกัด) ~3.2 ms</small></div>
+      <div class="d-arrow">↓</div>
+      <div class="d-node good">OpenCV Pure Math <small>cv2.warpPerspective → แผ่นป้ายตรงมาตรฐาน 320×160 px (&lt;0.05 ms)</small></div>
+      <div class="d-arrow">↓</div>
+      <div class="d-steps">
+        <span class="d-step">Stage 1.5: Country Cls (ไทย vs ลาว)</span><span class="d-plus">→</span>
+        <span class="d-step">Stage 2: Component Detector (แยกโซนตัวอักษร และโซนจังหวัด)</span>
+      </div>
+      <div class="d-arrow">↓</div>
+      <div class="d-row">
+        <div class="d-node primary" style="max-width:320px">
+          โซนบน: ตัวอักษรและตัวเลข
+          <small>D-FINE Small v2 (Char boxes, Recall 99.4%)<br>+ MobileNetV2 (50-Class Cls, 64×64)</small>
+        </div>
+        <div class="d-node primary" style="max-width:320px">
+          โซนล่าง: ชื่อจังหวัด
+          <small>ResNet18 Grayscale (77-Class Province Cls, 256×80 px)</small>
+        </div>
+      </div>
+      <div class="d-arrow">↓</div>
+      <div class="d-node good">
+        DLT Syntax Guard &amp; Composite Fusion
+        <small>กรองกล่องซ้อน · เช็คไวยากรณ์ป้ายทะเบียนไทย · ตรวจสอบคู่สับสน (ข/ช, บ/ป)</small>
+      </div>
+      <div class="d-arrow">↓</div>
+      <div class="d-node accent">ผลลัพธ์ JSON สมบูรณ์ <small>plate_text: "2ขข 1234", province: "กรุงเทพมหานคร", confidence, execution_time: 78 ms</small></div>
+      <div class="d-side">
+        <span class="th">ระบบเสริม: Cloud Firestore (ประวัติการผ่านทาง) · BigQuery (วิเคราะห์สถิติจราจร) · Web Debug Dashboard รายสเตจ</span>
+        <span class="en">Support Systems: Cloud Firestore (passage history) · BigQuery (traffic analytics) · Multi-stage Web Debug Dashboard</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ CH6: TECH STACK ============ -->
+  <section id="ch6" class="alt">
+    <div class="kicker"><span class="th">บทที่ 6</span><span class="en">Chapter 6</span></div>
+    <h2><span class="th">Tech Stack &amp; สถานะลิขสิทธิ์</span><span class="en">Tech Stack &amp; Licensing</span></h2>
+    <p><span class="th">แบ่งเป็น 4 ชั้นหลัก ปลอดภัยสำหรับใช้ในงาน Commercial 100%:</span>
+       <span class="en">Divided into 4 primary layers, completely safe for commercial deployments:</span></p>
+
+    <div class="cards two">
+      <div class="card">
+        <h3><span class="th">AI &amp; Computer Vision Core</span><span class="en">AI &amp; Computer Vision Core</span></h3>
+        <ul class="clean" style="margin-bottom:0">
+          <li><strong>PyTorch &amp; TorchVision</strong> (BSD-3) — <span class="th">พัฒนาและฝึกสอนโครงข่ายประสาทเทียม</span><span class="en">model training &amp; neural network definitions</span></li>
+          <li><strong>LibreYOLO &amp; D-FINE</strong> (MIT / Apache-2.0) — <span class="th">สถาปัตยกรรม Object Detection แบบไร้ค่าลิขสิทธิ์</span><span class="en">royalty-free object detection architectures</span></li>
+          <li><strong>OpenCV (opencv-python-headless)</strong> (Apache-2.0) — <span class="th">Perspective homography, CLAHE, Ambient padding</span><span class="en">perspective homography, CLAHE, ambient padding</span></li>
+          <li><strong>ONNX &amp; ONNX Runtime</strong> (MIT) — <span class="th">อินเฟอเรนซ์ความเร็วสูง รองรับทั้ง Python และ C# .NET</span><span class="en">high-performance inference for Python and C# .NET</span></li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h3><span class="th">Backend &amp; API Service</span><span class="en">Backend &amp; API Service</span></h3>
+        <ul class="clean" style="margin-bottom:0">
+          <li><strong>FastAPI &amp; Uvicorn</strong> (BSD-3) — <span class="th">REST API แบบ Asynchronous ประสิทธิภาพสูง</span><span class="en">asynchronous, high-performance REST API</span></li>
+          <li><strong>Pydantic v2</strong> (MIT) — <span class="th">การตรวจสอบ Schema ของ Request / Response</span><span class="en">data schema validation</span></li>
+          <li><strong>Pillow (PIL)</strong> (HPND) — <span class="th">การจัดการและปรับขนาดภาพแบบ Cubic/Lanczos</span><span class="en">image scaling and canvas manipulation</span></li>
+          <li><strong>NumPy</strong> (BSD-3) — <span class="th">การคำนวณเมทริกซ์และ NMS แบบเวกเตอร์</span><span class="en">matrix math and vectorized greedy NMS</span></li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h3><span class="th">Client Integration</span><span class="en">Client Integration</span></h3>
+        <ul class="clean" style="margin-bottom:0">
+          <li><strong>C# (.NET 8)</strong> (MIT) — <span class="th">ซอฟต์แวร์ฝั่งไคลเอนต์ของลูกค้า</span><span class="en">client enterprise host application</span></li>
+          <li><strong>Microsoft.ML.OnnxRuntime</strong> (MIT) — <span class="th">รันโมเดล ONNX บน C# โดยไม่ต้องติดตั้ง Python</span><span class="en">embeds ONNX directly into C# without Python</span></li>
+          <li><strong>OpenCvSharp4</strong> (Apache-2.0) — <span class="th">การประมวลผลภาพบนแพลตฟอร์ม .NET</span><span class="en">OpenCV image processing wrappers for .NET</span></li>
+          <li><strong>Web Debug UI</strong> (Vanilla JS) — <span class="th">แดชบอร์ดตรวจสอบภาพครอปรายสเตจ</span><span class="en">multi-stage inspection web dashboard</span></li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h3><span class="th">Cloud Infrastructure</span><span class="en">Cloud Infrastructure</span></h3>
+        <ul class="clean" style="margin-bottom:0">
+          <li><strong>Google Cloud Run</strong> — <span class="th">Serverless container deployment (Auto-scale 0 ถึง N)</span><span class="en">serverless container deployment (auto-scaling)</span></li>
+          <li><strong>Cloud Firestore</strong> — <span class="th">จัดเก็บประวัติการอ่านป้ายทะเบียนแบบ Real-time</span><span class="en">real-time license plate passage database</span></li>
+          <li><strong>Google BigQuery</strong> — <span class="th">คลังข้อมูลสำหรับวิเคราะห์สถิติจราจรรายเดือน</span><span class="en">data warehouse for monthly traffic analytics</span></li>
+          <li><strong>Docker &amp; Cloud Build</strong> — <span class="th">ระบบสร้าง Container Image และ Continuous Delivery</span><span class="en">automated container builds and CI/CD</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ CH7: WORKFLOW ============ -->
+  <section id="ch7">
+    <div class="kicker"><span class="th">บทที่ 7</span><span class="en">Chapter 7</span></div>
+    <h2><span class="th">Workflow การประมวลผล — จากภาพกล้องสู่ข้อความ</span><span class="en">Processing Workflow — from raw frame to text</span></h2>
+
+    <div class="steps">
+      <div class="step">
+        <h3><span class="th">1. ตรวจจับและขยายขอบเขตแผ่นป้าย (Macro Detection)</span><span class="en">1. Macro Plate Detection with Margin</span></h3>
+        <p><span class="th">PicoDet-S หรือ D-FINE Nano สแกนภาพขนาด 640×640 px หาแผ่นป้ายทะเบียน และทำการขยายกรอบสี่เหลี่ยมออก <strong>12% Margin</strong> รอบด้าน เพื่อให้แน่ใจว่ามุมของแผ่นป้ายจะไม่หลุดออกนอกกรอบภาพ</span>
+           <span class="en">PicoDet-S or D-FINE Nano detects plate bounds at 640×640 px with an added <strong>12% Margin</strong> to guarantee corner points never bleed outside crops.</span></p>
+      </div>
+
+      <div class="step">
+        <h3><span class="th">2. ทำนาย 4 จุดมุม และปรับภาพให้ตรง (Perspective Homography)</span><span class="en">2. 4-Corner Regression &amp; Homography Rectification</span></h3>
+        <p><span class="th">MobileNetV3 Regressor ทำนายพิกัดมุม 4 จุดของป้าย (8 ค่า) จากนั้นจัดเรียงมุมตามเข็มนาฬิกา (TL → TR → BR → BL) และใช้ <span class="mono">cv2.warpPerspective</span> คลี่ภาพป้ายเอียงให้กลับมาตรงเป๊ะที่ขนาด <strong>320×160 px</strong></span>
+           <span class="en">MobileNetV3 outputs 4 corner coordinates (8 scalars), sorts them clockwise (TL → TR → BR → BL), and executes <span class="mono">cv2.warpPerspective</span> to yield a flat <strong>320×160 px</strong> plate.</span></p>
+      </div>
+
+      <div class="step">
+        <h3><span class="th">3. แยกโซนตัวอักษรและจังหวัด (Component Segmentation)</span><span class="en">3. Tier Segmentation (Characters vs Province)</span></h3>
+        <p><span class="th">Model 2 (Component Detector) แบ่งแผ่นป้ายออกเป็น 2 โซนอย่างเด็ดขาด: โซนตัวอักษรด้านบน (ส่งต่อไปยัง Stage 3A) และแถบชื่อจังหวัดด้านล่าง (ส่งต่อไปยัง Stage 3B)</span>
+           <span class="en">Model 2 slices the plate into two distinct regions: character strip on top (to Stage 3A) and province strip at the bottom (to Stage 3B).</span></p>
+      </div>
+
+      <div class="step">
+        <h3><span class="th">4. ตรวจจับกล่องตัวอักษรระดับ Sub-pixel (Char Box Detection)</span><span class="en">4. Sub-pixel Character Box Detection</span></h3>
+        <p><span class="th">D-FINE Small v2 ตรวจจับตำแหน่งตัวอักษรแต่ละตัวบนภาพแถบตัวอักษร ได้ <strong>Recall สูงถึง 99.4%</strong> จากนั้นใช้ Greedy NMS ร่วมกับ Subsumed Composite Box Filter เพื่อตัดกล่องซ้อนและรักษาตัวอักษรที่ชิดกัน</span>
+           <span class="en">D-FINE Small v2 detects character boxes with <strong>99.4% Recall</strong>. Greedy NMS and Subsumed Composite Box Filter clean duplicates while saving adjacent letters.</span></p>
+      </div>
+
+      <div class="step">
+        <h3><span class="th">5. จำแนกตัวอักษรและชื่อจังหวัดแบบ Closed-set</span><span class="en">5. Closed-set Character &amp; Province Classification</span></h3>
+        <p><span class="th">ตัวอักษรแต่ละตัวถูก Pad เป็น 64×64 px และส่งเข้า MobileNetV2 (50 คลาส, ความแม่นยำ 99.86%) ส่วนแถบจังหวัดถูกปรับขนาดเป็น 256×80 px และส่งเข้า ResNet18 Grayscale (77 จังหวัด)</span>
+           <span class="en">Each letter is padded to 64×64 px for MobileNetV2 (50 classes, 99.86% acc). The province strip is formatted to 256×80 px for ResNet18 Grayscale (77 classes).</span></p>
+      </div>
+
+      <div class="step">
+        <h3><span class="th">6. ตรวจสอบกฎไวยากรณ์และส่งออกผลลัพธ์ (Syntax Guard &amp; Output)</span><span class="en">6. Syntax Rule Guard &amp; Output Formatting</span></h3>
+        <p><span class="th">ตรวจสอบลำดับตัวอักษรตามมาตรฐานกรมการขนส่งทางบก (DLT Rules) เพื่อป้องกันการสลับตำแหน่ง และคืนค่าผลลัพธ์ในรูปแบบ JSON สมบูรณ์พร้อมค่า Confidence ในเวลาไม่เกิน 95 ms</span>
+           <span class="en">Validates letter sequences against Thai DLT traffic laws, repairs minor boundary ambiguities, and serves complete JSON outputs within 95 ms.</span></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ CH8: OUTCOMES ============ -->
+  <section id="ch8" class="alt">
+    <div class="kicker"><span class="th">บทที่ 8</span><span class="en">Chapter 8</span></div>
+    <h2><span class="th">ผลลัพธ์ที่ได้ และบทเรียนเชิงวิศวกรรม</span><span class="en">Outcomes &amp; Engineering Lessons</span></h2>
+
+    <div class="grid4">
+      <div class="stat">
+        <div class="big">~75–95</div>
+        <div class="lbl"><span class="th">ms ต่อภาพ บน CPU</span><span class="en">ms per frame on CPU</span></div>
+        <div class="sub">End-to-End Latency</div>
+      </div>
+      <div class="stat">
+        <div class="big">99.4%</div>
+        <div class="lbl"><span class="th">Recall กล่องตัวอักษร (D-FINE)</span><span class="en">Char Box Recall (D-FINE)</span></div>
+        <div class="sub">651 / 655 Boxes</div>
+      </div>
+      <div class="stat">
+        <div class="big">99.86%</div>
+        <div class="lbl"><span class="th">Top-1 Accuracy ตัวอักษร</span><span class="en">Char Top-1 Accuracy</span></div>
+        <div class="sub">50 Closed-set Classes</div>
+      </div>
+      <div class="stat">
+        <div class="big">100%</div>
+        <div class="lbl"><span class="th">Commercial Friendly</span><span class="en">Commercial Friendly</span></div>
+        <div class="sub">MIT / Apache / BSD</div>
+      </div>
+    </div>
+
+    <div class="cards two" style="margin-top:32px">
+      <div class="card">
+        <h3><span class="th">6 บทเรียนสำคัญที่ตกผลึกจากโครงการ</span><span class="en">6 Definitive Lessons from the Project</span></h3>
+        <ul class="clean" style="margin-bottom:0">
+          <li><span class="th"><strong>1. ข้อจำกัดการ Deploy เป็นผู้ตัดสินสถาปัตยกรรม:</strong> C#/.NET และงบ CPU ตัดโมเดลใหญ่ทิ้งตั้งแต่สัปดาห์แรก</span>
+              <span class="en"><strong>1. Deployment dictates architecture:</strong> C# .NET and CPU budgets eliminated complex models early.</span></li>
+          <li><span class="th"><strong>2. License เป็นข้อกำหนดทางวิศวกรรม:</strong> ตรวจสอบ License ตั้งแต่วันแรก เพื่อไม่ให้ต้องรื้อระบบภายหลัง</span>
+              <span class="en"><strong>2. Licensing is an engineering constraint:</strong> Check copyleft on day one to avoid full rewrites later.</span></li>
+          <li><span class="th"><strong>3. แบ่งงานให้ถูกสเตจดีกว่าขยายโมเดล:</strong> การเพิ่ม Stage แยกโซนแก้ปัญหาที่โมเดลยักษ์แก้ไม่ได้</span>
+              <span class="en"><strong>3. Explicit stages beat monolithic models:</strong> Tier splitting solved issues massive architectures couldn't.</span></li>
+          <li><span class="th"><strong>4. ระบบที่ต้องตอบเสมอ จะ Hallucinate:</strong> ต้องมี Syntax Guard และทางเลือกสำหรับกรณีอ่านไม่ได้</span>
+              <span class="en"><strong>4. Models forced to answer will hallucinate:</strong> Must enforce syntax rules and allow abstaining.</span></li>
+          <li><span class="th"><strong>5. Data-centric ชนะ Architecture-centric:</strong> การสร้าง Pipeline ข้อมูลที่ตรงกับ Serving ให้ผลลัพธ์สูงกว่าการจูนไฮเปอร์พารามิเตอร์</span>
+              <span class="en"><strong>5. Data-centric beats architecture-centric:</strong> Aligning train/serve crop geometry boosted accuracy instantly.</span></li>
+          <li><span class="th"><strong>6. ตัวเลขที่ซื่อสัตย์ มีค่ากว่าตัวเลขที่สวย:</strong> ระบุเงื่อนไขการวัดและ Resolution ให้ชัดเจน เพื่อให้ต่อยอดงานได้จริง</span>
+              <span class="en"><strong>6. Honest metrics beat vanity numbers:</strong> Always report test resolution and ground-truth origins.</span></li>
+        </ul>
+      </div>
+
+      <div class="card good">
+        <h3><span class="th">สิ่งที่ส่งมอบได้สมบูรณ์ในปัจจุบัน</span><span class="en">Production-Ready Deliverables</span></h3>
+        <ul class="clean" style="margin-bottom:0">
+          <li><span class="th">โมเดล ONNX (Opset 18) ครบทุก Stage พร้อมไฟล์ตัวอย่างการเชื่อมต่อกับภาษา C# (.NET)</span>
+              <span class="en">Full suite of ONNX (Opset 18) models with comprehensive C# (.NET) integration guides.</span></li>
+          <li><span class="th">FastAPI Microservice พร้อม Web Dashboard สำหรับตรวจสอบภาพครอปในแต่ละขั้นตอน</span>
+              <span class="en">FastAPI microservice featuring interactive multi-stage crop inspection dashboards.</span></li>
+          <li><span class="th">ชุด Pipeline สกัดข้อมูล V2 และระบบ Balancing ชุดข้อมูลที่สามารถตรวจสอบย้อนกลับได้</span>
+              <span class="en">V2 data extraction pipeline and verifiable dataset balancing scripts.</span></li>
+          <li><span class="th">สถาปัตยกรรมไร้รอยต่อ รองรับทั้งป้ายทะเบียนประเทศไทย และป้ายทะเบียนประเทศลาว</span>
+              <span class="en">Seamless multi-country support covering both Thai and Lao license plate structures.</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="callout" style="margin-top:32px">
+      <strong><span class="th">แผนพัฒนาต่อยอด (v6 Roadmap):</span><span class="en">Next Steps (v6 Roadmap):</span></strong>
+      <span class="th">เก็บข้อมูลภาพความละเอียดสูงจากหน้างานจริงเพิ่มเติมสำหรับ 36 จังหวัดที่มีตัวอย่างน้อย · เพิ่มคลาส <span class="mono">junk/background</span> ในโมเดลตัวอักษรเพื่อคัดกรองหัวน็อตและเศษขอบป้าย · ปรับปรุงโมเดลตัวอักษรเป็น Pure Model Pipeline โดยลดการพึ่งพาฮิวริสติกภายนอก</span>
+      <span class="en">Harvest full-resolution real-world crops for 36 underrepresented provinces · Introduce dedicated <span class="mono">junk/background</span> classes to naturally ignore bolts and edge artifacts · Further refine character detection into a pure model pipeline with zero external heuristics.</span>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <p>
+    <span class="th">Thai &amp; Lao LPR Engine — ระบบตรวจจับและอ่านป้ายทะเบียนรถยนต์ความเร็วสูงบน CPU<br>
+    พัฒนาด้วย PyTorch, ONNX Runtime, D-FINE, PicoDet, ResNet18 และ OpenCV · สัญญาอนุญาตเชิงพาณิชย์ 100%</span>
+    <span class="en">Thai &amp; Lao LPR Engine — Ultra-fast, CPU-optimized License Plate Recognition System<br>
+    Powered by PyTorch, ONNX Runtime, D-FINE, PicoDet, ResNet18 and OpenCV · 100% Commercial Friendly</span>
+  </p>
+</footer>
+
+<script>
+  const ROOT = document.documentElement;
+  const btnTH = document.getElementById('btn-th');
+  const btnEN = document.getElementById('btn-en');
+
+  function setLang(lang){
+    ROOT.setAttribute('data-lang', lang);
+    ROOT.setAttribute('lang', lang === 'en' ? 'en' : 'th');
+    btnTH.classList.toggle('active', lang === 'th');
+    btnEN.classList.toggle('active', lang === 'en');
+    try{ localStorage.setItem('lpr_pres_lang', lang); }catch(e){}
+  }
+
+  // restore saved preference
+  try{
+    const saved = localStorage.getItem('lpr_pres_lang');
+    if(saved === 'en' || saved === 'th'){ setLang(saved); }
+  }catch(e){}
+
+  // scroll progress bar
+  const bar = document.getElementById('progress');
+  window.addEventListener('scroll', function(){
+    const h = document.documentElement;
+    const max = h.scrollHeight - h.clientHeight;
+    bar.style.width = (max > 0 ? (h.scrollTop / max) * 100 : 0) + '%';
+  }, {passive:true});
+</script>
+</body>
+</html>

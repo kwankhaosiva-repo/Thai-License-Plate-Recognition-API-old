@@ -87,7 +87,33 @@ for label, size, expected in [("thai", (256, 80), (80, 256)), ("lao", (256, 64),
     check(f"{label} prov tensor == (3, {expected[0]}, 256)", tuple(tensor.shape) == (3, expected[0], 256),
           f"{tuple(tensor.shape)}")
 
-print("== 5. Normalize constants match training scripts ==")
+print("== 5. Province resize must LETTERBOX, never STRETCH (aspect guard) ==")
+# The province trainers (train_grayscale_province_thai.py / _lao.py) always
+# letterbox the crop into the tensor using the crop's own background tone and
+# have NO toggle, while serve resolves Config.ENABLE_AMBIENT_CORNER_PAD. A
+# square source crop makes the two branches differ enormously (glyph ~20 px wide
+# letterboxed vs ~85 px stretched), which the uniform-background checks above
+# cannot see — they passed even with the flag set to False.
+square = make_crop(60, 60, bg=200)                       # aspect 1.0 vs 256x80 = 3.2
+tf_default = GrayscaleSmartResize((256, 80))             # resolves the config flag
+tf_letterbox = GrayscaleSmartResize((256, 80), use_ambient_padding=True)
+tf_stretch = GrayscaleSmartResize((256, 80), use_ambient_padding=False)
+
+
+def glyph_width(img):
+    row = np.array(img)[40, :, 0]
+    dark = np.where(row < 100)[0]
+    return int(dark[-1] - dark[0]) if len(dark) else 0
+
+
+w_def, w_lb, w_st = glyph_width(tf_default(square)), glyph_width(tf_letterbox(square)), glyph_width(tf_stretch(square))
+check('stretch branch is the wrong geometry (sanity check)', w_st > 60,
+      'stretched glyph width ' + str(w_st) + ' px')
+check('default prov resize == LETTERBOX (Config.ENABLE_AMBIENT_CORNER_PAD must be True)',
+      w_def == w_lb and w_def < 40,
+      'default=' + str(w_def) + ' px, letterbox=' + str(w_lb) + ' px, stretch=' + str(w_st) + ' px')
+
+print("== 6. Normalize constants match training scripts ==")
 import inspect
 src = inspect.getsource(get_grayscale_prov_transforms)
 check("prov uses mean/std 0.5/0.25 (matches train_grayscale_province_*.py)", "0.5, 0.5, 0.5" in src and "0.25, 0.25, 0.25" in src)

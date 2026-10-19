@@ -313,8 +313,28 @@
     });
   }
 
+  // Apply saved theme immediately to prevent flash
+  const savedTheme = localStorage.getItem('lpr_theme') || 'dark';
+  document.documentElement.setAttribute('data-theme', savedTheme === 'light' ? 'light' : 'dark');
+
+  function initThemeToggle() {
+    const btn = document.getElementById('themeToggleBtn');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      const curr = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+      const next = curr === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      localStorage.setItem('lpr_theme', next);
+    });
+  }
+
   window.I18N = { t, apply, setLang, getLang, renderToggle };
-  document.addEventListener('DOMContentLoaded', () => { apply(); renderToggle(); initSidebarCollapse(); });
+  document.addEventListener('DOMContentLoaded', () => {
+    apply();
+    renderToggle();
+    initSidebarCollapse();
+    initThemeToggle();
+  });
 
   // Sidebar collapse/expand — persisted per browser, shared by both pages
   function initSidebarCollapse() {

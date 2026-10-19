@@ -50,11 +50,14 @@ CROP RULES (must stay identical to api_server.py)
       pad_x = min(14, max(6, int(bw*0.08))), pad_y = min(8, max(4, int(bh*0.10)))
       px1 = max(0, bx1-pad_x); px2 = min(rw, bx2+pad_x)
       py1 = max(0.46*rh, by1-pad_y); py2 = min(rh, by2+pad_y)
-  M2 char box      : api_server.py:1778-1794
+  M2 char box      : api_server.py:1957-1972
       accept if by1 < 0.65*rh
-      pad_cx = min(8, max(2, int(bw*0.03))), pad_cy = min(6, max(2, int(bh*0.04)))
+      pad_cx = min(10, max(3, int(bw*0.04))), pad_cy = min(10, max(3, int(bh*0.10)))
       cx1 = max(0.03*rw, bx1-pad_cx); cx2 = min(0.97*rw, bx2+pad_cx)
-      cy1 = max(0.02*rh, by1-pad_cy); cy2 = min(0.68*rh, by2+pad_cy)
+      cy1 = max(0.02*rh, by1-pad_cy); cy2 = min(0.76*rh, by2+pad_cy)
+      (margins widened from 0.03/0.04 + 0.68*rh because the M3A ground-truth boxes
+       span 8.4%-94.6% of the row height; the old rule clipped the bottom margin
+       on 16/30 measured crops. Synced 2026-10-02.)
   M3A char box     : api_server.py:1927-1949
       divide_boxes_by_scale -> charbox_greedy_nms(iou 0.35)
       -> split_wide_char_boxes -> drop bw<8 or bh<10
@@ -282,12 +285,12 @@ def m2_char_crop(plate: np.ndarray, box) -> np.ndarray | None:
     if by1 >= int(rh * 0.65):
         return None
     bw_char, bh_char = bx2 - bx1, by2 - by1
-    pad_cx = min(8, max(2, int(bw_char * 0.03)))
-    pad_cy = min(6, max(2, int(bh_char * 0.04)))
+    pad_cx = min(10, max(3, int(bw_char * 0.04)))
+    pad_cy = min(10, max(3, int(bh_char * 0.10)))
     cx1 = max(int(rw * 0.03), bx1 - pad_cx)
     cx2 = min(int(rw * 0.97), bx2 + pad_cx)
     cy1 = max(int(rh * 0.02), by1 - pad_cy)
-    cy2 = min(int(rh * 0.68), by2 + pad_cy)
+    cy2 = min(int(rh * 0.76), by2 + pad_cy)
     if cx2 <= cx1 or cy2 <= cy1:
         return None
     crop = plate[cy1:cy2, cx1:cx2]
@@ -567,7 +570,16 @@ def main():
     ap.add_argument("--conf-m3a", type=float, default=0.10,
                     help="keep low (NMS + exact GT count filter do the quality control)")
     ap.add_argument("--overwrite", action="store_true")
+    ap.add_argument("--charbox-dataset", default=None,
+                    help="Override the char-row source dataset (must be YOLO layout: "
+                         "<dir>/<split>/images + <dir>/<split>/labels). Use this when M3A "
+                         "is retrained on a different annotation set, so the harvested "
+                         "character crops come from the SAME boxes the new M3A learned.")
     args = ap.parse_args()
+
+    if args.charbox_dataset:
+        global CHARBOX_DS
+        CHARBOX_DS = Path(args.charbox_dataset)
 
     if OUT_DIR.exists() and args.overwrite:
         shutil.rmtree(OUT_DIR)

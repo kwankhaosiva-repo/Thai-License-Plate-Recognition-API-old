@@ -185,6 +185,43 @@ All Model 1 candidates have been trained and benchmarked on identical test sets 
 > `LPR_PRE_M2_ASPECT=1.3333`, `LPR_PRE_M3A_TENSOR=640` etc. Everything
 > downstream (serve pixels, imgsz, RF-DETR `predict(shape=...)`, box
 > rescaling) follows the resolved spec automatically.
+>
+> **Classifier-side padding (measured 2026-10-02):** the province / character
+> *classifiers* are **not** stretch models. `train_grayscale_province_*.py`
+> always letterboxes the crop into the tensor using the crop's own background
+> tone, and the harvest pad (`extract_recognition_crops_v2.pad_to_square`) keeps
+> characters square — so serve must keep `ENABLE_AMBIENT_CORNER_PAD = True`.
+> Setting it to `False` silently swaps letterbox for a pure stretch and cost
+> **5.8 points** of province accuracy (87.5% → 93.3% on 120 v5i valid images,
+> with 120/120 identical `plate_text`). Per-flag evidence + verdicts:
+> [`docs/PREPROCESS_FLAG_AUDIT.md`](docs/PREPROCESS_FLAG_AUDIT.md).
+>
+> **Box / crop geometry:** `plate_box` is frozen from Model 1 before the M3
+> stages — every `bx1..by2` inside the per-character loops is a local temporary,
+> so never report the plate box from those names. The character-zone crop must
+> also carry the M3A training margins (~8% above / ~5% below). Rationale,
+> measurements and the retrain guidance live in
+> [`docs/BOX_GEOMETRY_AUDIT.md`](docs/BOX_GEOMETRY_AUDIT.md).
+>
+> **The preprocessing standard (read before editing any trainer or
+> `src/preprocess.py`):** [`docs/PREPROCESSING_CONTRACT.md`](docs/PREPROCESSING_CONTRACT.md)
+> — three laws (EVAL == TRAIN / NO CRUTCH / GEOMETRY IS THE CONTRACT), the
+> per-stage contract table, and the full record for the `ENABLE_HOMOGRAPHY_DESKEW`
+> question. Enforced by `python src/test_preprocess_contract.py` (46 checks).
+>
+> **Plate rectification is a contract, not a switch.** The plate crop *is* the
+> perspective-rectified 320×160 quad; there is no "raw" alternative. The
+> separate ±8° residual rotation search (`fine_deskew_plate`) used to be bundled
+> under the same flag and looked load-bearing — measured, it never rotates a plate
+> by more than **2.75°**, buys **≤1 image in 120**, and injects a per-image angle
+> the training crops never contained. It is now `ENABLE_RESIDUAL_DESKEW`, default
+> **`False`**; rotation tolerance lives in train augmentation instead.
+>
+> **The detectors were trained with no augmentation at all** (`degrees=0`,
+> `translate=0`, `mosaic_prob=0`, `hsv_prob=0` — LibreYOLO defaults). That gap is
+> the real cause behind the 3× LANCZOS4 upscale before M1, the CLAHE recovery path
+> and the residual deskew. The dataset audit and the exact retrain commands that
+> close it are in [`docs/RETRAIN_V6.md`](docs/RETRAIN_V6.md).
 
 ---
 
