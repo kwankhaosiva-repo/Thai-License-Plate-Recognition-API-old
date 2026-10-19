@@ -43,6 +43,45 @@ VARIANTS = {
 
 PLATE_DATA_YAML = PROJECT_ROOT / "datasets" / "Thai" / "LPR_2_BBox" / "data.yaml"
 
+# ---------------------------------------------------------------------------
+# AUGMENTATION PRESETS
+# ---------------------------------------------------------------------------
+# WHY THIS BLOCK EXISTS (docs/PREPROCESSING_CONTRACT.md, Law 2 + Law 3)
+#
+# LibreYOLO ships every geometric and photometric augmentation DISABLED:
+#     degrees=0  translate=0  shear=0  perspective=0  flipud=0
+#     mosaic_prob=0  hsv_prob=0  mixup=0
+# so every model in this repo was fine-tuned with horizontal flip as its ONLY
+# augmentation. Three serve-side "fixes" are the direct consequence:
+#
+#   * 3x LANCZOS4 upscale before M1  -> the detector never saw a small plate
+#   * fine_deskew_plate() +/-8 deg    -> the detector never saw a rotated plate
+#   * CLAHE on the M1 recovery path  -> the detector never saw a low-contrast plate
+#
+# All three are preprocessing crutches masking an augmentation gap. Fix the
+# cause (train with geometry+photometry) and the crutch becomes removable.
+# `none` is kept as the CONTROL arm so the effect can be measured, not assumed.
+AUG_PRESETS = {
+    # LibreYOLO defaults == every model currently in weights/ (the control arm).
+    "none": {},
+
+    # The prescribed retrain preset. Each value is justified by a measurement:
+    "plate": {
+        "degrees": 6.0,        # measured fine_deskew residual: median 1.25, max 2.75 deg.
+                               # 6 deg covers it 2x, for every detector that sees a plate.
+        "translate": 0.10,     # M1 boxes sit at cy 0.74 +/- 0.1 in the scene; jitter the frame.
+        "shear": 2.0,
+        "perspective": 0.0005, # small, so the detector tolerates viewing angle without
+                               # learning a geometry serve never produces (warp does it).
+        "mosaic_prob": 0.5,    # the SCALE-DEGRADATION arm: replaces the 3x LANCZOS4 upscale.
+        "mosaic_scale": (0.3, 1.5),
+        "hsv_prob": 0.5,       # the CONTRAST arm: replaces the CLAHE recovery path.
+        "flipud": 0.0,         # plates are never upside down; do not teach it.
+        "mixup": 0.0,          # mixing two plates invents a layout that never occurs.
+        "no_aug_epochs": 10,   # close augmentation for the last 10 epochs (fine-tune phase).
+    },
+}
+
 TASKS = {
     "plate": {
         "artifact": "plate_detector",
@@ -99,6 +138,35 @@ def ensure_clean_yaml(task):
     return yaml_path
 
 
+def _resolve_data_override(task, data):
+    """Accept a dataset DIRECTORY or a data.yaml PATH, and return the yaml path.
+
+    Needed because the M2 retrain uses a different dataset dir
+    (datasets/Thai/LPR2_ServeFrame.yolov11) than TASKS["components"]["dataset_dir"].
+    """
+    p = Path(data)
+    if p.suffix in (".yaml", ".yml"):
+        if not p.exists():
+            raise FileNotFoundError(f"data yaml not found: {p}")
+        return p
+    if not p.is_dir():
+        raise FileNotFoundError(f"dataset dir not found: {p}")
+    cfg = TASKS[task]
+    for name in ("data.yaml", "dfine_data.yaml"):
+        if (p / name).exists():
+            return p / name
+    yaml_path = p / ("data.yaml" if cfg["yaml_name"] == "data.yaml" else "dfine_data.yaml")
+    yaml_path.write_text(yaml.dump({
+        "train": str((p / "train" / "images").resolve()),
+        "val":   str((p / "valid" / "images").resolve()),
+        "test":  str((p / "test" / "images").resolve()),
+        "nc":    cfg["nc"],
+        "names": cfg["names"],
+    }, sort_keys=False), encoding="utf-8")
+    print(f"   wrote dataset yaml -> {yaml_path}")
+    return yaml_path
+
+
 def target_paths(task, variant, tag=""):
     """Deterministic output paths for a (task, variant, tag) combination."""
     cfg = TASKS[task]
@@ -111,13 +179,30 @@ def target_paths(task, variant, tag=""):
     }
 
 
+def _filter_supported(aug):
+    """Drop augmentation keys this LibreYOLO build's train() does not accept."""
+    try:
+        import dataclasses
+        from libreyolo.training.config import TrainConfig
+        ok = {f.name for f in dataclasses.fields(TrainConfig)}
+    except Exception:
+        return dict(aug)
+    dropped = sorted(set(aug) - ok)
+    if dropped:
+        print(f"⚠️  Unsupported aug keys ignored by this LibreYOLO build: {dropped}")
+    return {k: v for k, v in aug.items() if k in ok}
+
+
 def train_libreyolo_task(task, variant, epochs=30, batch=8, imgsz=None,
                          patience=12, device="mps", export_onnx=True, tag="",
-                         overwrite=False):
+                         overwrite=False, aug="none", data=None):
     """Train one (task, variant). Returns True if trained, False if skipped.
 
     Old weights are preserved: if the target .pt already exists and neither
     a tag nor overwrite=True was given, the task is SKIPPED with guidance.
+
+    aug  : key of AUG_PRESETS, or a dict of raw LibreYOLO augmentation kwargs.
+    data : optional dataset dir (or data.yaml path) overriding TASKS[task]["dataset_dir"].
     """
     if task not in TASKS:
         raise KeyError(f"Unknown task '{task}'. Valid: {list(TASKS.keys())}")
@@ -145,7 +230,11 @@ def train_libreyolo_task(task, variant, epochs=30, batch=8, imgsz=None,
 
     if task == "plate":
         ensure_plate_dataset()
-    data_yaml = ensure_clean_yaml(task)
+    if data:
+        data_yaml = _resolve_data_override(task, data)
+    else:
+        data_yaml = ensure_clean_yaml(task)
+    aug_kwargs = _filter_supported(AUG_PRESETS[aug] if isinstance(aug, str) else aug)
     run_dir = paths["run_dir"]
     run_dir.mkdir(parents=True, exist_ok=True)
     OUTPUT_WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -153,8 +242,9 @@ def train_libreyolo_task(task, variant, epochs=30, batch=8, imgsz=None,
     print("\n" + "=" * 70)
     print(f"🚀 LibreYOLO Training — {task} × {variant}" + (f" (tag: {tag})" if tag else ""))
     print(f"   Pretrained: {pretrained.name}")
-    print(f"   Dataset   : {TASKS[task]['dataset_dir'].name}")
+    print(f"   Dataset   : {Path(data_yaml).parent.name}")
     print(f"   Output    : {paths['pt'].name}")
+    print(f"   Augment   : {aug if isinstance(aug, str) else 'custom'} -> {aug_kwargs or 'none (LibreYOLO defaults)'}")
     print(f"   Epochs    : {epochs} | Batch: {batch} | Imgsz: {imgsz} | Patience: {patience}")
     print(f"   ⚠️ RESOLUTION CONTRACT: imgsz={imgsz} must stay the same at ONNX")
     print(f"      export AND inference (stretch resize, no letterbox/padding).")
@@ -172,6 +262,7 @@ def train_libreyolo_task(task, variant, epochs=30, batch=8, imgsz=None,
         project=str(run_dir.parent),
         name=run_dir.name,
         exist_ok=True,
+        **aug_kwargs,
     )
 
     best_pt = run_dir / "weights" / "best.pt"
@@ -223,3 +314,34 @@ def train_libreyolo_task(task, variant, epochs=30, batch=8, imgsz=None,
         pass
 
     return True
+
+
+if __name__ == "__main__":
+    import argparse
+
+    ap = argparse.ArgumentParser(
+        description="Train one (task, variant) with LibreYOLO and export ONNX.")
+    ap.add_argument("--task", required=True, choices=sorted(TASKS),
+                    help="plate | components | charbox | lao_plate")
+    ap.add_argument("--variant", required=True, choices=sorted(VARIANTS),
+                    help="picodet_s | picodet_m | dfine_nano | dfine_small")
+    ap.add_argument("--data", default=None,
+                    help="dataset dir or data.yaml override (default: the task's own dir)")
+    ap.add_argument("--aug", default="none", choices=sorted(AUG_PRESETS),
+                    help="'none' = LibreYOLO defaults (control arm); 'plate' = prescribed retrain aug")
+    ap.add_argument("--epochs", type=int, default=30)
+    ap.add_argument("--batch", type=int, default=8)
+    ap.add_argument("--imgsz", type=int, default=None,
+                    help="MUST match src/preprocess_registry.py and the ONNX export (see RESOLUTION CONTRACT)")
+    ap.add_argument("--patience", type=int, default=12)
+    ap.add_argument("--device", type=str, default="mps")
+    ap.add_argument("--tag", type=str, default="", help="output suffix, e.g. v6 -> <artifact>_<variant>_v6.pt")
+    ap.add_argument("--overwrite", action="store_true", help="replace an existing target .pt")
+    ap.add_argument("--no-onnx", dest="export_onnx", action="store_false", help="skip ONNX export")
+    a = ap.parse_args()
+
+    train_libreyolo_task(
+        task=a.task, variant=a.variant, epochs=a.epochs, batch=a.batch, imgsz=a.imgsz,
+        patience=a.patience, device=a.device, export_onnx=a.export_onnx, tag=a.tag,
+        overwrite=a.overwrite, aug=a.aug, data=a.data,
+    )

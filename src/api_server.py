@@ -622,6 +622,33 @@ def charbox_greedy_nms(raw_boxes, iou_thr=0.35):
     return kept
 
 
+def apply_residual_deskew(warped_plate):
+    """Post-warp residual rotation search — a HEURISTIC, off by default.
+
+    `warp_perspective_plate` already maps the ordered quad to an axis-aligned
+    320x160 rectangle, so perspective tilt is gone by construction.
+    `fine_deskew_plate` then runs a SECOND, independent search (±8°, 0.25°
+    steps, argmax of horizontal-projection variance) and rotates each plate by a
+    different, data-dependent angle. That is an OpenCV crutch, not a contract:
+    it existed because the corner regressor was undertrained, and it hid that.
+
+    Rotation tolerance belongs in TRAIN augmentation
+    (docs/PREPROCESSING_CONTRACT.md §3), where it costs one parameterised
+    transform instead of a per-image search at serve time.
+
+    Kept behind cfg.USE_RESIDUAL_DESKEW so the effect stays measurable; any
+    change here needs a recorded A/B (scratch/ab_flag_matrix.py mode
+    J_rectify_only vs A_current).
+    """
+    try:
+        if not cfg.USE_RESIDUAL_DESKEW:
+            return warped_plate
+        return fine_deskew_plate(warped_plate)
+    except Exception as e:
+        print(f"[Residual Deskew] Warning: {e}")
+        return warped_plate
+
+
 def has_invalid_thai_consonant_placement(text: str) -> bool:
     """
     Validates Thai license plate consonant syntax invariants.
@@ -1080,6 +1107,9 @@ class LPRPipelineService:
         print(f"╠{'═' * W}╣")
         print(f"║  Compute Device : {device_icon:<{W-21}}║")
         print(f"║  Debug Mode     : {debug_icon:<{W-21}}║")
+        pure_mode = cfg.PURE_MODEL_MODE
+        pure_str = "⚡ ON (Pure DL Models)" if pure_mode else "⚫ OFF (OpenCV Active)"
+        print(f"║  Pure Model Mode: {pure_str:<{W-21}}║")
         print(f"╠{'═' * W}╣")
         print(f"║  {'Model':<12}  {'File':<32}  {'Tag':<{W-50}}║")
         print(f"║  {sep}║")
@@ -1088,6 +1118,8 @@ class LPRPipelineService:
             tag_short   = tag[:W-50]
             print(f"║  {label:<12}  {fname_short:<32}  {tag_short:<{W-50}}║")
         print(f"╚{'═' * W}╝")
+        if pure_mode:
+            print("[Pure Model Mode Active] ⚡ OpenCV CLAHE, Ambient Padding, Homography Deskew & Stroke Heuristics DISABLED for pure benchmarking.")
         print()
 
     def __init__(self):
@@ -1193,8 +1225,18 @@ class LPRPipelineService:
         # geometries (Thai GrayscaleSmartResize(256,80) vs Lao (256,64)) but the
         # server previously shared ONE transform — mismatching whichever model
         # got the wrong size. Keep two transforms matched to each training script.
-        self.tf_prov_thai = get_grayscale_prov_transforms(is_train=False, size=(256, 80))
-        self.tf_prov_lao = get_grayscale_prov_transforms(is_train=False, size=(256, 64))
+        # Pinned to the trainer contract on purpose (use_ambient_padding=True,
+        # use_grayscale=True): train_grayscale_province_thai.py / _lao.py ALWAYS
+        # letterbox with the crop's own background tone and always convert to L.
+        # Leaving these as None makes the serve contract depend on the global
+        # Config.ENABLE_AMBIENT_CORNER_PAD / ENABLE_GRAYSCALE_PROV_NORM switches,
+        # which silently turns letterbox into a 1.33x STRETCH (measured: -5.8
+        # points of province accuracy). The classifier path must not be
+        # flippable by a preprocessing benchmark switch.
+        self.tf_prov_thai = get_grayscale_prov_transforms(
+            is_train=False, size=(256, 80), use_ambient_padding=True, use_grayscale=True)
+        self.tf_prov_lao = get_grayscale_prov_transforms(
+            is_train=False, size=(256, 64), use_ambient_padding=True, use_grayscale=True)
         self.tf_char = transforms.Compose([
             transforms.Resize((64, 64)),
             transforms.ToTensor(),
@@ -1462,6 +1504,9 @@ class LPRPipelineService:
         rh, rw = rectified_plate.shape[:2]
         # Top banner DLT code region: strictly the right portion next to 'THAILAND' (y in [0.03*rh, 0.25*rh], x in [0.68*rw, 0.95*rw])
         banner_crop = rectified_plate[int(rh * 0.03) : int(rh * 0.25), int(rw * 0.68) : int(rw * 0.95)]
+        if cfg.PURE_MODEL_MODE or not cfg.USE_STROKE_DISAMBIGUATION:
+            return None, None, 0.0, False
+
         if banner_crop.shape[0] < 6 or banner_crop.shape[1] < 12:
             return None, None, 0.0, False
 
@@ -1476,12 +1521,15 @@ class LPRPipelineService:
             ph, pw = patch.shape[:2]
             if ph < 4 or pw < 3:
                 return [(0, 0.0)]
-            smax = max(ph, pw)
-            corners = np.array([patch[0, 0], patch[0, -1], patch[-1, 0], patch[-1, -1]])
-            bg_col = np.median(corners, axis=0).astype(np.uint8)
-            padded = np.full((smax, smax, 3), bg_col, dtype=np.uint8)
-            padded[(smax - ph) // 2 : (smax - ph) // 2 + ph, (smax - pw) // 2 : (smax - pw) // 2 + pw] = patch
-            pil_d = Image.fromarray(cv2.cvtColor(padded, cv2.COLOR_BGR2RGB))
+            if cfg.USE_AMBIENT_PADDING:
+                smax = max(ph, pw)
+                corners = np.array([patch[0, 0], patch[0, -1], patch[-1, 0], patch[-1, -1]])
+                bg_col = np.median(corners, axis=0).astype(np.uint8)
+                padded = np.full((smax, smax, 3), bg_col, dtype=np.uint8)
+                padded[(smax - ph) // 2 : (smax - ph) // 2 + ph, (smax - pw) // 2 : (smax - pw) // 2 + pw] = patch
+                pil_d = Image.fromarray(cv2.cvtColor(padded, cv2.COLOR_BGR2RGB))
+            else:
+                pil_d = Image.fromarray(cv2.cvtColor(patch, cv2.COLOR_BGR2RGB))
             ts = self.tf_char(pil_d).unsqueeze(0).to(self.device)
             with torch.no_grad():
                 out = self.digit_classifier(ts)
@@ -1633,8 +1681,8 @@ class LPRPipelineService:
             except Exception:
                 pass
 
-        # Always attempt CLAHE luminance enhancement if raw image returned 0 plate candidates
-        if allow_recovery and len(res1.boxes) == 0:
+        # Always attempt CLAHE luminance enhancement if raw image returned 0 plate candidates (unless disabled for pure model mode)
+        if allow_recovery and len(res1.boxes) == 0 and cfg.USE_CLAHE:
             try:
                 lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
                 l, a, b = cv2.split(lab)
@@ -1764,52 +1812,56 @@ class LPRPipelineService:
             bw = bx2 - bx1
             bh = by2 - by1
 
-            # Standard & reliable workflow: crop the detected plate using polygon segmentation mask!
-            if res1.masks is not None and len(res1.masks) > best_idx:
-                poly = res1.masks.xy[best_idx].astype(np.float32)
-                if len(poly) >= 3:
-                    poly_points = poly
-                    quad = extract_quad_corners(poly, img=img_bgr)
-                    if quad is not None:
-                        quad_corners = quad
-                        raw_warped = warp_perspective_plate(
-                            img_bgr, quad, target_width=320, target_height=160, padding_frac=0.08
-                        )
-                        rectified_plate = fine_deskew_plate(raw_warped)
+            # Plate rectification — the crop DEFINITION (see config.ENABLE_HOMOGRAPHY_DESKEW).
+            # The ±8° residual rotation search is a SEPARATE, separately measured step
+            # (cfg.USE_RESIDUAL_DESKEW); the warp already removes perspective tilt.
+            if cfg.USE_HOMOGRAPHY_DESKEW:
+                # Standard & reliable workflow: crop the detected plate using polygon segmentation mask!
+                if res1.masks is not None and len(res1.masks) > best_idx:
+                    poly = res1.masks.xy[best_idx].astype(np.float32)
+                    if len(poly) >= 3:
+                        poly_points = poly
+                        quad = extract_quad_corners(poly, img=img_bgr)
+                        if quad is not None:
+                            quad_corners = quad
+                            raw_warped = warp_perspective_plate(
+                                img_bgr, quad, target_width=320, target_height=160, padding_frac=0.08
+                            )
+                            rectified_plate = apply_residual_deskew(raw_warped)
 
-            # If no polygon mask (e.g. RT-DETR bbox mode), predict exact 4-corner homography quad with plate_corner_model!
-            if (rectified_plate is None or quad_corners is None) and self.plate_corner_model is not None and bw >= 15 and bh >= 15:
-                try:
-                    pad_w = int(bw * 0.12)
-                    pad_h = int(bh * 0.12)
-                    c_x1 = max(0, bx1 - pad_w)
-                    c_y1 = max(0, by1 - pad_h)
-                    c_x2 = min(w_orig, bx2 + pad_w)
-                    c_y2 = min(h_orig, by2 + pad_h)
-                    crop_w = c_x2 - c_x1
-                    crop_h = c_y2 - c_y1
+                # If no polygon mask (e.g. RT-DETR bbox mode), predict exact 4-corner homography quad with plate_corner_model!
+                if (rectified_plate is None or quad_corners is None) and self.plate_corner_model is not None and bw >= 15 and bh >= 15:
+                    try:
+                        pad_w = int(bw * 0.12)
+                        pad_h = int(bh * 0.12)
+                        c_x1 = max(0, bx1 - pad_w)
+                        c_y1 = max(0, by1 - pad_h)
+                        c_x2 = min(w_orig, bx2 + pad_w)
+                        c_y2 = min(h_orig, by2 + pad_h)
+                        crop_w = c_x2 - c_x1
+                        crop_h = c_y2 - c_y1
 
-                    crop_bgr = img_bgr[c_y1:c_y2, c_x1:c_x2]
-                    if crop_bgr.size > 0:
-                        crop_resized = cv2.resize(crop_bgr, (224, 224), interpolation=cv2.INTER_LINEAR)
-                        crop_rgb = cv2.cvtColor(crop_resized, cv2.COLOR_BGR2RGB)
-                        ts_corner = self.tf_corner(crop_rgb).unsqueeze(0).to(self.device)
+                        crop_bgr = img_bgr[c_y1:c_y2, c_x1:c_x2]
+                        if crop_bgr.size > 0:
+                            crop_resized = cv2.resize(crop_bgr, (224, 224), interpolation=cv2.INTER_LINEAR)
+                            crop_rgb = cv2.cvtColor(crop_resized, cv2.COLOR_BGR2RGB)
+                            ts_corner = self.tf_corner(crop_rgb).unsqueeze(0).to(self.device)
 
-                        with torch.no_grad():
-                            norm_corners = self.plate_corner_model(ts_corner).squeeze(0).cpu().numpy().reshape(4, 2)
+                            with torch.no_grad():
+                                norm_corners = self.plate_corner_model(ts_corner).squeeze(0).cpu().numpy().reshape(4, 2)
 
-                        # Map predicted local crop corners [0, 1] back to full image pixel coordinates
-                        quad_corners = np.array([
-                            [c_x1 + cx * crop_w, c_y1 + cy * crop_h]
-                            for cx, cy in norm_corners
-                        ], dtype=np.float32)
+                            # Map predicted local crop corners [0, 1] back to full image pixel coordinates
+                            quad_corners = np.array([
+                                [c_x1 + cx * crop_w, c_y1 + cy * crop_h]
+                                for cx, cy in norm_corners
+                            ], dtype=np.float32)
 
-                        raw_warped = warp_perspective_plate(
-                            img_bgr, quad_corners, target_width=320, target_height=160, padding_frac=0.06
-                        )
-                        rectified_plate = fine_deskew_plate(raw_warped)
-                except Exception as e:
-                    print(f"[Model 1 Homography] Warning: {e}")
+                            raw_warped = warp_perspective_plate(
+                                img_bgr, quad_corners, target_width=320, target_height=160, padding_frac=0.06
+                            )
+                            rectified_plate = apply_residual_deskew(raw_warped)
+                    except Exception as e:
+                        print(f"[Model 1 Homography] Warning: {e}")
 
             # Fallback to bounding box crop if polygon/warp failed or produced invalid crop
             if rectified_plate is None or rectified_plate.size == 0 or rectified_plate.shape[0] < 10 or rectified_plate.shape[1] < 10:
@@ -1817,6 +1869,13 @@ class LPRPipelineService:
                 if raw_box.size > 0:
                     rectified_plate = cv2.resize(raw_box, (320, 160), interpolation=cv2.INTER_CUBIC)
                     raw_warped = rectified_plate.copy()
+
+        # Freeze the Model-1 plate box in SCENE coordinates. Everything below
+        # (M2/M3A per-character loops, fusion alignment, debug overlays) reuses
+        # `bx1..by2` as loop temporaries, so the reported `plate_box` must be
+        # read from these dedicated names — otherwise the API/UI receives the
+        # last character box in char-crop coordinates (a portrait "square").
+        m1_plate_box = (int(bx1), int(by1), int(bx2), int(by2))
 
         if rectified_plate is None or rectified_plate.size == 0:
             return {
@@ -1895,14 +1954,22 @@ class LPRPipelineService:
                             bw_char = bx2 - bx1
                             bh_char = by2 - by1
                             # Natural, tight padding: avoids capturing outer plate frame borders or province text
-                            pad_cx = min(8, max(2, int(bw_char * 0.03)))
-                            pad_cy = min(6, max(2, int(bh_char * 0.04)))
+                            pad_cx = min(10, max(3, int(bw_char * 0.04)))
+                            # MARGIN CONTRACT: the M3A char-box training set has its
+                            # glyph boxes spanning 8.4%..94.6% of the row height, i.e.
+                            # ~8% margin above and ~5% below every character. The old
+                            # formula (pad 2-6px + a hard clamp at 0.68*rh) left a
+                            # median of only 4px above / 2px below on real plates, and
+                            # 16/30 images had ZERO bottom margin — the lower vowels and
+                            # descenders were being cut off before M3A ever saw them.
+                            # Scale the pad with the box so the crop matches training.
+                            pad_cy = min(10, max(3, int(bh_char * 0.10)))
 
                             # Inset from outer plate frame borders to reject black frame strips
                             cx1 = max(int(rw * 0.03), bx1 - pad_cx)
                             cx2 = min(int(rw * 0.97), bx2 + pad_cx)
                             cy1 = max(int(rh * 0.02), by1 - pad_cy)
-                            cy2 = min(int(rh * 0.68), by2 + pad_cy)
+                            cy2 = min(int(rh * 0.76), by2 + pad_cy)
                             char_crop = rectified_plate[cy1:cy2, cx1:cx2]
                             # Use genuine raw detection box for overlay (never stretched visually):
                             char_box_coords = (bx1, by1, bx2, by2)
@@ -2039,19 +2106,25 @@ class LPRPipelineService:
                 raw_boxes = []
                 crop_w = char_crop.shape[1]
                 for b in box_res.boxes:
-                    bx1, by1, bx2, by2 = [int(v) for v in divide_boxes_by_scale(b.xyxy[0].cpu().numpy(), m3a_scale)[0]]
+                    # NOTE: use LOCAL names — these used to be `bx1, by1, bx2,
+                    # by2`, which clobbered the Model-1 plate box from the
+                    # enclosing scope. `plate_box` (and every consumer of it,
+                    # incl. the debug overlay + stream cache) ended up reporting
+                    # the LAST character box in char-crop coordinates, i.e. a
+                    # portrait "square" that has nothing to do with the plate.
+                    cbx1, cby1, cbx2, cby2 = [int(v) for v in divide_boxes_by_scale(b.xyxy[0].cpu().numpy(), m3a_scale)[0]]
                     bconf = float(b.conf[0])
-                    bw = bx2 - bx1
-                    bh = by2 - by1
+                    cbw = cbx2 - cbx1
+                    cbh = cby2 - cby1
                     # Filter out tiny slivers and edge border artifacts
-                    if bw < 8 or bh < 10:
+                    if cbw < 8 or cbh < 10:
                         continue
                     # Filter out tiny slivers touching outer image boundaries (1-2px border noise)
-                    if bx1 <= 1 and bw < 8:
+                    if cbx1 <= 1 and cbw < 8:
                         continue
-                    if bx2 >= crop_w - 1 and bw < 8:
+                    if cbx2 >= crop_w - 1 and cbw < 8:
                         continue
-                    raw_boxes.append((bx1, by1, bx2, by2, bconf))
+                    raw_boxes.append((cbx1, cby1, cbx2, cby2, bconf))
 
                 # 0. Conf-ordered IoU NMS — kills the DETR duplicate/nested-box
                 # artifact (measured 40-65% of raw D-FINE output at conf=0.10;
@@ -2153,19 +2226,24 @@ class LPRPipelineService:
 
                     # Train/serve contract (v2 audit fix #1): autocontrast(cutoff=2)
                     # is now mirrored in TRAIN too — train_character_classifier.py
-                    # and extract_recognition_crops_v2.pad_to_square apply the
-                    # same op, so keep it here unchanged.
-                    pil_sc = Image.fromarray(cv2.cvtColor(single_crop, cv2.COLOR_BGR2RGB))
-                    pil_sc = ImageOps.autocontrast(pil_sc, cutoff=2)
-                    single_crop_enhanced = cv2.cvtColor(np.array(pil_sc), cv2.COLOR_RGB2BGR)
+                    # and extract_recognition_crops_v2.pad_to_square apply the same op.
+                    if cfg.USE_AUTOCONTRAST and not cfg.PURE_MODEL_MODE:
+                        pil_sc = Image.fromarray(cv2.cvtColor(single_crop, cv2.COLOR_BGR2RGB))
+                        pil_sc = ImageOps.autocontrast(pil_sc, cutoff=2)
+                        single_crop_enhanced = cv2.cvtColor(np.array(pil_sc), cv2.COLOR_RGB2BGR)
+                    else:
+                        single_crop_enhanced = single_crop
 
-                    # Pad to square (64x64) with neutral background
-                    sh, sw = single_crop_enhanced.shape[:2]
-                    smax = max(sh, sw)
-                    corners = np.array([single_crop_enhanced[0, 0], single_crop_enhanced[0, -1], single_crop_enhanced[-1, 0], single_crop_enhanced[-1, -1]])
-                    bg_col = np.median(corners, axis=0).astype(np.uint8)
-                    padded_c = np.full((smax, smax, 3), bg_col, dtype=np.uint8)
-                    padded_c[(smax - sh) // 2 : (smax - sh) // 2 + sh, (smax - sw) // 2 : (smax - sw) // 2 + sw] = single_crop_enhanced
+                    # Pad to square (64x64) with neutral background if ambient padding enabled
+                    if cfg.USE_AMBIENT_PADDING:
+                        sh, sw = single_crop_enhanced.shape[:2]
+                        smax = max(sh, sw)
+                        corners = np.array([single_crop_enhanced[0, 0], single_crop_enhanced[0, -1], single_crop_enhanced[-1, 0], single_crop_enhanced[-1, -1]])
+                        bg_col = np.median(corners, axis=0).astype(np.uint8)
+                        padded_c = np.full((smax, smax, 3), bg_col, dtype=np.uint8)
+                        padded_c[(smax - sh) // 2 : (smax - sh) // 2 + sh, (smax - sw) // 2 : (smax - sw) // 2 + sw] = single_crop_enhanced
+                    else:
+                        padded_c = single_crop_enhanced
 
                     pil_char = Image.fromarray(cv2.cvtColor(padded_c, cv2.COLOR_BGR2RGB))
                     ts_c = self.tf_char(pil_char).unsqueeze(0).to(self.device)
@@ -2177,9 +2255,10 @@ class LPRPipelineService:
                         char_p = float(top_p[0].item())
 
                         # Stroke disambiguation for ฬ vs ผ (genuine ฬ requires upper-right tail, apex >= 0.72)
-                        if sym == "ฬ" or (sym in ("ฉ", "ศ") and char_p < 0.60):
-                            winner, alt, apex_x, reason = analyze_character_stroke(single_crop, sym, "ผ")
-                            sym = winner
+                        if cfg.USE_STROKE_DISAMBIGUATION and not cfg.PURE_MODEL_MODE:
+                            if sym == "ฬ" or (sym in ("ฉ", "ศ") and char_p < 0.60):
+                                winner, alt, apex_x, reason = analyze_character_stroke(single_crop, sym, "ผ")
+                                sym = winner
 
                         chars_predicted.append(sym)
                         char_boxes_detail.append({
@@ -2194,61 +2273,63 @@ class LPRPipelineService:
                 # CRITICAL: This ONLY applies if box 2 is a DIGIT (i.e. prefix has only 2 characters).
                 # If box 2 is a CONSONANT, this is a standard NCC plate (e.g. '3ขณ 6325', '1ฒผ 130', '1ฒษ 407')
                 # where box 0 is a 100% genuine series number (1-9) that MUST NEVER be overwritten!
-                if (
-                    len(char_boxes_detail) >= 5
-                    and char_boxes_detail[0]["char"].isdigit()
-                    and re.match(r"[\u0E01-\u0E2E]", char_boxes_detail[1]["char"])
-                    and not re.match(r"[\u0E01-\u0E2E]", char_boxes_detail[2]["char"])  # Box 2 MUST NOT be a consonant!
-                    and char_boxes_detail[0]["char"] in ("0", "8", "6")  # Only round digits that confuse with ผ/ฉ
-                ):
-                    b0_box = char_boxes_detail[0]["box"]
-                    b0_patch = char_crop[max(0, b0_box[1]):min(char_crop.shape[0], b0_box[3]), max(0, b0_box[0]):min(char_crop.shape[1], b0_box[2])]
-                    winner, _, _, _ = analyze_character_stroke(b0_patch, "ผ", "ฉ")
-                    char_boxes_detail[0]["char"] = winner
-                    if len(chars_predicted) > 0:
-                        chars_predicted[0] = winner
+                if cfg.USE_STROKE_DISAMBIGUATION and not cfg.PURE_MODEL_MODE:
+                    if (
+                        len(char_boxes_detail) >= 5
+                        and char_boxes_detail[0]["char"].isdigit()
+                        and re.match(r"[\u0E01-\u0E2E]", char_boxes_detail[1]["char"])
+                        and not re.match(r"[\u0E01-\u0E2E]", char_boxes_detail[2]["char"])  # Box 2 MUST NOT be a consonant!
+                        and char_boxes_detail[0]["char"] in ("0", "8", "6")  # Only round digits that confuse with ผ/ฉ
+                    ):
+                        b0_box = char_boxes_detail[0]["box"]
+                        b0_patch = char_crop[max(0, b0_box[1]):min(char_crop.shape[0], b0_box[3]), max(0, b0_box[0]):min(char_crop.shape[1], b0_box[2])]
+                        winner, _, _, _ = analyze_character_stroke(b0_patch, "ผ", "ฉ")
+                        char_boxes_detail[0]["char"] = winner
+                        if len(chars_predicted) > 0:
+                            chars_predicted[0] = winner
 
                 # Syntax invariant: Thai license plates NEVER have 3 consecutive consonants (e.g. 'ฉญฌ 3296').
                 # Valid patterns are CC (2 consonants), NCC (1 digit + 2 consonants), or C (1 consonant).
                 # If 3 consonants appear, the leftmost character touching the border is an outer frame artifact:
-                if len(char_boxes_detail) >= 4 and len(chars_predicted) >= 4:
-                    c0, c1, c2 = chars_predicted[0], chars_predicted[1], chars_predicted[2]
-                    thai_c = r"[\u0E01-\u0E2E]"
-                    if re.match(thai_c, c0) and re.match(thai_c, c1) and re.match(thai_c, c2):
-                        bw0 = char_boxes_detail[0]["box"][2] - char_boxes_detail[0]["box"][0]
-                        if char_boxes_detail[0]["box"][0] <= 10 and bw0 < 16:
-                            char_boxes_detail.pop(0)
-                            chars_predicted.pop(0)
+                if cfg.USE_REGEX_REPAIR and not cfg.PURE_MODEL_MODE:
+                    if len(char_boxes_detail) >= 4 and len(chars_predicted) >= 4:
+                        c0, c1, c2 = chars_predicted[0], chars_predicted[1], chars_predicted[2]
+                        thai_c = r"[\u0E01-\u0E2E]"
+                        if re.match(thai_c, c0) and re.match(thai_c, c1) and re.match(thai_c, c2):
+                            bw0 = char_boxes_detail[0]["box"][2] - char_boxes_detail[0]["box"][0]
+                            if char_boxes_detail[0]["box"][0] <= 10 and bw0 < 16:
+                                char_boxes_detail.pop(0)
+                                chars_predicted.pop(0)
 
-                # Suppress split-stroke artifact digit sandwiched between two Thai consonants (e.g. ['ศ', '1', 'ฎ']):
-                # Under DLT syntax, a Thai plate NEVER has a digit sandwiched between two consonants.
-                # If any digit appears between two consonants, it is an artifact of a split character stroke.
-                k = 0
-                while k < len(char_boxes_detail) - 2 and len(chars_predicted) >= 3:
-                    c0 = chars_predicted[k]
-                    c1 = chars_predicted[k + 1]
-                    c2 = chars_predicted[k + 2]
-                    if re.match(r"[\u0E01-\u0E2E]", c0) and c1.isdigit() and re.match(r"[\u0E01-\u0E2E]", c2):
-                        b0 = char_boxes_detail[k]["box"]
-                        b1 = char_boxes_detail[k + 1]["box"]
-                        b2 = char_boxes_detail[k + 2]["box"]
-                        # Merge the split stroke into whichever adjacent consonant it is closer to:
-                        d_prev = abs(b1[0] - b0[2])
-                        d_next = abs(b2[0] - b1[2])
-                        if d_prev <= d_next:
-                            char_boxes_detail[k]["box"][0] = min(b0[0], b1[0])
-                            char_boxes_detail[k]["box"][1] = min(b0[1], b1[1])
-                            char_boxes_detail[k]["box"][2] = max(b0[2], b1[2])
-                            char_boxes_detail[k]["box"][3] = max(b0[3], b1[3])
-                        else:
-                            char_boxes_detail[k + 2]["box"][0] = min(b1[0], b2[0])
-                            char_boxes_detail[k + 2]["box"][1] = min(b1[1], b2[1])
-                            char_boxes_detail[k + 2]["box"][2] = max(b1[2], b2[2])
-                            char_boxes_detail[k + 2]["box"][3] = max(b1[3], b2[3])
-                        char_boxes_detail.pop(k + 1)
-                        chars_predicted.pop(k + 1)
-                        continue
-                    k += 1
+                    # Suppress split-stroke artifact digit sandwiched between two Thai consonants (e.g. ['ศ', '1', 'ฎ']):
+                    # Under DLT syntax, a Thai plate NEVER has a digit sandwiched between two consonants.
+                    # If any digit appears between two consonants, it is an artifact of a split character stroke.
+                    k = 0
+                    while k < len(char_boxes_detail) - 2 and len(chars_predicted) >= 3:
+                        c0 = chars_predicted[k]
+                        c1 = chars_predicted[k + 1]
+                        c2 = chars_predicted[k + 2]
+                        if re.match(r"[\u0E01-\u0E2E]", c0) and c1.isdigit() and re.match(r"[\u0E01-\u0E2E]", c2):
+                            b0 = char_boxes_detail[k]["box"]
+                            b1 = char_boxes_detail[k + 1]["box"]
+                            b2 = char_boxes_detail[k + 2]["box"]
+                            # Merge the split stroke into whichever adjacent consonant it is closer to:
+                            d_prev = abs(b1[0] - b0[2])
+                            d_next = abs(b2[0] - b1[2])
+                            if d_prev <= d_next:
+                                char_boxes_detail[k]["box"][0] = min(b0[0], b1[0])
+                                char_boxes_detail[k]["box"][1] = min(b0[1], b1[1])
+                                char_boxes_detail[k]["box"][2] = max(b0[2], b1[2])
+                                char_boxes_detail[k]["box"][3] = max(b0[3], b1[3])
+                            else:
+                                char_boxes_detail[k + 2]["box"][0] = min(b1[0], b2[0])
+                                char_boxes_detail[k + 2]["box"][1] = min(b1[1], b2[1])
+                                char_boxes_detail[k + 2]["box"][2] = max(b1[2], b2[2])
+                                char_boxes_detail[k + 2]["box"][3] = max(b1[3], b2[3])
+                            char_boxes_detail.pop(k + 1)
+                            chars_predicted.pop(k + 1)
+                            continue
+                        k += 1
 
                 # Render Thai and numeric characters with bounding boxes on char_box_overlay
                 if char_box_overlay is not None and len(char_boxes_detail) > 0:
@@ -2341,8 +2422,9 @@ class LPRPipelineService:
                 if is_ambiguous_pair and (margin <= 0.08 or e["p1"] < 0.35):
                     patch = None
                     if char_seq_idx < len(char_boxes_detail):
-                        bx1, by1, bx2, by2 = char_boxes_detail[char_seq_idx]["box"]
-                        patch = char_crop[max(0, by1) : min(char_crop.shape[0], by2), max(0, bx1) : min(char_crop.shape[1], bx2)]
+                        # Local names only — must not clobber the plate box.
+                        abx1, aby1, abx2, aby2 = char_boxes_detail[char_seq_idx]["box"]
+                        patch = char_crop[max(0, aby1) : min(char_crop.shape[0], aby2), max(0, abx1) : min(char_crop.shape[1], abx2)]
 
                     if patch is None or patch.size == 0:
                         h_c, w_c = char_crop.shape[:2]
@@ -2388,140 +2470,134 @@ class LPRPipelineService:
             ctc_starts_truck_digits = bool(re.match(r"^\d{2}", clean_ctc)) and not box_has_high_conf_consonants
             is_likely_truck = not box_has_high_conf_consonants and (box_starts_truck_digits or ctc_starts_truck_digits or bool(re.match(r"^\d{2}-\d{4}$", fmt_ctc)))
 
-            # Immediate Priority 0: If Box prediction has impossible Thai consonant placement
-            # (e.g. 70ษย7ม where hyphen '-' was misclassified as 'ษ' and digit '1' as 'ย')
-            # immediately fall back to CTC OCR which reads the continuous plate correctly!
-            if box_has_invalid_consonants:
-                if valid_ctc or re.match(r"^\d{2}-\d{4}$", fmt_ctc) or re.match(r"^\d{6}$", clean_ctc):
-                    formatted_plate_text = fmt_ctc
-                    char_box_note = f"⚡ Syntax Guard: Fell back to CTC OCR '{fmt_ctc}' (box output '{fmt_box}' violated Thai consonant placement rules)"
-
-            # --- Method C Sequence Alignment Fusion ---
-            # If both box detections and CTC OCR are available, align the sequences:
-            # - Pinpoints missing character positions and inserts CTC characters into the gap
-            # - Preserves high-accuracy isolated box classifications (e.g. keeping 'ล' instead of OCR's confused 'ส')
-            fused_aligned, fused_note = "", ""
-            if not formatted_plate_text and len(char_boxes_detail) > 0 and len(clean_ctc) > 0:
-                fused_aligned, fused_note = align_and_fuse_thai_sequences(char_boxes_detail, raw_plate_text, crop_w=crop_w)
-
-            # 1. Primary Reconciliation: Prioritize Method C Sequence-Aligned Fusion
-            if not formatted_plate_text:
-                if fused_aligned and is_valid_plate(fused_aligned) and not has_invalid_thai_consonant_placement(fused_aligned):
-                    formatted_plate_text = fused_aligned
-                    if fused_note:
-                        char_box_note = fused_note
-                elif valid_box and valid_ctc:
-                    box_num_digits = sum(1 for ch in clean_box if ch.isdigit())
-                    ctc_num_digits = sum(1 for ch in clean_ctc if ch.isdigit())
-                    if ctc_num_digits > box_num_digits and box_num_digits < 4:
-                        # CTC recognized full 4-digit plate (e.g. ผว 7697) while box detector dropped digits (ฉว 76)
+            if cfg.PURE_MODEL_MODE:
+                formatted_plate_text = fmt_box if fmt_box else char_box_text
+            else:
+                # Immediate Priority 0: If Box prediction has impossible Thai consonant placement
+                # (e.g. 70ษย7ม where hyphen '-' was misclassified as 'ษ' and digit '1' as 'ย')
+                # immediately fall back to CTC OCR which reads the continuous plate correctly!
+                if cfg.ENABLE_FALLBACK and box_has_invalid_consonants:
+                    if valid_ctc or re.match(r"^\d{2}-\d{4}$", fmt_ctc) or re.match(r"^\d{6}$", clean_ctc):
                         formatted_plate_text = fmt_ctc
-                    elif len(clean_box) >= len(clean_ctc):
+                        char_box_note = f"⚡ Syntax Guard: Fell back to CTC OCR '{fmt_ctc}' (box output '{fmt_box}' violated Thai consonant placement rules)"
+
+                # --- Method C Sequence Alignment Fusion ---
+                # If both box detections and CTC OCR are available, align the sequences:
+                # - Pinpoints missing character positions and inserts CTC characters into the gap
+                # - Preserves high-accuracy isolated box classifications (e.g. keeping 'ล' instead of OCR's confused 'ส')
+                fused_aligned, fused_note = "", ""
+                if cfg.ENABLE_RECONCILIATION and not formatted_plate_text and len(char_boxes_detail) > 0 and len(clean_ctc) > 0:
+                    fused_aligned, fused_note = align_and_fuse_thai_sequences(char_boxes_detail, raw_plate_text, crop_w=crop_w)
+
+                # 1. Primary Reconciliation: Prioritize Method C Sequence-Aligned Fusion
+                if not formatted_plate_text:
+                    if cfg.ENABLE_RECONCILIATION and fused_aligned and is_valid_plate(fused_aligned) and not has_invalid_thai_consonant_placement(fused_aligned):
+                        formatted_plate_text = fused_aligned
+                        if fused_note:
+                            char_box_note = fused_note
+                    elif valid_box and valid_ctc:
+                        box_num_digits = sum(1 for ch in clean_box if ch.isdigit())
+                        ctc_num_digits = sum(1 for ch in clean_ctc if ch.isdigit())
+                        if cfg.ENABLE_FALLBACK and ctc_num_digits > box_num_digits and box_num_digits < 4:
+                            # CTC recognized full 4-digit plate (e.g. ผว 7697) while box detector dropped digits (ฉว 76)
+                            formatted_plate_text = fmt_ctc
+                        elif len(clean_box) >= len(clean_ctc):
+                            formatted_plate_text = fmt_box
+                        else:
+                            formatted_plate_text = fmt_box if not box_has_invalid_consonants else (fmt_ctc if cfg.ENABLE_FALLBACK else fmt_box)
+                    elif valid_box and not valid_ctc:
                         formatted_plate_text = fmt_box
+                    elif valid_ctc and not valid_box:
+                        formatted_plate_text = fmt_ctc if cfg.ENABLE_FALLBACK else fmt_box
+
+                # 2. Smart consonant fusion: If char_boxes_detail has high confidence Thai consonants
+                # but CTC made consonant errors, fuse high-confidence consonants while preserving complete digits!
+                if cfg.ENABLE_RECONCILIATION and not formatted_plate_text and not box_has_invalid_consonants:
+                    leading_digit = char_boxes_detail[0]["char"] if (len(char_boxes_detail) > 0 and char_boxes_detail[0]["char"].isdigit()) else ""
+                    box_consonants = [item["char"] for item in char_boxes_detail if re.match(r"[\u0E01-\u0E2E]", item["char"]) and item["prob"] >= 80.0]
+                    box_digits = [item["char"] for item in char_boxes_detail if item["char"].isdigit() and item["prob"] >= 80.0]
+                    ctc_digits = re.findall(r"\d+", raw_plate_text)
+                    ctc_digits_str = "".join(ctc_digits)
+                    box_digits_str = "".join(box_digits[1:] if (leading_digit and len(box_digits) > 1) else box_digits)
+
+                    # Prioritize complete digit sequence from CTC if it has more digits than boxes
+                    chosen_digits = ctc_digits_str if (len(ctc_digits_str) >= len(box_digits_str) and len(ctc_digits_str) > 0) else box_digits_str
+
+                    if len(box_consonants) >= 2 and len(chosen_digits) > 0:
+                        consonant_prefix = "".join(box_consonants[:2])
+                        candidate_fused = f"{leading_digit}{consonant_prefix} {chosen_digits}"
+                        fmt_fused = format_thai_plate(candidate_fused)
+                        if is_valid_plate(fmt_fused) and not has_invalid_thai_consonant_placement(fmt_fused):
+                            formatted_plate_text = fmt_fused
+
+                # 3. Fallback to valid candidate or whichever text is available
+                if not formatted_plate_text:
+                    if cfg.ENABLE_FALLBACK and valid_ctc and (not valid_box or len(clean_ctc) >= len(clean_box)):
+                        formatted_plate_text = fmt_ctc
+                    elif valid_box:
+                        formatted_plate_text = fmt_box
+                    elif cfg.ENABLE_FALLBACK and valid_ctc:
+                        formatted_plate_text = fmt_ctc
+                    elif cfg.ENABLE_FALLBACK and not ctc_has_invalid_consonants and box_has_invalid_consonants:
+                        # Never default to impossible box consonants (e.g. 70ษย7ม) if CTC has clean digits
+                        formatted_plate_text = fmt_ctc
                     else:
-                        formatted_plate_text = fmt_box if not box_has_invalid_consonants else fmt_ctc
-                elif valid_box and not valid_ctc:
-                    formatted_plate_text = fmt_box
-                elif valid_ctc and not valid_box:
-                    formatted_plate_text = fmt_ctc
+                        formatted_plate_text = fmt_box if fmt_box else (fmt_ctc if cfg.ENABLE_FALLBACK else "")
 
-            # 2. Smart consonant fusion: If char_boxes_detail has high confidence Thai consonants
-            # but CTC made consonant errors, fuse high-confidence consonants while preserving complete digits!
-            if not formatted_plate_text and not box_has_invalid_consonants:
-                leading_digit = char_boxes_detail[0]["char"] if (len(char_boxes_detail) > 0 and char_boxes_detail[0]["char"].isdigit()) else ""
-                box_consonants = [item["char"] for item in char_boxes_detail if re.match(r"[\u0E01-\u0E2E]", item["char"]) and item["prob"] >= 80.0]
-                box_digits = [item["char"] for item in char_boxes_detail if item["char"].isdigit() and item["prob"] >= 80.0]
-                ctc_digits = re.findall(r"\d+", raw_plate_text)
-                ctc_digits_str = "".join(ctc_digits)
-                box_digits_str = "".join(box_digits[1:] if (leading_digit and len(box_digits) > 1) else box_digits)
+                # 4. Gated Truck 6-Digit Refiner (NN-NNNN):
+                # Activates when candidate characters are commercial truck format (NN-NNNN)
+                # This ensures private cars (1กข 1234), motorcycles, and Lao plates are 100% untouched!
+                if cfg.USE_REGEX_REPAIR:
+                    digit_count = sum(1 for item in char_boxes_detail if item.get("char", "").isdigit())
+                    consonant_count = sum(1 for item in char_boxes_detail if re.match(r"[\u0E01-\u0E2E]", item.get("char", "")))
 
-                # Prioritize complete digit sequence from CTC if it has more digits than boxes
-                chosen_digits = ctc_digits_str if (len(ctc_digits_str) >= len(box_digits_str) and len(ctc_digits_str) > 0) else box_digits_str
+                    def _consonant_placement_ok(text: str) -> bool:
+                        clean = text.strip().replace(" ", "").replace("-", "")
+                        for idx, ch in enumerate(clean):
+                            if re.match(r"[\u0E01-\u0E2E]", ch) and idx >= 3:
+                                return False
+                        consonant_ended = False
+                        for ch in clean:
+                            if re.match(r"[\u0E01-\u0E2E]", ch):
+                                if consonant_ended:
+                                    return False
+                            elif ch.isdigit() and consonant_ended:
+                                pass
+                        return True
 
-                if len(box_consonants) >= 2 and len(chosen_digits) > 0:
-                    consonant_prefix = "".join(box_consonants[:2])
-                    candidate_fused = f"{leading_digit}{consonant_prefix} {chosen_digits}"
-                    fmt_fused = format_thai_plate(candidate_fused)
-                    if is_valid_plate(fmt_fused) and not has_invalid_thai_consonant_placement(fmt_fused):
-                        formatted_plate_text = fmt_fused
+                    box_is_valid_letter_plate = (
+                        consonant_count >= 1
+                        and is_valid_plate(fmt_box)
+                        and _consonant_placement_ok(fmt_box)
+                        and len(char_boxes_detail) > 0
+                    )
 
-            # 3. Fallback to valid candidate or whichever text is available
-            if not formatted_plate_text:
-                if valid_ctc and (not valid_box or len(clean_ctc) >= len(clean_box)):
-                    formatted_plate_text = fmt_ctc
-                elif valid_box:
-                    formatted_plate_text = fmt_box
-                elif valid_ctc:
-                    formatted_plate_text = fmt_ctc
-                elif not ctc_has_invalid_consonants and box_has_invalid_consonants:
-                    # Never default to impossible box consonants (e.g. 70ษย7ม) if CTC has clean digits
-                    formatted_plate_text = fmt_ctc
-                else:
-                    formatted_plate_text = fmt_box if fmt_box else fmt_ctc
+                    is_truck_candidate = (
+                        (digit_count >= 5 and consonant_count == 0) or
+                        (is_likely_truck and not box_is_valid_letter_plate and
+                         (valid_ctc or re.match(r"^\d{2}-\d{4}$", fmt_ctc) or digit_count >= 3))
+                    )
 
-            # 4. Gated Truck 6-Digit Refiner (NN-NNNN):
-            # Activates when candidate characters are commercial truck format (NN-NNNN)
-            # This ensures private cars (1กข 1234), motorcycles, and Lao plates are 100% untouched!
-            digit_count = sum(1 for item in char_boxes_detail if item.get("char", "").isdigit())
-            consonant_count = sum(1 for item in char_boxes_detail if re.match(r"[\u0E01-\u0E2E]", item.get("char", "")))
+                    clean_fmt = formatted_plate_text.replace("-", "").replace(" ", "")
+                    is_truncated_truck = is_truck_candidate and len(clean_fmt) == 5 and bool(re.match(r"^[1-9]\d", clean_fmt))
 
-            # v4 fix (5ศ 7856 case): a box reading with a valid consonant prefix is
-            # REAL EVIDENCE (per-char boxes seen by M3A + classifier); an all-digit
-            # CTC reading is only a guess that may have dropped the consonant.
-            # The truck refiner must never override a valid letter-plate box result
-            # with an all-digit CTC string — that turned 5ศ 7856 into 57856 and
-            # mislabeled it "Truck/Transport, Incomplete 5/6".
-            # NOTE: we deliberately do NOT gate on has_invalid_thai_consonant_placement
-            # rule 4 here — it bans NC NNNN, but NC NNNN is a legal Trailer/Special
-            # format (PATTERN_NC_NNNN). We check the structural invariants directly:
-            # no consonant at index >= 3, no consonants sandwiched after digits.
-            def _consonant_placement_ok(text: str) -> bool:
-                clean = text.strip().replace(" ", "").replace("-", "")
-                for idx, ch in enumerate(clean):
-                    if re.match(r"[\u0E01-\u0E2E]", ch) and idx >= 3:
-                        return False
-                consonant_ended = False
-                for ch in clean:
-                    if re.match(r"[\u0E01-\u0E2E]", ch):
-                        if consonant_ended:
-                            return False
-                    elif ch.isdigit() and consonant_ended:
-                        pass
-                return True
+                    if is_truck_candidate and (not is_valid_plate(formatted_plate_text) or len(clean_fmt) > 6 or is_truncated_truck):
+                        best_truck_text = select_best_truck_6_digits(char_boxes_detail, crop_w, char_crop.shape[0])
+                        if best_truck_text and is_valid_plate(best_truck_text):
+                            formatted_plate_text = best_truck_text
+                        elif cfg.ENABLE_FALLBACK and (valid_ctc or re.match(r"^\d{2}-\d{4}$", fmt_ctc) or re.match(r"^\d{6}$", clean_ctc)):
+                            formatted_plate_text = fmt_ctc
 
-            box_is_valid_letter_plate = (
-                consonant_count >= 1
-                and is_valid_plate(fmt_box)
-                and _consonant_placement_ok(fmt_box)
-                and len(char_boxes_detail) > 0
-            )
-
-            is_truck_candidate = (
-                (digit_count >= 5 and consonant_count == 0) or
-                (is_likely_truck and not box_is_valid_letter_plate and
-                 (valid_ctc or re.match(r"^\d{2}-\d{4}$", fmt_ctc) or digit_count >= 3))
-            )
-
-            clean_fmt = formatted_plate_text.replace("-", "").replace(" ", "")
-            is_truncated_truck = is_truck_candidate and len(clean_fmt) == 5 and bool(re.match(r"^[1-9]\d", clean_fmt))
-
-            if is_truck_candidate and (not is_valid_plate(formatted_plate_text) or len(clean_fmt) > 6 or is_truncated_truck):
-                best_truck_text = select_best_truck_6_digits(char_boxes_detail, crop_w, char_crop.shape[0])
-                if best_truck_text and is_valid_plate(best_truck_text):
-                    formatted_plate_text = best_truck_text
-                elif valid_ctc or re.match(r"^\d{2}-\d{4}$", fmt_ctc) or re.match(r"^\d{6}$", clean_ctc):
-                    formatted_plate_text = fmt_ctc
-
-            # v4 fix (continued): even after the refiner, if the final text is an
-            # all-digit string but the boxes formed a VALID consonant plate, trust
-            # the boxes — the refiner above can still reach fmt_ctc via the elif.
-            if (
-                box_is_valid_letter_plate
-                and formatted_plate_text.replace(" ", "").replace("-", "").isdigit()
-                and fmt_box != formatted_plate_text
-            ):
-                formatted_plate_text = fmt_box
-                char_box_note = f"🔒 Letter-plate guard: kept box reading '{fmt_box}' (CTC '{fmt_ctc}' was all digits and likely dropped a consonant)"
+                    # v4 fix (continued): even after the refiner, if the final text is an
+                    # all-digit string but the boxes formed a VALID consonant plate, trust
+                    # the boxes — the refiner above can still reach fmt_ctc via the elif.
+                    if (
+                        box_is_valid_letter_plate
+                        and formatted_plate_text.replace(" ", "").replace("-", "").isdigit()
+                        and fmt_box != formatted_plate_text
+                    ):
+                        formatted_plate_text = fmt_box
+                        char_box_note = f"🔒 Letter-plate guard: kept box reading '{fmt_box}' (CTC '{fmt_ctc}' was all digits and likely dropped a consonant)"
 
             # Ensure finalized plate text adheres to canonical formatting (e.g. NN-NNNN with hyphen)
             formatted_plate_text = format_thai_plate(formatted_plate_text)
@@ -2590,10 +2666,12 @@ class LPRPipelineService:
 
                 # Fallback to verified ground truth lookup if present:
                 f_base = Path(filename).name if filename else ""
-                gt_truck_prov = THAI_TRUCK_GT_LOOKUP.get(f_base) or THAI_TRUCK_GT_LOOKUP.get(formatted_plate_text)
-                if gt_truck_prov:
-                    top_prov_name = gt_truck_prov
-                    top_prov_prob = 0.99
+                gt_truck_prov = None
+                if cfg.ENABLE_FALLBACK and not cfg.PURE_MODEL_MODE:
+                    gt_truck_prov = THAI_TRUCK_GT_LOOKUP.get(f_base) or THAI_TRUCK_GT_LOOKUP.get(formatted_plate_text)
+                    if gt_truck_prov:
+                        top_prov_name = gt_truck_prov
+                        top_prov_prob = 0.99
 
                 # Guard against low-confidence / noisy province predictions:
                 # If probability is < 30% and not verified by GT, flag as ambiguous
@@ -2659,17 +2737,19 @@ class LPRPipelineService:
                     raw_boxes = []
                     crop_w = char_crop.shape[1]
                     for b in box_res.boxes:
-                        bx1, by1, bx2, by2 = [int(v) for v in divide_boxes_by_scale(b.xyxy[0].cpu().numpy(), lao_m3a_scale)[0]]
+                        # Local names only — see the Thai branch above: reusing
+                        # bx1..by2 clobbered the Model-1 plate box.
+                        cbx1, cby1, cbx2, cby2 = [int(v) for v in divide_boxes_by_scale(b.xyxy[0].cpu().numpy(), lao_m3a_scale)[0]]
                         bconf = float(b.conf[0])
-                        bw = bx2 - bx1
-                        bh = by2 - by1
-                        if bw < 8 or bh < 10:
+                        cbw = cbx2 - cbx1
+                        cbh = cby2 - cby1
+                        if cbw < 8 or cbh < 10:
                             continue
-                        if bx1 <= 2 and bw < 12:
+                        if cbx1 <= 2 and cbw < 12:
                             continue
-                        if bx2 >= crop_w - 2 and bw < 12:
+                        if cbx2 >= crop_w - 2 and cbw < 12:
                             continue
-                        raw_boxes.append((bx1, by1, bx2, by2, bconf))
+                        raw_boxes.append((cbx1, cby1, cbx2, cby2, bconf))
 
                     # Conf-ordered IoU NMS + merged-box split (same fix as Thai branch)
                     raw_boxes = charbox_greedy_nms(raw_boxes, iou_thr=0.35)
@@ -2889,14 +2969,15 @@ class LPRPipelineService:
                 cv2.polylines(poly_overlay_bgr, [scaled_poly], isClosed=True, color=(0, 255, 255), thickness=2)
 
             comp_overlay = rectified_plate.copy()
+            # Local names only — drawing the overlay must not clobber the plate box.
             if char_box_coords:
-                bx1, by1, bx2, by2 = char_box_coords
-                cv2.rectangle(comp_overlay, (bx1, by1), (bx2, by2), (0, 165, 255), 2)
-                cv2.putText(comp_overlay, "plate_char", (bx1 + 4, by1 + 14), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 165, 255), 1)
+                obx1, oby1, obx2, oby2 = char_box_coords
+                cv2.rectangle(comp_overlay, (obx1, oby1), (obx2, oby2), (0, 165, 255), 2)
+                cv2.putText(comp_overlay, "plate_char", (obx1 + 4, oby1 + 14), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 165, 255), 1)
             if prov_box_coords:
-                bx1, by1, bx2, by2 = prov_box_coords
-                cv2.rectangle(comp_overlay, (bx1, by1), (bx2, by2), (255, 240, 0), 2)
-                cv2.putText(comp_overlay, "province", (bx1 + 4, by1 + 14), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 240, 0), 1)
+                obx1, oby1, obx2, oby2 = prov_box_coords
+                cv2.rectangle(comp_overlay, (obx1, oby1), (obx2, oby2), (255, 240, 0), 2)
+                cv2.putText(comp_overlay, "province", (obx1 + 4, oby1 + 14), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 240, 0), 1)
 
             debug_payload = {
                 "poly_overlay": mat_to_base64(poly_overlay_bgr),
@@ -2938,7 +3019,7 @@ class LPRPipelineService:
             "alternative_plate_text": formatted_alt_plate_text,
             "alternative_candidates": alt_candidates,
             "is_ambiguous": is_ambiguous,
-            "plate_box": [int(bx1), int(by1), int(bx2), int(by2)],
+            "plate_box": list(m1_plate_box),
             "plate_corners": quad_corners.tolist() if quad_corners is not None else None,
             "char_box_text": char_box_text,
             "char_boxes": char_boxes_detail,
@@ -3285,6 +3366,22 @@ def get_history_page():
         with open(history_html_path, "r", encoding="utf-8") as f:
             return HTMLResponse(content=f.read())
     return HTMLResponse("<h1>History page not found</h1>", status_code=404)
+
+
+@app.get("/presentation", response_class=HTMLResponse)
+@app.get("/presentation.html", response_class=HTMLResponse)
+def get_presentation_page():
+    """Serves the interactive engineering presentation HTML."""
+    # Look in static/ first (baked into Docker for GCP), fallback to docs/
+    candidates = [
+        PROJECT_ROOT / "static" / "presentation.html",
+        PROJECT_ROOT / "docs" / "presentation.html",
+    ]
+    for p in candidates:
+        if p.exists():
+            with open(p, "r", encoding="utf-8") as f:
+                return HTMLResponse(content=f.read())
+    return HTMLResponse("<h1>Presentation page not found</h1>", status_code=404)
 
 
 @app.get("/api/history")

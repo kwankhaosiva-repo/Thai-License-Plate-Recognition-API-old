@@ -51,8 +51,17 @@ top_banner_0072.jpg
 
 # ONNX export
 *.ONNX
+*.onnx
 *.lock
+
+# Backup files
+*.bak
+
+# Skills (agent customizations - instruction files only tracked if intentional)
+skills/*/SKILL.md
+skills-lock.json
 lpr-car-plate-e4c1f71338f3.json
 .freebuff
 .repomixignore
 repomix-output.md
+skills/

@@ -1,15 +1,22 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Recognition History | License Plate Recognition</title>
 
+  <script>
+    (function () {
+      var t = localStorage.getItem('lpr_theme') || 'dark';
+      document.documentElement.setAttribute('data-theme', t === 'light' ? 'light' : 'dark');
+    })();
+  </script>
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Sarabun:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="/static/css/style.css?v=6">
+  <link rel="stylesheet" href="/static/css/style.css?v=7">
 </head>
 <body>
 
@@ -23,10 +30,8 @@
       </button>
 
       <div class="sidebar-brand">
-        <div class="brand-icon">
-          <svg viewBox="0 0 24 24"><path d="M19 4H5c-1.11 0-2 .9-2 2v12c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H5V6h14v12zM7 10h2v5H7zm4-3h2v8h-2zm4 2h2v6h-2z"/></svg>
-        </div>
-        <div>
+        <div class="brand-icon">LPR</div>
+        <div class="brand-text">
           <div class="sidebar-title" data-i18n="app_name">License Plate Recognition</div>
           <div class="sidebar-subtitle" data-i18n="app_sub">Thai &amp; Lao LPR</div>
         </div>
@@ -65,6 +70,10 @@
           <div class="topbar-sub" data-i18n="hist_sub">Search, inspect and export all past plate reads</div>
         </div>
         <div class="topbar-controls">
+          <button type="button" id="themeToggleBtn" class="theme-toggle-btn" title="Toggle Dark / Light Mode" aria-label="Toggle Dark / Light Mode">
+            <svg class="theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+            <svg class="theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          </button>
           <div data-lpr-lang></div>
           <div id="auth-topbar-container" class="auth-user-container"></div>
         </div>
@@ -77,23 +86,23 @@
           <section class="history-stats-grid">
             <div class="hist-metric-card">
               <span class="hist-metric-label" data-i18n="kpi_total">Total Detections</span>
-              <span id="statTotal" class="hist-metric-val" style="color: var(--accent);">0</span>
+              <span id="statTotal" class="hist-metric-val">0</span>
             </div>
             <div class="hist-metric-card">
-              <span class="hist-metric-label">🇹🇭 <span data-i18n="kpi_thai">Thai Plates</span></span>
-              <span id="statThai" class="hist-metric-val" style="color: #38bdf8;">0</span>
+              <span class="hist-metric-label">TH · <span data-i18n="kpi_thai">Thai Plates</span></span>
+              <span id="statThai" class="hist-metric-val" style="color: var(--accent);">0</span>
             </div>
             <div class="hist-metric-card">
-              <span class="hist-metric-label">🇱🇦 <span data-i18n="kpi_lao">Lao Plates</span></span>
-              <span id="statLao" class="hist-metric-val" style="color: #f87171;">0</span>
+              <span class="hist-metric-label">LA · <span data-i18n="kpi_lao">Lao Plates</span></span>
+              <span id="statLao" class="hist-metric-val" style="color: var(--amber);">0</span>
             </div>
             <div class="hist-metric-card">
               <span class="hist-metric-label" data-i18n="kpi_latency">Avg. Latency</span>
-              <span id="statLatency" class="hist-metric-val" style="color: var(--accent-purple);">0 ms</span>
+              <span id="statLatency" class="hist-metric-val">0 ms</span>
             </div>
             <div class="hist-metric-card">
               <span class="hist-metric-label" data-i18n="kpi_valid">Valid Format</span>
-              <span id="statValidPct" class="hist-metric-val" style="color: #34d399;">100%</span>
+              <span id="statValidPct" class="hist-metric-val" style="color: var(--emerald);">100%</span>
             </div>
           </section>
 
@@ -117,8 +126,8 @@
 
               <select id="filterCountry" class="hist-select">
                 <option value="ALL" selected data-i18n="f_allcountry">All countries</option>
-                <option value="Thai">🇹🇭 <span data-i18n="thailand">Thailand</span></option>
-                <option value="Laos">🇱🇦 <span data-i18n="laos">Laos</span></option>
+                <option value="Thai" data-i18n="thailand">Thailand</option>
+                <option value="Laos" data-i18n="laos">Laos</option>
               </select>
 
               <select id="filterStatus" class="hist-select">
@@ -133,14 +142,14 @@
             </div>
 
             <div class="hist-actions-right">
-              <div id="histSourceSwitcher" class="hist-source-switcher" style="display: flex; gap: 4px; background: rgba(15, 23, 42, 0.7); padding: 3px; border-radius: 10px; border: 1px solid var(--border-subtle);">
-                <button type="button" id="btnSourceLocal" class="btn-source active" style="padding: 5px 12px; font-size: 12px; border-radius: 8px; border: none; background: var(--accent-strong); color: #fff; font-weight: 600; cursor: pointer; transition: all 0.2s;" data-i18n="src_local">Local DB</button>
-                <button type="button" id="btnSourceBigQuery" class="btn-source" style="padding: 5px 12px; font-size: 12px; border-radius: 8px; border: none; background: transparent; color: var(--text-secondary); font-weight: 500; cursor: pointer; transition: all 0.2s;" data-i18n="src_cloud" title="Cloud data (includes plate crop images)">Cloud Data</button>
+              <div id="histSourceSwitcher" class="hist-source-switcher">
+                <button type="button" id="btnSourceLocal" class="hist-source-btn active" data-i18n="src_local">Local DB</button>
+                <button type="button" id="btnSourceBigQuery" class="hist-source-btn" data-i18n="src_cloud" title="Cloud data (includes plate crop images)">Cloud Data</button>
               </div>
 
               <button type="button" id="btnToggleRefresh" class="btn-hist btn-hist-live active" data-i18n-title="autorefresh" title="Auto-refresh">
-                <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 8px #10b981;"></span>
-                <span><span data-i18n="autorefresh">Auto-refresh:</span> <span id="lblLive" data-i18n="on">ON</span></span>
+                <span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--emerald);"></span>
+                <span><span data-i18n="autorefresh">Auto-refresh:</span> <span id="lblLive" class="mono" data-i18n="on">ON</span></span>
               </button>
 
               <button type="button" id="btnExportCsv" class="btn-hist btn-hist-secondary" data-i18n-title="btn_export" title="Export CSV">
@@ -179,11 +188,11 @@
             </div>
 
             <div class="hist-pagination">
-              <div><span data-i18n="showing">Showing</span> <span id="lblShowing">0</span> <span data-i18n="of_records">of</span> <span id="lblTotal">0</span> <span data-i18n="records_unit">records</span></div>
+              <div><span data-i18n="showing">Showing</span> <span id="lblShowing" class="mono">0</span> <span data-i18n="of_records">of</span> <span id="lblTotal" class="mono">0</span> <span data-i18n="records_unit">records</span></div>
               <div class="hist-page-controls">
-                <button type="button" id="btnPrevPage" class="btn-hist btn-hist-secondary" style="padding: 6px 12px;" disabled>‹ <span data-i18n="prev">Prev</span></button>
-                <span style="font-weight: 600; padding: 0 8px;"><span data-i18n="page_word">Page</span> <span id="lblCurrentPage">1</span> / <span id="lblTotalPages">1</span></span>
-                <button type="button" id="btnNextPage" class="btn-hist btn-hist-secondary" style="padding: 6px 12px;" disabled><span data-i18n="next">Next</span> ›</button>
+                <button type="button" id="btnPrevPage" class="btn-hist btn-hist-secondary" disabled>‹ <span data-i18n="prev">Prev</span></button>
+                <span style="font-weight: 500; padding: 0 8px;"><span data-i18n="page_word">Page</span> <span id="lblCurrentPage" class="mono">1</span> / <span id="lblTotalPages" class="mono">1</span></span>
+                <button type="button" id="btnNextPage" class="btn-hist btn-hist-secondary" disabled><span data-i18n="next">Next</span> ›</button>
               </div>
             </div>
           </section>
@@ -198,14 +207,14 @@
     <div class="hist-modal-content">
       <div style="display: flex; justify-content: space-between; align-items: flex-start;">
         <div>
-          <h2 id="modalPlateText" class="hist-mono" style="font-size: 1.7rem; letter-spacing: 0.5px; margin-bottom: 4px;">-</h2>
+          <h2 id="modalPlateText" class="hist-mono" style="font-size: 1.55rem; letter-spacing: 0.03em; margin-bottom: 4px; color: var(--text-primary);">-</h2>
           <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-            <span id="modalCountryBadge" class="badge-country thai">🇹🇭 Thai</span>
-            <span id="modalProvinceText" style="color: var(--accent); font-weight: 600;">-</span>
+            <span id="modalCountryBadge" class="badge-country thai">TH · Thai</span>
+            <span id="modalProvinceText" style="color: var(--text-secondary); font-weight: 600;">-</span>
             <span id="modalValidBadge" class="badge-valid">VALID</span>
           </div>
         </div>
-        <button type="button" id="btnCloseModal" class="btn-hist" style="background: rgba(148, 163, 184, 0.1); color: var(--text-secondary); font-size: 1.1rem; padding: 6px 12px;">✕</button>
+        <button type="button" id="btnCloseModal" class="auth-modal-close" style="position: static;">✕</button>
       </div>
 
       <div>
@@ -222,40 +231,40 @@
         </div>
       </div>
 
-      <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; font-size: 0.86rem;">
+      <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; font-size: 0.84rem;">
         <div class="hist-detail-box">
           <div class="hist-detail-label" data-i18n="meta_pattern">Plate pattern</div>
-          <div id="modalPattern" style="font-weight: 600; color: #fff; margin-top: 4px;">-</div>
+          <div id="modalPattern" style="font-weight: 600; color: var(--text-primary); margin-top: 4px;">-</div>
         </div>
         <div class="hist-detail-box">
           <div class="hist-detail-label" data-i18n="meta_provconf">Province confidence</div>
-          <div id="modalProvProb" style="font-weight: 600; color: var(--accent); margin-top: 4px;">-</div>
+          <div id="modalProvProb" class="mono" style="font-weight: 600; color: var(--accent); margin-top: 4px;">-</div>
         </div>
         <div class="hist-detail-box">
           <div class="hist-detail-label" data-i18n="mm_charbox">Char BBox:</div>
-          <div id="modalBoxText" class="hist-mono" style="font-weight: 600; color: #fff; margin-top: 4px;">-</div>
+          <div id="modalBoxText" class="hist-mono" style="font-weight: 600; color: var(--text-primary); margin-top: 4px;">-</div>
         </div>
         <div class="hist-detail-box">
           <div class="hist-detail-label" data-i18n="ctc_output">CTC OCR output</div>
-          <div id="modalCtcText" class="hist-mono" style="font-weight: 600; color: #fff; margin-top: 4px;">-</div>
+          <div id="modalCtcText" class="hist-mono" style="font-weight: 600; color: var(--text-primary); margin-top: 4px;">-</div>
         </div>
       </div>
 
-      <div class="hist-detail-box" style="padding: 14px 16px;">
+      <div class="hist-detail-box" style="padding: 12px 14px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-          <span class="hist-detail-label" style="font-weight: 700;" data-i18n="latency_breakdown">Per-stage latency</span>
-          <span id="modalTotalLatency" style="font-weight: 700; color: var(--accent);">0 ms</span>
+          <span class="hist-detail-label" style="font-weight: 600;" data-i18n="latency_breakdown">Per-stage latency</span>
+          <span id="modalTotalLatency" class="mono" style="font-weight: 600; color: var(--text-primary);">0 ms</span>
         </div>
-        <div id="modalLatencyBars" style="display: flex; height: 10px; border-radius: 9999px; overflow: hidden; background: rgba(148, 163, 184, 0.08);"></div>
-        <div id="modalLatencyChips" style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; font-size: 0.76rem;"></div>
+        <div id="modalLatencyBars" style="display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--bg-surface); border: 1px solid var(--border-subtle);"></div>
+        <div id="modalLatencyChips" style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; font-size: 0.74rem;"></div>
       </div>
     </div>
   </div>
 
   <!-- Scripts -->
-  <script src="/static/js/i18n.js?v=2"></script>
-  <script src="/static/js/viewer.js?v=1"></script>
-  <script src="/static/js/auth.js?v=3"></script>
-  <script src="/static/js/history.js?v=5"></script>
+  <script src="/static/js/i18n.js?v=3"></script>
+  <script src="/static/js/viewer.js?v=2"></script>
+  <script src="/static/js/auth.js?v=4"></script>
+  <script src="/static/js/history.js?v=6"></script>
 </body>
 </html>

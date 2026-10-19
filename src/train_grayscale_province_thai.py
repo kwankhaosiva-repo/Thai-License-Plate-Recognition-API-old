@@ -64,6 +64,15 @@ class GrayscaleSmartResize:
 
 def get_grayscale_transforms(is_train=False):
     if is_train:
+        # ROTATION TOLERANCE LIVES HERE, NOT AT SERVE.
+        # The pipeline used to run fine_deskew_plate() at serve time: a ±8 deg
+        # projection-variance argmax that rotated each plate by a different,
+        # data-dependent angle. Measured on real crops it never exceeded 2.75 deg
+        # (median 1.25 deg) and it bought <=1 image in 120 — while injecting a
+        # geometry the training crops never contained. It is now
+        # Config.ENABLE_RESIDUAL_DESKEW = False (default). Do NOT raise the
+        # degrees below below what the corner regressor actually leaves behind;
+        # degrees=5 covers the measured 2.75 deg with margin.
         return transforms.Compose([
             GrayscaleSmartResize((256, 80)),
             transforms.RandomAffine(degrees=5, translate=(0.03, 0.04)),

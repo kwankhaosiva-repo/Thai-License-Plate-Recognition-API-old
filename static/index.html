@@ -1,16 +1,23 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>License Plate Recognition | Live Monitor</title>
 
-  <!-- Fonts: Sarabun (Thai+Latin UI) + JetBrains Mono (numbers/code) -->
+  <script>
+    (function () {
+      var t = localStorage.getItem('lpr_theme') || 'dark';
+      document.documentElement.setAttribute('data-theme', t === 'light' ? 'light' : 'dark');
+    })();
+  </script>
+
+  <!-- Fonts: Inter + Sarabun (Thai+Latin UI) + JetBrains Mono (numbers/code) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Sarabun:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="/static/css/style.css?v=6">
+  <link rel="stylesheet" href="/static/css/style.css?v=7">
 </head>
 <body>
 
@@ -24,10 +31,8 @@
       </button>
 
       <div class="sidebar-brand">
-        <div class="brand-icon">
-          <svg viewBox="0 0 24 24"><path d="M19 4H5c-1.11 0-2 .9-2 2v12c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H5V6h14v12zM7 10h2v5H7zm4-3h2v8h-2zm4 2h2v6h-2z"/></svg>
-        </div>
-        <div>
+        <div class="brand-icon">LPR</div>
+        <div class="brand-text">
           <div class="sidebar-title" data-i18n="app_name">License Plate Recognition</div>
           <div class="sidebar-subtitle" data-i18n="app_sub">Thai &amp; Lao LPR</div>
         </div>
@@ -41,6 +46,10 @@
       <a href="/history" class="nav-item">
         <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
         <span data-i18n="nav_history">Recognition History</span>
+      </a>
+      <a href="/presentation" target="_blank" class="nav-item">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"/></svg>
+        <span>Presentation</span>
       </a>
 
       <div class="sidebar-section" data-i18n="sec_system">System</div>
@@ -79,6 +88,11 @@
           <button id="modelsPillBtn" class="pill pill-clickable" data-i18n-title="nav_models" title="AI Models">
             <span class="dot"></span>
             <span><span data-i18n="models_ready">Models ready</span> <span class="mono" id="modelsLoadedText">9/9</span></span>
+          </button>
+
+          <button type="button" id="themeToggleBtn" class="theme-toggle-btn" title="Toggle Dark / Light Mode" aria-label="Toggle Dark / Light Mode">
+            <svg class="theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+            <svg class="theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
           </button>
 
           <div data-lpr-lang></div>
@@ -222,7 +236,7 @@
                   <span data-i18n="pipe_title">Pipeline Breakdown</span>
                 </h2>
                 <div style="display: flex; gap: 8px; align-items: center;">
-                  <span class="badge-country thai" id="badgeCountry">🇹🇭 <span data-i18n="country_th">Thai</span></span>
+                  <span class="badge-country thai" id="badgeCountry">TH · <span data-i18n="country_th">Thai</span></span>
                   <div class="pill" id="totalLatencyPill"><span data-i18n="pipe_latency">Latency:</span> <span class="mono">-- ms</span></div>
                 </div>
               </div>
@@ -241,7 +255,7 @@
                       <div class="empty-state" id="cropRawPlaceholder" style="padding: 16px; font-size: 12.5px;" data-i18n="waiting_file">Waiting for file...</div>
                     </div>
                     <div class="stage-footer">
-                      <div class="stage-meta-row"><span data-i18n="meta_resolution">Resolution</span><span id="metaRes">--</span></div>
+                      <div class="stage-meta-row"><span data-i18n="meta_resolution">Resolution</span><span id="metaRes" class="mono">--</span></div>
                       <div class="stage-meta-row"><span data-i18n="meta_status">Status</span><span id="metaStatus" style="color: var(--accent-green);" data-i18n="ready_status">Ready</span></div>
                     </div>
                   </div>
@@ -260,8 +274,8 @@
                       <div class="empty-state" id="cropM1Placeholder" style="padding: 16px; font-size: 12.5px;" data-i18n="no_plate_yet">No plate yet</div>
                     </div>
                     <div class="stage-footer">
-                      <div class="stage-meta-row"><span data-i18n="meta_country">Country</span><span id="countryMeta" style="color: var(--accent);">--</span></div>
-                      <div class="stage-meta-row"><span data-i18n="meta_confidence">Confidence</span><span id="confPlate">--</span></div>
+                      <div class="stage-meta-row"><span data-i18n="meta_country">Country</span><span id="countryMeta" class="mono" style="color: var(--accent);">--</span></div>
+                      <div class="stage-meta-row"><span data-i18n="meta_confidence">Confidence</span><span id="confPlate" class="mono">--</span></div>
                     </div>
                   </div>
 
@@ -286,7 +300,7 @@
                     </div>
                     <div class="stage-footer">
                       <div class="stage-meta-row"><span data-i18n="meta_layout">Layout</span><span id="layoutMeta" style="font-size: 11px; color: var(--accent-amber);" data-i18n="layout_std">Standard</span></div>
-                      <div class="stage-meta-row"><span data-i18n="meta_confidence">Confidence</span><span id="confCharProv">--</span></div>
+                      <div class="stage-meta-row"><span data-i18n="meta_confidence">Confidence</span><span id="confCharProv" class="mono">--</span></div>
                     </div>
                   </div>
 
@@ -305,10 +319,10 @@
                       <div class="result-province-text" id="resultProvince">--</div>
                       <span class="result-format-badge" id="resultBadge" data-i18n="res_wait">Awaiting result</span>
 
-                      <div class="dlt-truck-pill" id="dltTruckContainer" style="display: none; margin-top: 6px; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; background: rgba(234, 179, 8, 0.15); border: 1px solid rgba(234, 179, 8, 0.4); color: #facc15; gap: 6px; align-items: center; justify-content: center;">
-                        <span style="font-size: 10px; opacity: 0.85;" data-i18n="dlt_label">DLT truck code:</span>
-                        <span id="dltTruckCode">--</span>
-                        <span style="opacity: 0.6; font-size: 10px;">•</span>
+                      <div class="dlt-truck-pill" id="dltTruckContainer" style="display: none;">
+                        <span data-i18n="dlt_label">DLT truck code:</span>
+                        <span id="dltTruckCode" class="mono">--</span>
+                        <span>•</span>
                         <span id="dltTruckProvince">--</span>
                       </div>
 
@@ -320,8 +334,8 @@
                     </div>
 
                     <div class="stage-footer">
-                      <div class="stage-meta-row"><span data-i18n="meta_pattern">Plate pattern</span><span id="patternText" style="color: var(--accent);">--</span></div>
-                      <div class="stage-meta-row"><span data-i18n="meta_provconf">Province confidence</span><span id="confProvProb">--</span></div>
+                      <div class="stage-meta-row"><span data-i18n="meta_pattern">Plate pattern</span><span id="patternText" class="mono" style="color: var(--accent);">--</span></div>
+                      <div class="stage-meta-row"><span data-i18n="meta_provconf">Province confidence</span><span id="confProvProb" class="mono">--</span></div>
                     </div>
                   </div>
 
@@ -331,7 +345,7 @@
                 <div class="debug-drawer" id="debugDrawer">
                   <div class="debug-header">
                     <div class="debug-title">
-                      <svg width="18" height="18" fill="currentColor" viewBox="0 0 24 24"><path d="M20 8h-2.81c-.45-.78-1.07-1.45-1.82-1.96L17 4.41 15.59 3l-2.17 2.17C12.96 5.06 12.49 5 12 5c-.49 0-.96.06-1.41.17L8.41 3 7 4.41l1.62 1.63C7.88 6.55 7.26 7.22 6.81 8H4v2h2.09c-.05.33-.09.66-.09 1v1H4v2h2v1c0 .34.04.67.09 1H4v2h2.81c1.04 1.79 2.97 3 5.19 3s4.15-1.21 5.19-3H20v-2h-2.09c.05-.33.09-.66.09-1v-1h2v-2h-2v-1c0-.34-.04-.67-.09-1H20V8zm-6 8h-4v-2h4v2zm0-4h-4v-2h4v2z"/></svg>
+                      <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M20 8h-2.81c-.45-.78-1.07-1.45-1.82-1.96L17 4.41 15.59 3l-2.17 2.17C12.96 5.06 12.49 5 12 5c-.49 0-.96.06-1.41.17L8.41 3 7 4.41l1.62 1.63C7.88 6.55 7.26 7.22 6.81 8H4v2h2.09c-.05.33-.09.66-.09 1v1H4v2h2v1c0 .34.04.67.09 1H4v2h2.81c1.04 1.79 2.97 3 5.19 3s4.15-1.21 5.19-3H20v-2h-2.09c.05-.33.09-.66.09-1v-1h2v-2h-2v-1c0-.34-.04-.67-.09-1H20V8zm-6 8h-4v-2h4v2zm0-4h-4v-2h4v2z"/></svg>
                       <span data-i18n="dbg_title">Pipeline Inspection (Debug Mode)</span>
                     </div>
                     <span class="pill" data-i18n="dbg_fordev">Developer tool</span>
@@ -381,12 +395,12 @@
       <div class="auth-modal-header" style="text-align: left; display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
         <div>
           <div style="display: flex; align-items: center; gap: 8px;">
-            <span class="dot" style="width: 8px; height: 8px; border-radius: 50%; background: var(--accent-green); box-shadow: 0 0 8px var(--accent-green);"></span>
-            <h3 style="margin: 0; font-size: 1.1rem; color: #f8fafc;" data-i18n="mm_title">Active AI Models</h3>
+            <span class="dot" style="width: 7px; height: 7px; border-radius: 50%; background: var(--emerald);"></span>
+            <h3 style="margin: 0; font-size: 1.05rem; color: var(--text-primary);" data-i18n="mm_title">Active AI Models</h3>
           </div>
-          <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px;" data-i18n="mm_sub">Thai &amp; Lao plate recognition in 4 pipeline stages</div>
+          <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 3px;" data-i18n="mm_sub">Thai &amp; Lao plate recognition in 4 pipeline stages</div>
         </div>
-        <button id="closeModelsModalBtn" class="auth-modal-close" style="position: static; padding: 2px 6px;">&times;</button>
+        <button id="closeModelsModalBtn" class="auth-modal-close" style="position: static;">&times;</button>
       </div>
 
       <div class="models-list" id="modelsModalList">
@@ -495,17 +509,17 @@
         </div>
       </div>
 
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 1.2rem; padding-top: 1rem; border-top: 1px solid rgba(255, 255, 255, 0.08);">
-        <div id="mDeviceTag" class="mono" style="font-size: 0.78rem; color: var(--accent);">--</div>
-        <button id="modalDismissBtn" class="btn-secondary" style="padding: 6px 16px; font-size: 0.82rem;" data-i18n="mm_close">Close</button>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 1rem; padding-top: 0.85rem; border-top: 1px solid var(--border-subtle);">
+        <div id="mDeviceTag" class="mono" style="font-size: 0.76rem; color: var(--text-secondary);">--</div>
+        <button id="modalDismissBtn" class="btn-secondary" style="padding: 6px 14px; font-size: 0.8rem;" data-i18n="mm_close">Close</button>
       </div>
     </div>
   </div>
 
   <!-- Client scripts -->
-  <script src="/static/js/i18n.js?v=2"></script>
-  <script src="/static/js/viewer.js?v=1"></script>
-  <script src="/static/js/auth.js?v=3"></script>
-  <script src="/static/js/app.js?v=10"></script>
+  <script src="/static/js/i18n.js?v=3"></script>
+  <script src="/static/js/viewer.js?v=2"></script>
+  <script src="/static/js/auth.js?v=4"></script>
+  <script src="/static/js/app.js?v=11"></script>
 </body>
 </html>

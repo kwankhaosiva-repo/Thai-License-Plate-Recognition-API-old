@@ -223,8 +223,8 @@ document.addEventListener("DOMContentLoaded", () => {
     historyTableBody.innerHTML = records.map((r) => {
       const isThai = (r.country || "Thai") === "Thai";
       const countryBadge = isThai
-        ? `<span class="badge-country thai">🇹🇭 ${t("country_th", "Thai")}</span>`
-        : `<span class="badge-country laos">🇱🇦 ${t("country_lao", "Lao")}</span>`;
+        ? `<span class="badge-country thai">TH · ${t("country_th", "Thai")}</span>`
+        : `<span class="badge-country laos">LA · ${t("country_lao", "Lao")}</span>`;
       const validBadge = r.is_valid
         ? `<span class="badge-valid">${t("valid_short", "VALID")}</span>`
         : `<span class="badge-invalid">${t("invalid_short", "INVALID")}</span>`;
@@ -236,20 +236,20 @@ document.addEventListener("DOMContentLoaded", () => {
         ? cropRaw.startsWith("data:") ? cropRaw : `data:image/jpeg;base64,${cropRaw}`
         : null;
       const cropHtml = cropSrc
-        ? `<img src="${cropSrc}" style="width:90px; height:38px; object-fit:cover; border-radius:5px; border:1px solid rgba(56,189,248,0.25);" data-lpr-viewer data-title="${escapeHtml(r.plate_text || "-")}" data-subtitle="${escapeHtml(r.timestamp || "")}">`
+        ? `<img src="${cropSrc}" class="hist-thumb" data-lpr-viewer data-title="${escapeHtml(r.plate_text || "-")}" data-subtitle="${escapeHtml(r.timestamp || "")}">`
         : `<span style="font-size:0.7rem; color:var(--text-muted);">${t("no_image", "No image")}</span>`;
 
       return `
         <tr>
           <td>${cropHtml}</td>
-          <td class="hist-mono" style="font-size: 0.8rem; color: var(--accent);">${escapeHtml(r.timestamp || "-")}</td>
+          <td class="hist-mono" style="font-size: 0.8rem; color: var(--text-secondary);">${escapeHtml(r.timestamp || "-")}</td>
           <td>${countryBadge}</td>
-          <td><span class="hist-plate-badge" style="font-size: 0.92rem;">${escapeHtml(r.plate_text || r.plate_number || "-")}</span></td>
+          <td><span class="hist-plate-badge">${escapeHtml(r.plate_text || r.plate_number || "-")}</span></td>
           <td style="font-weight: 600; color: var(--text-primary);">${escapeHtml(r.province || "-")}</td>
           <td style="font-size: 0.8rem; color: var(--text-secondary);">${escapeHtml(r.pattern || "-")}</td>
           <td>${validBadge}</td>
           <td><span class="hist-user-tag">${escapeHtml(userTag)}</span></td>
-          <td class="hist-mono" style="font-weight: 600; color: var(--accent); font-size: 0.8rem;">${latency} ms</td>
+          <td class="hist-mono" style="font-weight: 600; color: var(--text-secondary); font-size: 0.8rem;">${latency} ms</td>
         </tr>`;
     }).join("");
   }
@@ -285,8 +285,8 @@ document.addEventListener("DOMContentLoaded", () => {
       currentRecordsMap[r.record_id] = r;
       const isThai = (r.country || "Thai") === "Thai";
       const countryBadge = isThai
-        ? `<span class="badge-country thai">🇹🇭 ${t("country_th", "Thai")}</span>`
-        : `<span class="badge-country laos">🇱🇦 ${t("country_lao", "Lao")}</span>`;
+        ? `<span class="badge-country thai">TH · ${t("country_th", "Thai")}</span>`
+        : `<span class="badge-country laos">LA · ${t("country_lao", "Lao")}</span>`;
       const validBadge = r.is_valid
         ? `<span class="badge-valid">${t("valid_short", "VALID")}</span>`
         : `<span class="badge-invalid">${t("invalid_short", "INVALID")}</span>`;
@@ -305,7 +305,7 @@ document.addEventListener("DOMContentLoaded", () => {
           <td style="font-size: 0.8rem; color: var(--text-secondary);">${escapeHtml(r.pattern || "-")}</td>
           <td>${validBadge}</td>
           <td><span class="hist-user-tag" title="${escapeHtml(userTag)}">${escapeHtml(userTag)}</span></td>
-          <td class="hist-mono" style="font-weight: 600; color: var(--accent);">${r.total_latency_ms || 0} ms</td>
+          <td class="hist-mono" style="font-weight: 600; color: var(--text-secondary);">${r.total_latency_ms || 0} ms</td>
           <td style="text-align: center;">
             <button type="button" class="btn-hist btn-inspect" data-record-id="${r.record_id}">${t("btn_inspect", "Inspect")}</button>
           </td>
@@ -347,7 +347,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const isThai = (record.country || "Thai") === "Thai";
 
     modalCountryBadge.className = isThai ? "badge-country thai" : "badge-country laos";
-    modalCountryBadge.textContent = isThai ? `🇹🇭 ${t("country_th", "Thai")}` : `🇱🇦 ${t("country_lao", "Lao")}`;
+    modalCountryBadge.textContent = isThai ? `TH · ${t("country_th", "Thai")}` : `LA · ${t("country_lao", "Lao")}`;
     modalProvinceText.textContent = record.province || "-";
     modalValidBadge.className = record.is_valid ? "badge-valid" : "badge-invalid";
     modalValidBadge.textContent = record.is_valid ? t("res_valid", "VALID FORMAT") : t("res_invalid", "NON-STANDARD");
@@ -533,24 +533,16 @@ document.addEventListener("DOMContentLoaded", () => {
       btnSourceLocal.addEventListener("click", () => {
         if (currentSource === "local") return;
         currentSource = "local";
-        btnSourceLocal.style.background = "var(--accent-strong)";
-        btnSourceLocal.style.color = "#fff";
-        btnSourceLocal.style.fontWeight = "600";
-        btnSourceBigQuery.style.background = "transparent";
-        btnSourceBigQuery.style.color = "var(--text-secondary)";
-        btnSourceBigQuery.style.fontWeight = "500";
+        btnSourceLocal.classList.add("active");
+        btnSourceBigQuery.classList.remove("active");
         loadHistory();
       });
 
       btnSourceBigQuery.addEventListener("click", () => {
         if (currentSource === "cloud") return;
         currentSource = "cloud";
-        btnSourceBigQuery.style.background = "var(--accent-strong)";
-        btnSourceBigQuery.style.color = "#fff";
-        btnSourceBigQuery.style.fontWeight = "600";
-        btnSourceLocal.style.background = "transparent";
-        btnSourceLocal.style.color = "var(--text-secondary)";
-        btnSourceLocal.style.fontWeight = "500";
+        btnSourceBigQuery.classList.add("active");
+        btnSourceLocal.classList.remove("active");
         loadHistory();
       });
     }
