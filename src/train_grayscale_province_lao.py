@@ -27,6 +27,7 @@ from PIL import Image
 from tqdm import tqdm
 
 from src.models import ResNetProvinceClassifier
+from src.preprocess import GrayscaleSmartResize
 
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
@@ -36,30 +37,6 @@ WEIGHTS_DIR = PROJECT_ROOT / "weights"
 MODEL_SAVE_PATH = WEIGHTS_DIR / "province_model_grayscale_lao.pth"
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
-
-
-class GrayscaleSmartResize:
-    def __init__(self, size=(256, 64)):
-        self.target_w, self.target_h = size
-
-    def __call__(self, img_pil: Image.Image):
-        gray_im = img_pil.convert("L")
-        w, h = gray_im.size
-
-        im_arr = np.array(gray_im)
-        corners = [im_arr[0, 0], im_arr[0, -1], im_arr[-1, 0], im_arr[-1, -1]]
-        bg_val = int(np.median(corners))
-
-        ratio = min(self.target_w / w, self.target_h / h)
-        new_w, new_h = max(4, int(w * ratio)), max(4, int(h * ratio))
-        resized = gray_im.resize((new_w, new_h), Image.BICUBIC)
-
-        new_im = Image.new("L", (self.target_w, self.target_h), color=bg_val)
-        paste_x = (self.target_w - new_w) // 2
-        paste_y = (self.target_h - new_h) // 2
-        new_im.paste(resized, (paste_x, paste_y))
-
-        return new_im.convert("RGB")
 
 
 def get_grayscale_transforms(is_train=False):

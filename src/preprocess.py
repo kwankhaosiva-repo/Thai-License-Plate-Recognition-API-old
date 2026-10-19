@@ -3,6 +3,8 @@ import numpy as np
 from PIL import Image, ImageOps
 from torchvision import transforms
 
+from src.config import Config, cfg
+
 class SmartResize:
     def __init__(self, size, mode="L"):
         self.size = size
@@ -102,24 +104,16 @@ class GrayscaleSmartResize:
         self._use_grayscale = use_grayscale
 
     @property
-    def use_ambient_padding(self):
+    def use_ambient_padding(self) -> bool:
         if self._use_ambient_padding is not None:
             return self._use_ambient_padding
-        try:
-            from src.config import Config
-            return Config.is_ambient_padding_enabled()
-        except Exception:
-            return True
+        return Config.is_ambient_padding_enabled()
 
     @property
-    def use_grayscale(self):
+    def use_grayscale(self) -> bool:
         if self._use_grayscale is not None:
             return self._use_grayscale
-        try:
-            from src.config import Config
-            return Config.is_grayscale_norm_enabled()
-        except Exception:
-            return True
+        return Config.is_grayscale_norm_enabled()
 
     def __call__(self, img_pil):
         if not hasattr(img_pil, "size"):
@@ -183,4 +177,33 @@ def get_grayscale_prov_transforms(is_train=False, size=(256, 64), use_ambient_pa
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.25, 0.25, 0.25]),
         ])
+
+
+def apply_residual_deskew(warped_plate):
+    """Post-warp residual rotation search — a HEURISTIC, off by default.
+
+    `warp_perspective_plate` already maps the ordered quad to an axis-aligned
+    320x160 rectangle, so perspective tilt is gone by construction.
+    `fine_deskew_plate` then runs a SECOND, independent search (±8°, 0.25°
+    steps, argmax of horizontal-projection variance) and rotates each plate by a
+    different, data-dependent angle. That is an OpenCV crutch, not a contract:
+    it existed because the corner regressor was undertrained, and it hid that.
+
+    Rotation tolerance belongs in TRAIN augmentation
+    (docs/PREPROCESSING_CONTRACT.md §3), where it costs one parameterised
+    transform instead of a per-image search at serve time.
+
+    Kept behind cfg.USE_RESIDUAL_DESKEW so the effect stays measurable; any
+    change here needs a recorded A/B (scratch/ab_flag_matrix.py mode
+    J_rectify_only vs A_current).
+    """
+    if not cfg.USE_RESIDUAL_DESKEW:
+        return warped_plate
+    try:
+        from src.prepare_perspective_dataset import fine_deskew_plate
+        return fine_deskew_plate(warped_plate)
+    except Exception as e:
+        print(f"[Residual Deskew] Warning: {e}")
+        return warped_plate
+
 

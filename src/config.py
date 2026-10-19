@@ -177,38 +177,6 @@ class Config:
     ENABLE_FALLBACK = True                # Fall back to CTC OCR when box prediction violates Thai syntax
     ENABLE_RECONCILIATION = True          # Sequence alignment & fusion between Box and CTC OCR
 
-    @property
-    def USE_CLAHE(self) -> bool:
-        return not self.PURE_MODEL_MODE and self.ENABLE_OPENCV_CLAHE
-
-    @property
-    def USE_AMBIENT_PADDING(self) -> bool:
-        return not self.PURE_MODEL_MODE and self.ENABLE_AMBIENT_CORNER_PAD
-
-    @property
-    def USE_GRAYSCALE_NORM(self) -> bool:
-        return not self.PURE_MODEL_MODE and self.ENABLE_GRAYSCALE_PROV_NORM
-
-    @property
-    def USE_STROKE_DISAMBIGUATION(self) -> bool:
-        return not self.PURE_MODEL_MODE and self.ENABLE_STROKE_DISAMBIGUATION
-
-    @property
-    def USE_HOMOGRAPHY_DESKEW(self) -> bool:
-        return not self.PURE_MODEL_MODE and self.ENABLE_HOMOGRAPHY_DESKEW
-
-    @property
-    def USE_RESIDUAL_DESKEW(self) -> bool:
-        return not self.PURE_MODEL_MODE and self.ENABLE_RESIDUAL_DESKEW
-
-    @property
-    def USE_AUTOCONTRAST(self) -> bool:
-        return not self.PURE_MODEL_MODE and self.ENABLE_AUTOCONTRAST
-
-    @property
-    def USE_REGEX_REPAIR(self) -> bool:
-        return not self.PURE_MODEL_MODE and self.ENABLE_REGEX_REPAIR
-
     @classmethod
     def is_clahe_enabled(cls) -> bool:
         return not cls.PURE_MODEL_MODE and cls.ENABLE_OPENCV_CLAHE
@@ -240,6 +208,38 @@ class Config:
     @classmethod
     def is_regex_repair_enabled(cls) -> bool:
         return not cls.PURE_MODEL_MODE and cls.ENABLE_REGEX_REPAIR
+
+    @property
+    def USE_CLAHE(self) -> bool:
+        return self.is_clahe_enabled()
+
+    @property
+    def USE_AMBIENT_PADDING(self) -> bool:
+        return self.is_ambient_padding_enabled()
+
+    @property
+    def USE_GRAYSCALE_NORM(self) -> bool:
+        return self.is_grayscale_norm_enabled()
+
+    @property
+    def USE_STROKE_DISAMBIGUATION(self) -> bool:
+        return self.is_stroke_disambiguation_enabled()
+
+    @property
+    def USE_HOMOGRAPHY_DESKEW(self) -> bool:
+        return self.is_homography_deskew_enabled()
+
+    @property
+    def USE_RESIDUAL_DESKEW(self) -> bool:
+        return self.is_residual_deskew_enabled()
+
+    @property
+    def USE_AUTOCONTRAST(self) -> bool:
+        return self.is_autocontrast_enabled()
+
+    @property
+    def USE_REGEX_REPAIR(self) -> bool:
+        return self.is_regex_repair_enabled()
 
     # ============================================================
     # SERVE / PRE-PROCESS GEOMETRY — READ THIS BEFORE A/B TESTING

@@ -157,7 +157,12 @@ from src.auth_manager import (
     get_current_user_profile,
 )
 from src.models import ResNetCRNN, ProvinceClassifier, ResNetProvinceClassifier, best_path_decode
-from src.preprocess import get_ocr_transforms, get_prov_transforms, get_grayscale_prov_transforms
+from src.preprocess import (
+    get_ocr_transforms,
+    get_prov_transforms,
+    get_grayscale_prov_transforms,
+    apply_residual_deskew,
+)
 from src.validators import (
     format_thai_plate,
     format_lao_plate,
@@ -174,7 +179,6 @@ from src.validators import (
 from src.prepare_perspective_dataset import (
     extract_quad_corners,
     warp_perspective_plate,
-    fine_deskew_plate,
 )
 from src.history_manager import (
     save_recognition,
@@ -620,33 +624,6 @@ def charbox_greedy_nms(raw_boxes, iou_thr=0.35):
         if all(_iou(cand, k) < iou_thr for k in kept):
             kept.append(cand)
     return kept
-
-
-def apply_residual_deskew(warped_plate):
-    """Post-warp residual rotation search — a HEURISTIC, off by default.
-
-    `warp_perspective_plate` already maps the ordered quad to an axis-aligned
-    320x160 rectangle, so perspective tilt is gone by construction.
-    `fine_deskew_plate` then runs a SECOND, independent search (±8°, 0.25°
-    steps, argmax of horizontal-projection variance) and rotates each plate by a
-    different, data-dependent angle. That is an OpenCV crutch, not a contract:
-    it existed because the corner regressor was undertrained, and it hid that.
-
-    Rotation tolerance belongs in TRAIN augmentation
-    (docs/PREPROCESSING_CONTRACT.md §3), where it costs one parameterised
-    transform instead of a per-image search at serve time.
-
-    Kept behind cfg.USE_RESIDUAL_DESKEW so the effect stays measurable; any
-    change here needs a recorded A/B (scratch/ab_flag_matrix.py mode
-    J_rectify_only vs A_current).
-    """
-    try:
-        if not cfg.USE_RESIDUAL_DESKEW:
-            return warped_plate
-        return fine_deskew_plate(warped_plate)
-    except Exception as e:
-        print(f"[Residual Deskew] Warning: {e}")
-        return warped_plate
 
 
 def has_invalid_thai_consonant_placement(text: str) -> bool:
@@ -1504,7 +1481,7 @@ class LPRPipelineService:
         rh, rw = rectified_plate.shape[:2]
         # Top banner DLT code region: strictly the right portion next to 'THAILAND' (y in [0.03*rh, 0.25*rh], x in [0.68*rw, 0.95*rw])
         banner_crop = rectified_plate[int(rh * 0.03) : int(rh * 0.25), int(rw * 0.68) : int(rw * 0.95)]
-        if cfg.PURE_MODEL_MODE or not cfg.USE_STROKE_DISAMBIGUATION:
+        if cfg.PURE_MODEL_MODE:
             return None, None, 0.0, False
 
         if banner_crop.shape[0] < 6 or banner_crop.shape[1] < 12:
