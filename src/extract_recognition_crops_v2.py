@@ -581,9 +581,22 @@ def main():
         global CHARBOX_DS
         CHARBOX_DS = Path(args.charbox_dataset)
 
-    if OUT_DIR.exists() and args.overwrite:
-        shutil.rmtree(OUT_DIR)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    if args.overwrite:
+        # Protect human-labelled OCR datasets (e.g. ocr_gt_REVIEW_ME.csv, ocr_crops/)
+        # Only clean the specific crop subdirectories being re-extracted.
+        dirs_to_clean: list[Path] = []
+        if args.only in ("province", "all"):
+            dirs_to_clean.extend([
+                OUT_DIR / "province_crops_v2",
+                OUT_DIR / "plate_crops_v2",
+            ])
+        if args.only in ("char", "all"):
+            dirs_to_clean.append(OUT_DIR / "char_crops_v2")
+
+        for d in dirs_to_clean:
+            if d.exists():
+                shutil.rmtree(d)
 
     abbr_map, prov_map = load_province_maps()
     cls_names = load_prov_class_names()
