@@ -2761,7 +2761,13 @@ class LPRPipelineService:
                     chars_predicted = []
                     num_boxes = len(detected_boxes)
                     for b_idx, (bx1, by1, bx2, by2, bconf) in enumerate(detected_boxes):
-                        single_crop = char_crop[max(0, by1) : min(char_crop.shape[0], by2), max(0, bx1) : min(char_crop.shape[1], bx2)]
+                        bw = bx2 - bx1
+                        pad_x = int(round(bw * 0.10))
+                        prev_x2 = detected_boxes[b_idx - 1][2] if b_idx > 0 else 0
+                        next_x1 = detected_boxes[b_idx + 1][0] if b_idx < num_boxes - 1 else crop_w
+                        crop_x1 = max(0, max(prev_x2 + 1, bx1 - pad_x))
+                        crop_x2 = min(crop_w, min(next_x1 - 1, bx2 + pad_x))
+                        single_crop = char_crop[max(0, by1) : min(char_crop.shape[0], by2), crop_x1 : crop_x2]
                         if single_crop.shape[0] < 4 or single_crop.shape[1] < 4:
                             continue
                         sh, sw = single_crop.shape[:2]
