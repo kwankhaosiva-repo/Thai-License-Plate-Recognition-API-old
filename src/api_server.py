@@ -1809,8 +1809,9 @@ class LPRPipelineService:
                 # If no polygon mask (e.g. RT-DETR bbox mode), predict exact 4-corner homography quad with plate_corner_model!
                 if (rectified_plate is None or quad_corners is None) and self.plate_corner_model is not None and bw >= 15 and bh >= 15:
                     try:
-                        pad_w = int(bw * 0.12)
-                        pad_h = int(bh * 0.12)
+                        # 2% subtle margin prevents edge clipping while strictly avoiding outer vehicle bumper/bracket capture
+                        pad_w = int(bw * 0.02)
+                        pad_h = int(bh * 0.02)
                         c_x1 = max(0, bx1 - pad_w)
                         c_y1 = max(0, by1 - pad_h)
                         c_x2 = min(w_orig, bx2 + pad_w)
@@ -1827,14 +1828,14 @@ class LPRPipelineService:
                             with torch.no_grad():
                                 norm_corners = self.plate_corner_model(ts_corner).squeeze(0).cpu().numpy().reshape(4, 2)
 
-                            # Map predicted local crop corners [0, 1] back to full image pixel coordinates
                             quad_corners = np.array([
                                 [c_x1 + cx * crop_w, c_y1 + cy * crop_h]
                                 for cx, cy in norm_corners
                             ], dtype=np.float32)
 
+                            # Exact homography warp without fake extra bumper expansion (padding_frac=0.0)
                             raw_warped = warp_perspective_plate(
-                                img_bgr, quad_corners, target_width=320, target_height=160, padding_frac=0.06
+                                img_bgr, quad_corners, target_width=320, target_height=160, padding_frac=0.0
                             )
                             rectified_plate = apply_residual_deskew(raw_warped)
                     except Exception as e:
@@ -2767,7 +2768,9 @@ class LPRPipelineService:
                         next_x1 = detected_boxes[b_idx + 1][0] if b_idx < num_boxes - 1 else crop_w
                         crop_x1 = max(0, max(prev_x2 + 1, bx1 - pad_x))
                         crop_x2 = min(crop_w, min(next_x1 - 1, bx2 + pad_x))
-                        single_crop = char_crop[max(0, by1) : min(char_crop.shape[0], by2), crop_x1 : crop_x2]
+                        crop_y1 = max(0, by1 - 1)
+                        crop_y2 = min(int(char_crop.shape[0] * 0.938), by2 + 2)
+                        single_crop = char_crop[crop_y1 : crop_y2, crop_x1 : crop_x2]
                         if single_crop.shape[0] < 4 or single_crop.shape[1] < 4:
                             continue
                         sh, sw = single_crop.shape[:2]

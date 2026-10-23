@@ -85,8 +85,8 @@ class Config:
     MODEL_LAO_FILENAME = "plate_detector_lao_dfine_nano.pt"
 
     # --- Model 3B: Lao Province Classifier ---
-    #   v3 leak-free retrain: valid 99.78% / test 99.11% (>= production on both).
-    MODEL_3B_LAO_FILENAME = "province_model_grayscale_lao_v3.pth"
+    #   v6 2-stage retrain: 256x64 Grayscale ResNet18, 18 balanced classes.
+    MODEL_3B_LAO_FILENAME = "province_model_grayscale_lao_v6.pth"
 
     # --- Real-Time Stream & Video Configuration ---
     # Model 1 Plate Confidence Threshold for real-time video streams and video uploads:
@@ -443,6 +443,18 @@ class Config:
     CHAR_BOX_MODEL_RFDETR_NANO_PATH = WEIGHTS_DIR / "character_box_detector_rfdetr_nano.pt"
     CHAR_BOX_MODEL_DFINE_NANO_PATH = WEIGHTS_DIR / "character_box_detector_dfine_nano.pt"
     CHAR_BOX_MODEL_DFINE_SMALL_PATH = WEIGHTS_DIR / "character_box_detector_dfine_small.pt"
+
+    # Lao Model 3A: Character Box Detector
+    CHAR_BOX_MODEL_LAO_V6_PATH = WEIGHTS_DIR / "character_box_detector_picodet_s_lao_m3a_v6.onnx"
+    CHAR_BOX_MODEL_LAO_PATH = WEIGHTS_DIR / "character_box_detector_picodet_s_lao_m3a_v6.pt"
+
+    @property
+    def ACTIVE_CHAR_BOX_LAO_PATH(self):
+        if self.CHAR_BOX_MODEL_LAO_V6_PATH.exists():
+            return self.CHAR_BOX_MODEL_LAO_V6_PATH
+        if self.CHAR_BOX_MODEL_LAO_PATH.exists():
+            return self.CHAR_BOX_MODEL_LAO_PATH
+        return self.ACTIVE_CHAR_BOX_MODEL_PATH
 
     @property
     def ACTIVE_CHAR_BOX_MODEL_PATH(self):
