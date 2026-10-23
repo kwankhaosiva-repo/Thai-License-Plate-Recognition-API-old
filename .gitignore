@@ -52,6 +52,7 @@ top_banner_0072.jpg
 # ONNX export
 *.ONNX
 *.onnx
+*.onnx.data
 *.lock
 
 # Backup files
