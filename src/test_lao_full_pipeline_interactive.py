@@ -217,13 +217,13 @@ class LaoFullPipelineTester:
             self.char_map_lao = {int(k): v for k, v in json.load(f).items()}
 
         # 7. Lao Province Detector & Classifier
-        prov_det_path = self.weights_dir / "province_detector_picodet_s_lao_v3.pt"
+        prov_det_path = self.weights_dir / "province_detector_picodet_s_lao_v4.pt"
+        if not prov_det_path.exists():
+            prov_det_path = cfg.PROJECT_ROOT / "chacrit" / "output model" / "province_detector_picodet_s_lao_v4.pt"
+        if not prov_det_path.exists():
+            prov_det_path = self.weights_dir / "province_detector_picodet_s_lao_v3.pt"
         if not prov_det_path.exists():
             prov_det_path = cfg.PROJECT_ROOT / "chacrit" / "output model" / "province_detector_picodet_s_lao_v3.pt"
-        if not prov_det_path.exists():
-            prov_det_path = self.weights_dir / "province_detector_picodet_s_lao_v2.pt"
-        if not prov_det_path.exists():
-            prov_det_path = cfg.PROJECT_ROOT / "chacrit" / "output model" / "province_detector_picodet_s_lao_v2.pt"
         self.lao_prov_detector = None
         if prov_det_path.exists():
             print(f"  [7/8] Lao Province Detector     : {prov_det_path.name}")
@@ -640,17 +640,13 @@ class LaoFullPipelineTester:
             # 4. Lao Province Detection / Classification
             tprov_start = time.time()
             if self.prov_mode == "1stage":
-                # 1-Stage Mode: PicoDet-S directly predicts the province class from the plate
+                # 1-Stage Mode: PicoDet-S directly predicts the province class from the 320x160 plate
                 if self.lao_prov_detector is not None:
-                    res_lp = self.lao_prov_detector.predict(plate_padded, conf=0.10, device=self.device)
+                    res_lp = self.lao_prov_detector.predict(rectified_plate, conf=0.10, device=self.device)
                     if len(res_lp.boxes) > 0:
                         best_lp = max(res_lp.boxes, key=lambda b: float(b.conf[0]))
                         lpx1, lpy1, lpx2, lpy2 = best_lp.xyxy[0].tolist()
-                        orig_px1 = max(0, min(rw, int(round(lpx1 - pad_x))))
-                        orig_px2 = max(0, min(rw, int(round(lpx2 - pad_x))))
-                        orig_py1 = max(0, min(rh, int(round(lpy1 - pad_y))))
-                        orig_py2 = max(0, min(rh, int(round(lpy2 - pad_y))))
-                        prov_box = [orig_px1, orig_py1, orig_px2, orig_py2]
+                        prov_box = [int(round(lpx1)), int(round(lpy1)), int(round(lpx2)), int(round(lpy2))]
                         cls_idx = int(best_lp.cls[0])
                         prov_name = self.prov_map_lao.get(cls_idx, f"Class_{cls_idx}")
                         prov_conf = float(best_lp.conf[0]) * 100
@@ -658,19 +654,19 @@ class LaoFullPipelineTester:
                     prov_crop = rectified_plate[prov_box[1]:prov_box[3], prov_box[0]:prov_box[2]]
             else:
                 # 2-Stage Mode:
-                # Stage 1: Detect province banner bounding box
+                # Stage 1: Detect province banner bounding box (using plate directly)
                 if self.lao_prov_detector is not None:
-                    res_lp = self.lao_prov_detector.predict(plate_padded, conf=0.15, device=self.device)
+                    res_lp = self.lao_prov_detector.predict(rectified_plate, conf=0.15, device=self.device)
                     if len(res_lp.boxes) > 0:
                         best_lp = max(res_lp.boxes, key=lambda b: float(b.conf[0]))
                         lpx1, lpy1, lpx2, lpy2 = best_lp.xyxy[0].tolist()
-                        orig_px1 = max(0, min(rw, int(round(lpx1 - pad_x))))
-                        orig_px2 = max(0, min(rw, int(round(lpx2 - pad_x))))
-                        orig_py1 = max(0, min(rh, int(round(lpy1 - pad_y))))
-                        orig_py2 = max(0, min(rh, int(round(lpy2 - pad_y))))
-                        if (orig_px2 - orig_px1) >= 20 and (orig_py2 - orig_py1) >= 8:
-                            prov_box = [orig_px1, orig_py1, orig_px2, orig_py2]
-                            prov_crop = rectified_plate[orig_py1:orig_py2, orig_px1:orig_px2]
+                        px1 = int(round(lpx1))
+                        py1 = int(round(lpy1))
+                        px2 = int(round(lpx2))
+                        py2 = int(round(lpy2))
+                        if (px2 - px1) >= 20 and (py2 - py1) >= 8:
+                            prov_box = [px1, py1, px2, py2]
+                            prov_crop = rectified_plate[py1:py2, px1:px2]
 
                 # Fallback to upper banner geometry if detector missed
                 if prov_box is None:
