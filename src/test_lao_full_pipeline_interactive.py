@@ -118,8 +118,9 @@ def draw_text_pil(
 # Lao & Thai Multi-Stage Pipeline Engine
 # -------------------------------------------------------------------------
 class LaoFullPipelineTester:
-    def __init__(self, device: str = "cpu"):
+    def __init__(self, device: str = "cpu", prov_mode: str = "2stage"):
         self.device = device
+        self.prov_mode = prov_mode
         self.weights_dir = cfg.WEIGHTS_DIR
         print("\n" + "=" * 70)
         print(" Loading End-to-End Recognition Models (Thai & Lao) ".center(70, "="))
@@ -636,37 +637,56 @@ class LaoFullPipelineTester:
                 })
             t_rec = int((time.time() - trec_start) * 1000)
 
-            # 4. Lao Province: 2-Stage Architecture
-            # Stage 1: Detect province banner bounding box
+            # 4. Lao Province Detection / Classification
             tprov_start = time.time()
-            if self.lao_prov_detector is not None:
-                res_lp = self.lao_prov_detector.predict(plate_padded, conf=0.15, device=self.device)
-                if len(res_lp.boxes) > 0:
-                    best_lp = max(res_lp.boxes, key=lambda b: float(b.conf[0]))
-                    lpx1, lpy1, lpx2, lpy2 = best_lp.xyxy[0].tolist()
-                    orig_px1 = max(0, min(rw, int(round(lpx1 - pad_x))))
-                    orig_px2 = max(0, min(rw, int(round(lpx2 - pad_x))))
-                    orig_py1 = max(0, min(rh, int(round(lpy1 - pad_y))))
-                    orig_py2 = max(0, min(rh, int(round(lpy2 - pad_y))))
-                    if (orig_px2 - orig_px1) >= 20 and (orig_py2 - orig_py1) >= 8:
+            if self.prov_mode == "1stage":
+                # 1-Stage Mode: PicoDet-S directly predicts the province class from the plate
+                if self.lao_prov_detector is not None:
+                    res_lp = self.lao_prov_detector.predict(plate_padded, conf=0.10, device=self.device)
+                    if len(res_lp.boxes) > 0:
+                        best_lp = max(res_lp.boxes, key=lambda b: float(b.conf[0]))
+                        lpx1, lpy1, lpx2, lpy2 = best_lp.xyxy[0].tolist()
+                        orig_px1 = max(0, min(rw, int(round(lpx1 - pad_x))))
+                        orig_px2 = max(0, min(rw, int(round(lpx2 - pad_x))))
+                        orig_py1 = max(0, min(rh, int(round(lpy1 - pad_y))))
+                        orig_py2 = max(0, min(rh, int(round(lpy2 - pad_y))))
                         prov_box = [orig_px1, orig_py1, orig_px2, orig_py2]
-                        prov_crop = rectified_plate[orig_py1:orig_py2, orig_px1:orig_px2]
+                        cls_idx = int(best_lp.cls[0])
+                        prov_name = self.prov_map_lao.get(cls_idx, f"Class_{cls_idx}")
+                        prov_conf = float(best_lp.conf[0]) * 100
+                if prov_box is not None:
+                    prov_crop = rectified_plate[prov_box[1]:prov_box[3], prov_box[0]:prov_box[2]]
+            else:
+                # 2-Stage Mode:
+                # Stage 1: Detect province banner bounding box
+                if self.lao_prov_detector is not None:
+                    res_lp = self.lao_prov_detector.predict(plate_padded, conf=0.15, device=self.device)
+                    if len(res_lp.boxes) > 0:
+                        best_lp = max(res_lp.boxes, key=lambda b: float(b.conf[0]))
+                        lpx1, lpy1, lpx2, lpy2 = best_lp.xyxy[0].tolist()
+                        orig_px1 = max(0, min(rw, int(round(lpx1 - pad_x))))
+                        orig_px2 = max(0, min(rw, int(round(lpx2 - pad_x))))
+                        orig_py1 = max(0, min(rh, int(round(lpy1 - pad_y))))
+                        orig_py2 = max(0, min(rh, int(round(lpy2 - pad_y))))
+                        if (orig_px2 - orig_px1) >= 20 and (orig_py2 - orig_py1) >= 8:
+                            prov_box = [orig_px1, orig_py1, orig_px2, orig_py2]
+                            prov_crop = rectified_plate[orig_py1:orig_py2, orig_px1:orig_px2]
 
-            # Fallback to upper banner geometry if detector missed
-            if prov_box is None:
-                prov_box = [int(rw * 0.10), int(rh * 0.04), int(rw * 0.90), int(rh * 0.44)]
-                prov_crop = rectified_plate[prov_box[1]:prov_box[3], prov_box[0]:prov_box[2]]
+                # Fallback to upper banner geometry if detector missed
+                if prov_box is None:
+                    prov_box = [int(rw * 0.10), int(rh * 0.04), int(rw * 0.90), int(rh * 0.44)]
+                    prov_crop = rectified_plate[prov_box[1]:prov_box[3], prov_box[0]:prov_box[2]]
 
-            # Stage 2: High-Resolution Grayscale Province Classification (ResNet18 v6 at 256x64)
-            if prov_crop is not None and prov_crop.size > 0 and prov_crop.shape[0] >= 4 and prov_crop.shape[1] >= 4:
-                pil_lp = Image.fromarray(cv2.cvtColor(prov_crop, cv2.COLOR_BGR2RGB))
-                ts_lp = self.tf_prov_lao(pil_lp).unsqueeze(0).to(self.device)
-                with torch.no_grad():
-                    out_lp = self.prov_model_lao(ts_lp)
-                    probs_lp = F.softmax(out_lp, dim=1).squeeze(0)
-                    top_lp, top_lpi = probs_lp.max(0)
-                prov_name = self.prov_map_lao.get(top_lpi.item(), "Unknown")
-                prov_conf = float(top_lp.item()) * 100
+                # Stage 2: High-Resolution Grayscale Province Classification (ResNet18 v6 at 256x64)
+                if prov_crop is not None and prov_crop.size > 0 and prov_crop.shape[0] >= 4 and prov_crop.shape[1] >= 4:
+                    pil_lp = Image.fromarray(cv2.cvtColor(prov_crop, cv2.COLOR_BGR2RGB))
+                    ts_lp = self.tf_prov_lao(pil_lp).unsqueeze(0).to(self.device)
+                    with torch.no_grad():
+                        out_lp = self.prov_model_lao(ts_lp)
+                        probs_lp = F.softmax(out_lp, dim=1).squeeze(0)
+                        top_lp, top_lpi = probs_lp.max(0)
+                    prov_name = self.prov_map_lao.get(top_lpi.item(), "Unknown")
+                    prov_conf = float(top_lp.item()) * 100
 
             t_prov = int((time.time() - tprov_start) * 1000)
             raw_chars_str = "".join([c["char"] for c in char_details])
@@ -908,6 +928,7 @@ def main():
     parser.add_argument("input_path", nargs="?", type=str, default=None, help="Folder path or image path to test")
     parser.add_argument("--save-all", action="store_true", help="Save snapshots for all images non-interactively without GUI window")
     parser.add_argument("--out-dir", type=str, default=None, help="Custom output directory for saving snapshots")
+    parser.add_argument("--prov-mode", type=str, choices=["1stage", "2stage"], default="2stage", help="Province prediction mode: '1stage' (PicoDet-S direct) or '2stage' (PicoDet-S box + ResNet18 classifier)")
     args = parser.parse_args()
 
     input_path = args.input_path
@@ -925,7 +946,7 @@ def main():
 
     print(f"Found {len(image_paths)} images to test.")
 
-    tester = LaoFullPipelineTester(device="cpu")
+    tester = LaoFullPipelineTester(device="cpu", prov_mode=args.prov_mode)
 
     output_dir = Path(args.out_dir) if args.out_dir else (cfg.PROJECT_ROOT / "scratch" / "lao_test_snapshots")
     output_dir.mkdir(parents=True, exist_ok=True)
