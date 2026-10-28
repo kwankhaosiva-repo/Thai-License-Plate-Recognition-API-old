@@ -145,6 +145,16 @@ M1_PICODET = ModelPreprocessSpec(
           "Always pass imgsz=416 at predict/export time (ONNX input is 416x416).",
 )
 
+M1_PICODET_320 = ModelPreprocessSpec(
+    name="plate_detector_picodet_s (320x320 via LibreYOLO)",
+    resize_mode=ResizeMode.STRETCH,
+    tensor_h=320, tensor_w=320,
+    normalization=Normalization.UNIT,
+    train_aspect_w_over_h=4 / 3,
+    postprocess="identity",
+    notes="Trained at imgsz=320.",
+)
+
 M1_YOLO_LETTERBOX = ModelPreprocessSpec(
     name="yolo11* / rtdetr (Ultralytics)",
     resize_mode=ResizeMode.LETTERBOX,
@@ -189,6 +199,17 @@ M2_COMPONENTS_PICODET = ModelPreprocessSpec(
           "divide returned xyxy by the upscale factor. Do NOT letterbox.",
 )
 
+M2_COMPONENTS_PICODET_320 = ModelPreprocessSpec(
+    name="component_detector_picodet_s (320x320 via LibreYOLO)",
+    resize_mode=ResizeMode.STRETCH,
+    tensor_h=320, tensor_w=320,
+    normalization=Normalization.UNIT,
+    train_aspect_w_over_h=2.0,
+    postprocess="divide_by_upscale_scale",
+    notes="Feed rectified plates upscaled to 640x320 (train aspect 2:1) and "
+          "divide returned xyxy by the upscale factor. Do NOT letterbox.",
+)
+
 # ---------------------------------------------------------------------------
 # Model 3A — character box detector.
 # Trained on Roboflow char crops, measured median aspect 3.73 (~3.7:1),
@@ -229,11 +250,24 @@ M3A_CHARBOX_PICODET = ModelPreprocessSpec(
           "divide returned xyxy by the upscale factor. Unit norm.",
 )
 
+M3A_CHARBOX_PICODET_320 = ModelPreprocessSpec(
+    name="character_box_detector_picodet_s (320x320 via LibreYOLO)",
+    resize_mode=ResizeMode.STRETCH,
+    tensor_h=320, tensor_w=320,
+    normalization=Normalization.UNIT,
+    train_aspect_w_over_h=3.73,
+    postprocess="divide_by_upscale_scale",
+    notes="Feed char crops upscaled to train aspect (~3.7:1, height 320) and "
+          "divide returned xyxy by the upscale factor. Unit norm.",
+)
+
 
 def get_m1_spec(model_filename: str) -> ModelPreprocessSpec:
     """Pick the Model 1 spec from the active weight filename."""
     n = model_filename.lower()
     if "picodet" in n:
+        if "320" in n:
+            return M1_PICODET_320
         return M1_PICODET
     if "rfdetr" in n and "obb" not in n:
         return M1_RFDETR_SMALL if "small" in n else M1_RFDETR_BASE
@@ -250,6 +284,8 @@ def get_m1_spec(model_filename: str) -> ModelPreprocessSpec:
 def get_m2_spec(model_filename: str) -> ModelPreprocessSpec:
     n = model_filename.lower()
     if "picodet" in n:
+        if "320" in n:
+            return M2_COMPONENTS_PICODET_320
         return M2_COMPONENTS_PICODET
     if "rfdetr" in n:
         return M1_RFDETR_BASE  # same family geometry (560 stretch + ImageNet)
@@ -259,6 +295,8 @@ def get_m2_spec(model_filename: str) -> ModelPreprocessSpec:
 def get_m3a_spec(model_filename: str) -> ModelPreprocessSpec:
     n = model_filename.lower()
     if "picodet" in n:
+        if "320" in n:
+            return M3A_CHARBOX_PICODET_320
         return M3A_CHARBOX_PICODET
     if "dfine" in n:
         return M3A_CHARBOX_DFINE

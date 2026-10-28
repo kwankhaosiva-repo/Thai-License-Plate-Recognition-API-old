@@ -139,32 +139,32 @@ def ensure_clean_yaml(task):
 
 
 def _resolve_data_override(task, data):
-    """Accept a dataset DIRECTORY or a data.yaml PATH, and return the yaml path.
-
-    Needed because the M2 retrain uses a different dataset dir
-    (datasets/Thai/LPR2_ServeFrame.yolov11) than TASKS["components"]["dataset_dir"].
-    """
+    """Accept a dataset DIRECTORY or a data.yaml PATH, and return the yaml path with absolute paths."""
     p = Path(data)
-    if p.suffix in (".yaml", ".yml"):
-        if not p.exists():
-            raise FileNotFoundError(f"data yaml not found: {p}")
-        return p
-    if not p.is_dir():
-        raise FileNotFoundError(f"dataset dir not found: {p}")
+    if p.is_file() and p.suffix in (".yaml", ".yml"):
+        yaml_path = p
+        dir_p = p.parent
+    elif p.is_dir():
+        dir_p = p
+        yaml_path = p / "data.yaml"
+    else:
+        raise FileNotFoundError(f"data source not found: {p}")
+
     cfg = TASKS[task]
-    for name in ("data.yaml", "dfine_data.yaml"):
-        if (p / name).exists():
-            return p / name
-    yaml_path = p / ("data.yaml" if cfg["yaml_name"] == "data.yaml" else "dfine_data.yaml")
-    yaml_path.write_text(yaml.dump({
-        "train": str((p / "train" / "images").resolve()),
-        "val":   str((p / "valid" / "images").resolve()),
-        "test":  str((p / "test" / "images").resolve()),
+    clean_yaml = dir_p / "clean_data.yaml"
+    
+    # Always write clean yaml with absolute paths to avoid Roboflow '../' path resolution failures
+    data_dict = {
+        "train": str((dir_p / "train" / "images").resolve()),
+        "val":   str((dir_p / "valid" / "images").resolve()) if (dir_p / "valid").exists() else str((dir_p / "val" / "images").resolve()),
+        "test":  str((dir_p / "test" / "images").resolve()) if (dir_p / "test").exists() else "",
         "nc":    cfg["nc"],
         "names": cfg["names"],
-    }, sort_keys=False), encoding="utf-8")
-    print(f"   wrote dataset yaml -> {yaml_path}")
-    return yaml_path
+    }
+    with open(clean_yaml, "w", encoding="utf-8") as f:
+        yaml.dump(data_dict, f, sort_keys=False)
+    print(f"   wrote dataset yaml -> {clean_yaml}")
+    return clean_yaml
 
 
 def target_paths(task, variant, tag=""):

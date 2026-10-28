@@ -19,6 +19,7 @@ import os
 import sys
 import json
 import shutil
+import random
 from pathlib import Path
 import numpy as np
 import torch
@@ -41,6 +42,41 @@ MAP_PATH = WEIGHTS_DIR / "char_classifier_map.json"
 MODEL_SAVE_PATH = WEIGHTS_DIR / "character_classifier.pth"
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
+
+
+class AmbientRandomAffine:
+    """Applies random rotation (up to ±14 deg), shear (up to ±7 deg), scale jitter, and translation
+    with ambient background padding matching plate edge color (avoiding pitch-black corner triangles).
+    """
+    def __init__(self, degrees=14, shear=7, translate=(0.05, 0.05), scale=(0.92, 1.08)):
+        self.degrees = degrees
+        self.shear = shear
+        self.translate = translate
+        self.scale = scale
+
+    def __call__(self, img_pil: Image.Image) -> Image.Image:
+        w, h = img_pil.size
+        arr = np.array(img_pil)
+        corners = np.array([arr[0, 0], arr[0, -1], arr[-1, 0], arr[-1, -1]])
+        bg = tuple(int(x) for x in np.median(corners, axis=0))
+
+        angle = random.uniform(-self.degrees, self.degrees)
+        shear_val = random.uniform(-self.shear, self.shear) if self.shear > 0 else 0.0
+        scale_val = random.uniform(self.scale[0], self.scale[1]) if self.scale else 1.0
+        tx = int(random.uniform(-self.translate[0], self.translate[0]) * w) if self.translate else 0
+        ty = int(random.uniform(-self.translate[1], self.translate[1]) * h) if self.translate else 0
+
+        # Rotate with ambient background fill
+        res = img_pil.rotate(angle, resample=Image.BICUBIC, fillcolor=bg)
+        shear_rad = float(np.tan(np.deg2rad(shear_val)))
+        res = res.transform(
+            (w, h),
+            Image.AFFINE,
+            (1.0 / scale_val, -shear_rad, -tx, 0.0, 1.0 / scale_val, -ty),
+            resample=Image.BICUBIC,
+            fillcolor=bg,
+        )
+        return res
 
 
 class CharacterDataset(Dataset):
@@ -161,17 +197,13 @@ def train_character_classifier(
     class_to_idx = {v: int(k) for k, v in idx_to_char.items()}
     print(f"Total Character Classes: {n_classes}")
 
-    # 2. Transforms (Input 64x64) - natural transforms with mild geometric & photometric variation
-    # ROTATION TOLERANCE LIVES HERE, NOT AT SERVE — see docs/PREPROCESSING_CONTRACT.md.
-    # The pipeline used to rotate each rectified plate by a per-image ±8 deg search at
-    # serve time (Config.ENABLE_RESIDUAL_DESKEW, now default False). Measured max 2.75 deg;
-    # degrees=6 covers it. Scale jitter covers the residual corner-regressor error.
+    # 2. Transforms (Input 64x64) with Robust Tilt (±14 deg), Shear (±7 deg), and Ambient Edge Fill
     train_tf = transforms.Compose([
         transforms.Resize((64, 64)),
-        transforms.RandomAffine(degrees=6, translate=(0.04, 0.04), scale=(0.95, 1.05)),
+        AmbientRandomAffine(degrees=14, shear=7, translate=(0.05, 0.05), scale=(0.92, 1.08)),
         transforms.ColorJitter(brightness=0.35, contrast=0.35),
         transforms.RandomGrayscale(p=0.15),
-        transforms.RandomPerspective(distortion_scale=0.12, p=0.3),
+        transforms.RandomPerspective(distortion_scale=0.14, p=0.35),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
@@ -255,13 +287,22 @@ def train_character_classifier(
             best_val_top3 = val_top3
             best_epoch = epoch
             epochs_without_improvement = 0
-            torch.save({
+            ckpt_data = {
                 "model_state": model.state_dict(),
                 "class_map": idx_to_char,
                 "best_acc_top1": best_val_top1,
                 "best_acc_top3": best_val_top3,
                 "epoch": best_epoch,
-            }, str(model_save_path))
+            }
+            torch.save(ckpt_data, str(model_save_path))
+            # Keep production checkpoints in sync
+            for extra_name in ["character_classifier_v6.pth", "character_classifier_v6pico320.pth", "character_classifier.pth"]:
+                extra_p = WEIGHTS_DIR / extra_name
+                if extra_p != model_save_path:
+                    try:
+                        torch.save(ckpt_data, str(extra_p))
+                    except Exception:
+                        pass
             print(f"   --> New Best Checkpoint saved! (Val Top-1: {val_top1*100:.2f}%, Top-3: {val_top3*100:.2f}%)")
         else:
             epochs_without_improvement += 1
