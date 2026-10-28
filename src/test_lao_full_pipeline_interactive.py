@@ -118,27 +118,43 @@ def draw_text_pil(
 # Lao & Thai Multi-Stage Pipeline Engine
 # -------------------------------------------------------------------------
 class LaoFullPipelineTester:
-    def __init__(self, device: str = "cpu", prov_mode: str = "2stage"):
+    def __init__(self, device: str = "cpu", prov_mode: str = "2stage", use_onnx: bool = True):
         self.device = device
         self.prov_mode = prov_mode
+        self.use_onnx = use_onnx
         self.weights_dir = cfg.WEIGHTS_DIR
+        engine_str = "100% Pure ONNX Runtime" if use_onnx else "PyTorch & LibreYOLO"
         print("\n" + "=" * 70)
-        print(" Loading End-to-End Recognition Models (Thai & Lao) ".center(70, "="))
+        print(f" Loading End-to-End Recognition Models ({engine_str}) ".center(70, "="))
         print("=" * 70)
 
         # 1. Model 1: Plate Detector (PicoDet-S v6pico320 / v6aug)
-        m1_path = self.weights_dir / "plate_detector_picodet_s_v6pico320.pt"
-        if not m1_path.exists():
-            m1_path = self.weights_dir / "plate_detector_picodet_s_v6aug.pt"
-        if not m1_path.exists():
-            m1_path = self.weights_dir / "plate_detector_picodet_s.pt"
-        print(f"  [1/8] Model 1 (Plate Detector)  : {m1_path.name}")
-        self.m1_detector = LibreYOLO(str(m1_path))
+        self.m1_detector = None
+        self.m1_onnx_sess = None
+        m1_onnx_path = self.weights_dir / "plate_detector_picodet_s_v6pico320.onnx"
+        m1_pt_path = self.weights_dir / "plate_detector_picodet_s_v6pico320.pt"
+
+        if self.use_onnx and m1_onnx_path.exists():
+            print(f"  [1/8] Model 1 (Plate Detector)  : {m1_onnx_path.name} (ONNX)")
+            self.m1_onnx_sess = ort.InferenceSession(str(m1_onnx_path))
+            self.m1_onnx_input = self.m1_onnx_sess.get_inputs()[0].name
+        else:
+            if not m1_pt_path.exists():
+                m1_pt_path = self.weights_dir / "plate_detector_picodet_s_v6aug.pt"
+            print(f"  [1/8] Model 1 (Plate Detector)  : {m1_pt_path.name}")
+            self.m1_detector = LibreYOLO(str(m1_pt_path))
 
         # 2. Plate 4-Corner Homography Regressor (MobileNetV3-Small)
+        corner_onnx_path = self.weights_dir / "plate_corner_regressor.onnx"
         corner_path = self.weights_dir / "plate_corner_regressor.pth"
         self.plate_corner_model = None
-        if corner_path.exists():
+        self.corner_onnx_sess = None
+
+        if self.use_onnx and corner_onnx_path.exists():
+            print(f"  [2/8] Corner Regressor (Warp)   : {corner_onnx_path.name} (ONNX)")
+            self.corner_onnx_sess = ort.InferenceSession(str(corner_onnx_path))
+            self.corner_onnx_input = self.corner_onnx_sess.get_inputs()[0].name
+        elif corner_path.exists():
             print(f"  [2/8] Corner Regressor (Warp)   : {corner_path.name}")
             base_c = models.mobilenet_v3_small()
             in_f = base_c.classifier[0].in_features
@@ -153,20 +169,31 @@ class LaoFullPipelineTester:
             base_c.load_state_dict(ckpt_corner.get("model_state", ckpt_corner))
             base_c.to(self.device).eval()
             self.plate_corner_model = base_c
+
         self.tf_corner = transforms.Compose([
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
 
         # 3. Model 1.5: Country Classifier (MobileNetV3-Small: Thai vs Laos)
+        c_onnx_path = self.weights_dir / "country_classifier.onnx"
         c_path = self.weights_dir / "country_classifier.pth"
-        print(f"  [3/8] Model 1.5 (Country Clf)   : {c_path.name}")
-        self.country_model = models.mobilenet_v3_small(weights=None)
-        in_f = self.country_model.classifier[3].in_features
-        self.country_model.classifier[3] = nn.Linear(in_f, 2)
-        ckpt_c = torch.load(c_path, map_location=self.device)
-        self.country_model.load_state_dict(ckpt_c["model_state"])
-        self.country_model.to(self.device).eval()
+        self.country_model = None
+        self.country_onnx_sess = None
+
+        if self.use_onnx and c_onnx_path.exists():
+            print(f"  [3/8] Model 1.5 (Country Clf)   : {c_onnx_path.name} (ONNX)")
+            self.country_onnx_sess = ort.InferenceSession(str(c_onnx_path))
+            self.country_onnx_input = self.country_onnx_sess.get_inputs()[0].name
+        elif c_path.exists():
+            print(f"  [3/8] Model 1.5 (Country Clf)   : {c_path.name}")
+            self.country_model = models.mobilenet_v3_small(weights=None)
+            in_f = self.country_model.classifier[3].in_features
+            self.country_model.classifier[3] = nn.Linear(in_f, 2)
+            ckpt_c = torch.load(c_path, map_location=self.device)
+            self.country_model.load_state_dict(ckpt_c["model_state"])
+            self.country_model.to(self.device).eval()
+
         self.tf_country = transforms.Compose([
             transforms.Resize((128, 256)),
             transforms.ToTensor(),
@@ -221,36 +248,53 @@ class LaoFullPipelineTester:
             self.char_map_lao = {int(k): v for k, v in json.load(f).items()}
 
         # 7. Lao Province Detector & Classifier
+        prov_det_onnx_path = self.weights_dir / "province_detector_picodet_s_lao_v6.onnx"
+        if not prov_det_onnx_path.exists():
+            prov_det_onnx_path = cfg.PROJECT_ROOT / "chacrit" / "output model" / "province_detector_picodet_s_lao_v6.onnx"
+
         prov_det_path = self.weights_dir / "province_detector_picodet_s_lao_v6.pt"
         if not prov_det_path.exists():
             prov_det_path = cfg.PROJECT_ROOT / "chacrit" / "output model" / "province_detector_picodet_s_lao_v6.pt"
         if not prov_det_path.exists():
             prov_det_path = self.weights_dir / "province_detector_picodet_s_lao_v4.pt"
-        if not prov_det_path.exists():
-            prov_det_path = cfg.PROJECT_ROOT / "chacrit" / "output model" / "province_detector_picodet_s_lao_v4.pt"
-        if not prov_det_path.exists():
-            prov_det_path = self.weights_dir / "province_detector_picodet_s_lao_v3.pt"
-        if not prov_det_path.exists():
-            prov_det_path = cfg.PROJECT_ROOT / "chacrit" / "output model" / "province_detector_picodet_s_lao_v3.pt"
+
         self.lao_prov_detector = None
-        if prov_det_path.exists():
+        self.lao_prov_det_onnx_sess = None
+        if self.use_onnx and prov_det_onnx_path.exists():
+            print(f"  [7/8] Lao Province Detector     : {prov_det_onnx_path.name} (ONNX)")
+            self.lao_prov_det_onnx_sess = ort.InferenceSession(str(prov_det_onnx_path))
+            self.lao_prov_det_onnx_input = self.lao_prov_det_onnx_sess.get_inputs()[0].name
+        elif prov_det_path.exists():
             print(f"  [7/8] Lao Province Detector     : {prov_det_path.name}")
             try:
                 self.lao_prov_detector = LibreYOLO(str(prov_det_path))
             except Exception as e:
                 print(f"        Warning: Could not load Lao Province Detector: {e}")
 
-        prov_path_lao = self.weights_dir / "province_model_grayscale_lao_v6.pth"
-        if not prov_path_lao.exists():
-            prov_path_lao = self.weights_dir / "province_model_grayscale_lao_v3.pth"
         prov_map_path_lao = self.weights_dir / "province_map_lao.json"
         with open(prov_map_path_lao, "r", encoding="utf-8") as f:
             self.prov_map_lao = {int(k): v for k, v in json.load(f).items()}
-        print(f"  [7/8b] Lao 2-Stage Prov Clf    : {prov_path_lao.name} ({len(self.prov_map_lao)} classes)")
-        self.prov_model_lao = ResNetProvinceClassifier(n_classes=len(self.prov_map_lao), backbone="resnet18", pretrained=False)
-        ckpt_p_lao = torch.load(prov_path_lao, map_location=self.device)
-        self.prov_model_lao.load_state_dict(ckpt_p_lao.get("model_state", ckpt_p_lao))
-        self.prov_model_lao.to(self.device).eval()
+
+        prov_onnx_path_lao = self.weights_dir / "province_model_grayscale_lao_v6.onnx"
+        if not prov_onnx_path_lao.exists():
+            prov_onnx_path_lao = cfg.PROJECT_ROOT / "chacrit" / "output model" / "province_model_grayscale_lao_v6.onnx"
+
+        prov_path_lao = self.weights_dir / "province_model_grayscale_lao_v6.pth"
+        if not prov_path_lao.exists():
+            prov_path_lao = self.weights_dir / "province_model_grayscale_lao_v3.pth"
+
+        self.prov_model_lao = None
+        self.prov_model_lao_onnx_sess = None
+        if self.use_onnx and prov_onnx_path_lao.exists():
+            print(f"  [7/8b] Lao 2-Stage Prov Clf    : {prov_onnx_path_lao.name} ({len(self.prov_map_lao)} classes, ONNX)")
+            self.prov_model_lao_onnx_sess = ort.InferenceSession(str(prov_onnx_path_lao))
+            self.prov_model_lao_onnx_input = self.prov_model_lao_onnx_sess.get_inputs()[0].name
+        elif prov_path_lao.exists():
+            print(f"  [7/8b] Lao 2-Stage Prov Clf    : {prov_path_lao.name} ({len(self.prov_map_lao)} classes)")
+            self.prov_model_lao = ResNetProvinceClassifier(n_classes=len(self.prov_map_lao), backbone="resnet18", pretrained=False)
+            ckpt_p_lao = torch.load(prov_path_lao, map_location=self.device)
+            self.prov_model_lao.load_state_dict(ckpt_p_lao.get("model_state", ckpt_p_lao))
+            self.prov_model_lao.to(self.device).eval()
 
         # 8. Thai Models (Fallback for Thai plates)
         thai_charbox_path = self.weights_dir / "character_box_detector_picodet_s_v6pico320.pt"
@@ -325,7 +369,7 @@ class LaoFullPipelineTester:
         bw = bx2 - bx1
         bh = by2 - by1
 
-        if self.plate_corner_model is not None and bw >= 15 and bh >= 15:
+        if (self.corner_onnx_sess is not None or self.plate_corner_model is not None) and bw >= 15 and bh >= 15:
             try:
                 # 2% subtle margin prevents edge clipping while strictly avoiding outer truck bumper/bracket capture
                 pad_w = int(bw * 0.02)
@@ -340,20 +384,26 @@ class LaoFullPipelineTester:
                 crop_bgr = raw_bgr[c_y1:c_y2, c_x1:c_x2]
                 if crop_bgr.size > 0:
                     crop_resized = cv2.resize(crop_bgr, (224, 224), interpolation=cv2.INTER_LINEAR)
-                    crop_rgb = cv2.cvtColor(crop_resized, cv2.COLOR_BGR2RGB)
-                    ts_corner = self.tf_corner(crop_rgb).unsqueeze(0).to(self.device)
+                    crop_rgb = cv2.cvtColor(crop_resized, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+                    c_mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+                    c_std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+                    norm_c = ((crop_rgb - c_mean) / c_std).transpose(2, 0, 1)[np.newaxis, :]
 
-                    with torch.no_grad():
-                        norm_corners = self.plate_corner_model(ts_corner).squeeze(0).cpu().numpy().reshape(4, 2)
+                    if self.corner_onnx_sess is not None:
+                        norm_corners = self.corner_onnx_sess.run(None, {self.corner_onnx_input: norm_c})[0].reshape(4, 2)
+                    else:
+                        with torch.no_grad():
+                            ts_corner = torch.from_numpy(norm_c).to(self.device)
+                            norm_corners = self.plate_corner_model(ts_corner).squeeze(0).cpu().numpy().reshape(4, 2)
 
                     quad_corners = np.array([
                         [c_x1 + cx * crop_w, c_y1 + cy * crop_h]
                         for cx, cy in norm_corners
                     ], dtype=np.float32)
 
-                    # Exact homography warp without fake extra bumper expansion (padding_frac=0.0)
+                    # Homography warp with 6% safety margin to preserve plate borders and top banners
                     rectified_plate = warp_perspective_plate(
-                        raw_bgr, quad_corners, target_width=320, target_height=160, padding_frac=0.0
+                        raw_bgr, quad_corners, target_width=320, target_height=160, padding_frac=0.06
                     )
                     if rectified_plate is not None and rectified_plate.size > 0:
                         return rectified_plate, quad_corners
@@ -374,24 +424,54 @@ class LaoFullPipelineTester:
         # Stage 1: Model 1 Plate Detection
         # -----------------------------------------------------------------
         t1_start = time.time()
-        res1 = self.m1_detector.predict(raw_bgr, conf=0.25, device=self.device)
-        t_m1 = int((time.time() - t1_start) * 1000)
+        if self.m1_onnx_sess is not None:
+            mean_320 = np.array([123.675, 116.28, 103.53], dtype=np.float32)
+            std_320 = np.array([58.395, 57.12, 57.375], dtype=np.float32)
+            rgb_320 = cv2.resize(cv2.cvtColor(raw_bgr, cv2.COLOR_BGR2RGB), (320, 320)).astype(np.float32)
+            blob_m1 = ((rgb_320 - mean_320) / std_320).transpose(2, 0, 1)[np.newaxis, :]
+            out_m1 = self.m1_onnx_sess.run(None, {self.m1_onnx_input: blob_m1})[0]
 
-        if len(res1.boxes) == 0:
-            return {
-                "detected": False,
-                "message": "No license plate detected by Model 1",
-                "timings": {"m1_ms": t_m1, "total_ms": int((time.time() - t_start) * 1000)},
-                "raw_bgr": raw_bgr,
-            }
+            best_box = None
+            best_conf = 0.0
+            for row in out_m1[0]:
+                score = float(row[4])
+                if score > best_conf and score >= 0.25:
+                    best_conf = score
+                    x1 = max(0, min(W, int(round(row[0] * (W / 320.0)))))
+                    y1 = max(0, min(H, int(round(row[1] * (H / 320.0)))))
+                    x2 = max(0, min(W, int(round(row[2] * (W / 320.0)))))
+                    y2 = max(0, min(H, int(round(row[3] * (H / 320.0)))))
+                    best_box = [x1, y1, x2, y2]
+            t_m1 = int((time.time() - t1_start) * 1000)
 
-        best_box_idx = int(np.argmax([float(b.conf[0]) for b in res1.boxes]))
-        scene_plate_box = res1.boxes[best_box_idx].xyxy[0].cpu().numpy().astype(int).tolist()
-        plate_conf = float(res1.boxes[best_box_idx].conf[0])
-        scene_x1, scene_y1, scene_x2, scene_y2 = scene_plate_box
-        scene_x1, scene_y1 = max(0, scene_x1), max(0, scene_y1)
-        scene_x2, scene_y2 = min(W, scene_x2), min(H, scene_y2)
-        scene_plate_box = [scene_x1, scene_y1, scene_x2, scene_y2]
+            if best_box is None:
+                return {
+                    "detected": False,
+                    "message": "No license plate detected by Model 1",
+                    "timings": {"m1_ms": t_m1, "total_ms": int((time.time() - t_start) * 1000)},
+                    "raw_bgr": raw_bgr,
+                }
+            scene_plate_box = best_box
+            plate_conf = best_conf
+        else:
+            res1 = self.m1_detector.predict(raw_bgr, conf=0.25, device=self.device)
+            t_m1 = int((time.time() - t1_start) * 1000)
+
+            if len(res1.boxes) == 0:
+                return {
+                    "detected": False,
+                    "message": "No license plate detected by Model 1",
+                    "timings": {"m1_ms": t_m1, "total_ms": int((time.time() - t_start) * 1000)},
+                    "raw_bgr": raw_bgr,
+                }
+
+            best_box_idx = int(np.argmax([float(b.conf[0]) for b in res1.boxes]))
+            scene_plate_box = res1.boxes[best_box_idx].xyxy[0].cpu().numpy().astype(int).tolist()
+            plate_conf = float(res1.boxes[best_box_idx].conf[0])
+            scene_x1, scene_y1, scene_x2, scene_y2 = scene_plate_box
+            scene_x1, scene_y1 = max(0, scene_x1), max(0, scene_y1)
+            scene_x2, scene_y2 = min(W, scene_x2), min(H, scene_y2)
+            scene_plate_box = [scene_x1, scene_y1, scene_x2, scene_y2]
 
         # -----------------------------------------------------------------
         # Stage 2: Plate 4-Corner Homography Perspective Rectification
@@ -412,14 +492,26 @@ class LaoFullPipelineTester:
         # Stage 1.5: Country Classification (Thai vs Laos)
         # -----------------------------------------------------------------
         tc_start = time.time()
-        pil_plate = Image.fromarray(cv2.cvtColor(rectified_plate, cv2.COLOR_BGR2RGB))
-        ts_c = self.tf_country(pil_plate).unsqueeze(0).to(self.device)
-        with torch.no_grad():
-            out_c = self.country_model(ts_c)
-            prob_c = F.softmax(out_c, dim=1).squeeze(0)
-            c_conf, c_idx = prob_c.max(0)
-        country_name = "Thai" if c_idx.item() == 0 else "Laos"
-        country_conf = float(c_conf.item())
+        if self.country_onnx_sess is not None:
+            rgb_country = cv2.resize(cv2.cvtColor(rectified_plate, cv2.COLOR_BGR2RGB), (256, 128)).astype(np.float32) / 255.0
+            c_mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+            c_std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+            blob_country = ((rgb_country - c_mean) / c_std).transpose(2, 0, 1)[np.newaxis, :]
+            out_country = self.country_onnx_sess.run(None, {self.country_onnx_input: blob_country})[0][0]
+            exp_c = np.exp(out_country - np.max(out_country))
+            probs_c = exp_c / np.sum(exp_c)
+            c_idx = int(np.argmax(probs_c))
+            country_name = "Thai" if c_idx == 0 else "Laos"
+            country_conf = float(probs_c[c_idx])
+        else:
+            pil_plate = Image.fromarray(cv2.cvtColor(rectified_plate, cv2.COLOR_BGR2RGB))
+            ts_c = self.tf_country(pil_plate).unsqueeze(0).to(self.device)
+            with torch.no_grad():
+                out_c = self.country_model(ts_c)
+                prob_c = F.softmax(out_c, dim=1).squeeze(0)
+                c_conf, c_idx = prob_c.max(0)
+            country_name = "Thai" if c_idx.item() == 0 else "Laos"
+            country_conf = float(c_conf.item())
         t_country = int((time.time() - tc_start) * 1000)
 
         rw, rh = rectified_plate.shape[1], rectified_plate.shape[0]
@@ -449,6 +541,7 @@ class LaoFullPipelineTester:
             best_prov_conf = 0.0
 
             if len(res2.boxes) > 0:
+                char_cands = []
                 for b in res2.boxes:
                     c_idx_comp = int(b.cls[0])
                     bconf = float(b.conf[0])
@@ -458,16 +551,10 @@ class LaoFullPipelineTester:
                     by1 = max(0, min(rh, by1))
                     by2 = max(0, min(rh, by2))
 
-                    if c_idx_comp == 0 and by1 < int(rh * 0.65) and bconf > best_char_conf:
-                        pad_cx = min(10, max(3, int((bx2 - bx1) * 0.04)))
-                        pad_cy = min(10, max(3, int((by2 - by1) * 0.10)))
-                        cx1 = max(int(rw * 0.02), bx1 - pad_cx)
-                        cx2 = min(int(rw * 0.98), bx2 + pad_cx)
-                        cy1 = max(int(rh * 0.02), by1 - pad_cy)
-                        cy2 = min(int(rh * 0.78), by2 + pad_cy)
-                        char_crop = rectified_plate[cy1:cy2, cx1:cx2]
-                        char_box_coords = [cx1, cy1, cx2, cy2]
-                        best_char_conf = bconf
+                    if c_idx_comp == 0 and by1 < int(rh * 0.65):
+                        bw_char = bx2 - bx1
+                        bh_char = by2 - by1
+                        char_cands.append((bconf, bw_char, bh_char, bx1, by1, bx2, by2))
                     elif c_idx_comp == 1 and by2 > int(rh * 0.45) and ((by1 + by2) / 2) > int(rh * 0.40) and bconf > best_prov_conf:
                         pad_x = min(14, max(6, int((bx2 - bx1) * 0.08)))
                         pad_y = min(8, max(4, int((by2 - by1) * 0.10)))
@@ -479,28 +566,65 @@ class LaoFullPipelineTester:
                         prov_box = [pvx1, pvy1, pvx2, pvy2]
                         best_prov_conf = bconf
 
+                # Discard top banners (e.g. THAILAND 73 on commercial trucks) when a genuine character row exists
+                if char_cands:
+                    valid_cands = [c for c in char_cands if c[2] >= 35 and c[1] >= 100]
+                    chosen_pool = valid_cands if valid_cands else char_cands
+                    chosen = max(chosen_pool, key=lambda c: c[0])
+                    bconf, bw_char, bh_char, bx1, by1, bx2, by2 = chosen
+
+                    pad_cx = max(10, int(bw_char * 0.05))
+                    # Generous vertical margins: allow plenty of headroom and footroom
+                    # to match the user annotations where character boxes extend beyond top/bottom glyph ink.
+                    pad_cy_top = max(14, int(bh_char * 0.20))
+                    pad_cy_bottom = max(18, int(bh_char * 0.22))
+                    cx1 = max(0, bx1 - pad_cx)
+                    cx2 = min(rw, bx2 + pad_cx)
+                    cy1 = max(int(rh * 0.02), by1 - pad_cy_top)
+                    # Keep below province area: Thai province starts at >= 0.72*rh
+                    cy2 = min(int(rh * 0.74), by2 + pad_cy_bottom)
+                    char_crop = rectified_plate[cy1:cy2, cx1:cx2]
+                    char_box_coords = [cx1, cy1, cx2, cy2]
+                    best_char_conf = bconf
+
             if char_crop is None:
                 char_crop = rectified_plate[0:int(rh * 0.75), 0:rw]
                 char_box_coords = [0, 0, rw, int(rh * 0.75)]
             if prov_crop is None:
-                prov_box = [int(rw * 0.12), int(rh * 0.60), int(rw * 0.88), int(rh * 0.98)]
+                # Fallback: province is centered in the bottom band below character ink
+                if char_box_coords is not None:
+                    prov_y1 = max(int(rh * 0.72), char_box_coords[3] - 2)
+                else:
+                    prov_y1 = int(rh * 0.70)
+                prov_box = [int(rw * 0.22), min(prov_y1, int(rh * 0.78)), int(rw * 0.78), int(rh * 0.98)]
                 prov_crop = rectified_plate[prov_box[1]:prov_box[3], prov_box[0]:prov_box[2]]
 
             # Thai Character Box Detection
             t3a_start = time.time()
             if self.thai_charbox_detector is not None and char_crop.size > 0:
-                # Use conf=0.30 to filter low-confidence jitter / inner loops of digits
-                res_tbox = self.thai_charbox_detector.predict(char_crop, conf=0.30, device=self.device)
                 ch_w, ch_h = char_crop.shape[1], char_crop.shape[0]
+                # Contract: Thai PicoDet-S is trained with 30% vertical padding to prevent
+                # Stride-16 DFL reg_max=7 saturation. Match serving geometry exactly:
+                pad_y = int(round(ch_h * 0.30))
+                padded_char_crop = cv2.copyMakeBorder(char_crop, pad_y, pad_y, 0, 0, cv2.BORDER_REPLICATE)
+
+                # Use conf=0.50 to filter low-confidence jitter / slivers / inner loops
+                res_tbox = self.thai_charbox_detector.predict(padded_char_crop, conf=0.50, device=self.device)
                 raw_boxes = []
                 for b in res_tbox.boxes:
                     bx1, by1, bx2, by2 = b.xyxy[0].cpu().numpy().astype(int)
                     bconf = float(b.conf[0])
+                    # Unpad y-coordinates back to char_crop space
+                    orig_by1 = max(0, min(ch_h, by1 - pad_y))
+                    orig_by2 = max(0, min(ch_h, by2 - pad_y))
+                    orig_bx1 = max(0, min(ch_w, bx1))
+                    orig_bx2 = max(0, min(ch_w, bx2))
+
                     # Map to rectified plate coordinates
-                    fx1 = max(0, min(rw, char_box_coords[0] + bx1))
-                    fy1 = max(0, min(rh, char_box_coords[1] + by1))
-                    fx2 = max(0, min(rw, char_box_coords[0] + bx2))
-                    fy2 = max(0, min(rh, char_box_coords[1] + by2))
+                    fx1 = max(0, min(rw, char_box_coords[0] + orig_bx1))
+                    fy1 = max(0, min(rh, char_box_coords[1] + orig_by1))
+                    fx2 = max(0, min(rw, char_box_coords[0] + orig_bx2))
+                    fy2 = max(0, min(rh, char_box_coords[1] + orig_by2))
                     bw = fx2 - fx1
                     bh = fy2 - fy1
                     if bw >= 8 and bh >= 16:
@@ -539,8 +663,12 @@ class LaoFullPipelineTester:
                         if not is_substroke:
                             deduped_boxes.append(b)
 
-                    # Filter fragments by median character height (drop artifacts < 55% of character height)
+                    # Filter fragments and narrow slivers by median character width/height
                     if len(deduped_boxes) >= 2:
+                        high_conf_w = [b[2] - b[0] for b in deduped_boxes if b[4] >= 0.70]
+                        if high_conf_w:
+                            med_w = np.median(high_conf_w)
+                            deduped_boxes = [b for b in deduped_boxes if not ((b[2] - b[0]) < 0.65 * med_w and b[4] < 0.80)]
                         med_h = np.median([b[3] - b[1] for b in deduped_boxes])
                         char_boxes = [b for b in deduped_boxes if (b[3] - b[1]) >= 0.55 * med_h]
                     else:
@@ -562,29 +690,23 @@ class LaoFullPipelineTester:
                 if single.size == 0 or single.shape[0] < 4 or single.shape[1] < 4:
                     continue
 
+                # Autocontrast enhancement before pad_to_square (mirrors train contract and api_server)
+                pil_sc = Image.fromarray(cv2.cvtColor(single, cv2.COLOR_BGR2RGB))
+                pil_sc = ImageOps.autocontrast(pil_sc, cutoff=2)
+                single_enhanced = cv2.cvtColor(np.array(pil_sc), cv2.COLOR_RGB2BGR)
+
                 # Ambient padding to square: preserves natural character aspect ratio (v2 audit contract)
-                # Prevents vertical/horizontal distortion (which turns tall characters like 'ผ' into 'ม')
-                sh, sw = single.shape[:2]
+                sh, sw = single_enhanced.shape[:2]
                 smax = max(sh, sw)
-                corners = np.array([single[0, 0], single[0, -1], single[-1, 0], single[-1, -1]])
+                corners = np.array([single_enhanced[0, 0], single_enhanced[0, -1], single_enhanced[-1, 0], single_enhanced[-1, -1]])
                 bg_col = np.median(corners, axis=0).astype(np.uint8)
                 padded_c = np.full((smax, smax, 3), bg_col, dtype=np.uint8)
-                padded_c[(smax - sh) // 2 : (smax - sh) // 2 + sh, (smax - sw) // 2 : (smax - sw) // 2 + sw] = single
+                padded_c[(smax - sh) // 2 : (smax - sh) // 2 + sh, (smax - sw) // 2 : (smax - sw) // 2 + sw] = single_enhanced
 
                 pil_c = Image.fromarray(cv2.cvtColor(padded_c, cv2.COLOR_BGR2RGB))
                 ts_c = self.tf_char(pil_c).unsqueeze(0).to(self.device)
                 with torch.no_grad():
                     out_tc = self.thai_char_classifier(ts_c)
-
-                    # Spatial/Grammar Trailing Digits Mask:
-                    # In Thailand, trailing 1-4 characters are strictly numeric digits (0-9).
-                    # When a box is positioned in the trailing numeric section:
-                    # Suppress Thai consonant classes (indices 10..49 in char_map_thai)
-                    cx = (bx1 + bx2) / 2.0
-                    is_trailing_digit_pos = (n_thai_boxes >= 4 and idx_b >= (n_thai_boxes - 4) and idx_b >= 2) or (cx >= 0.40 * rw and idx_b >= 2)
-                    if is_trailing_digit_pos:
-                        out_tc[0, 10:] = -1e9
-
                     probs_tc = F.softmax(out_tc, dim=1).squeeze(0)
                     top_tc, top_ti = probs_tc.max(0)
                 sym = self.char_map_thai.get(top_ti.item(), "?")
@@ -765,7 +887,32 @@ class LaoFullPipelineTester:
             tprov_start = time.time()
             if self.prov_mode == "1stage":
                 # 1-Stage Mode: PicoDet-S directly predicts the province class from the 320x160 plate
-                if self.lao_prov_detector is not None:
+                if self.lao_prov_det_onnx_sess is not None:
+                    rgb_320_prov = cv2.resize(cv2.cvtColor(rectified_plate, cv2.COLOR_BGR2RGB), (320, 320), interpolation=cv2.INTER_LINEAR).astype(np.float32)
+                    mean_p = np.array([123.675, 116.28, 103.53], dtype=np.float32)
+                    std_p = np.array([58.395, 57.12, 57.375], dtype=np.float32)
+                    blob_p = ((rgb_320_prov - mean_p) / std_p).transpose(2, 0, 1)[np.newaxis, :]
+                    out_lp = self.lao_prov_det_onnx_sess.run(None, {self.lao_prov_det_onnx_input: blob_p})[0]
+                    best_sc = -1.0
+                    best_c = -1
+                    best_bx = None
+                    for row in out_lp[0]:
+                        scores = row[4:]
+                        c = int(np.argmax(scores))
+                        sc = float(scores[c])
+                        if sc > best_sc and sc >= 0.10:
+                            best_sc = sc
+                            best_c = c
+                            x1 = max(0, min(rw, int(round(row[0] * (rw / 320.0)))))
+                            y1 = max(0, min(rh, int(round(row[1] * (rh / 320.0)))))
+                            x2 = max(0, min(rw, int(round(row[2] * (rw / 320.0)))))
+                            y2 = max(0, min(rh, int(round(row[3] * (rh / 320.0)))))
+                            best_bx = [x1, y1, x2, y2]
+                    if best_c >= 0:
+                        prov_box = best_bx
+                        prov_name = self.prov_map_lao.get(best_c, f"Class_{best_c}")
+                        prov_conf = best_sc * 100.0
+                elif self.lao_prov_detector is not None:
                     res_lp = self.lao_prov_detector.predict(rectified_plate, conf=0.10, device=self.device)
                     if len(res_lp.boxes) > 0:
                         best_lp = max(res_lp.boxes, key=lambda b: float(b.conf[0]))
@@ -779,7 +926,26 @@ class LaoFullPipelineTester:
             else:
                 # 2-Stage Mode:
                 # Stage 1: Detect province banner bounding box (using plate directly)
-                if self.lao_prov_detector is not None:
+                if self.lao_prov_det_onnx_sess is not None:
+                    rgb_320_prov = cv2.resize(cv2.cvtColor(rectified_plate, cv2.COLOR_BGR2RGB), (320, 320), interpolation=cv2.INTER_LINEAR).astype(np.float32)
+                    mean_p = np.array([123.675, 116.28, 103.53], dtype=np.float32)
+                    std_p = np.array([58.395, 57.12, 57.375], dtype=np.float32)
+                    blob_p = ((rgb_320_prov - mean_p) / std_p).transpose(2, 0, 1)[np.newaxis, :]
+                    out_lp = self.lao_prov_det_onnx_sess.run(None, {self.lao_prov_det_onnx_input: blob_p})[0]
+                    best_sc = -1.0
+                    for row in out_lp[0]:
+                        scores = row[4:]
+                        sc = float(np.max(scores))
+                        if sc > best_sc and sc >= 0.15:
+                            best_sc = sc
+                            pvx1 = max(0, min(rw, int(round(row[0] * (rw / 320.0)))))
+                            pvy1 = max(0, min(rh, int(round(row[1] * (rh / 320.0)))))
+                            pvx2 = max(0, min(rw, int(round(row[2] * (rw / 320.0)))))
+                            pvy2 = max(0, min(rh, int(round(row[3] * (rh / 320.0)))))
+                            if (pvx2 - pvx1) >= 20 and (pvy2 - pvy1) >= 8:
+                                prov_box = [pvx1, pvy1, pvx2, pvy2]
+                                prov_crop = rectified_plate[pvy1:pvy2, pvx1:pvx2]
+                elif self.lao_prov_detector is not None:
                     res_lp = self.lao_prov_detector.predict(rectified_plate, conf=0.15, device=self.device)
                     if len(res_lp.boxes) > 0:
                         best_lp = max(res_lp.boxes, key=lambda b: float(b.conf[0]))
@@ -799,14 +965,36 @@ class LaoFullPipelineTester:
 
                 # Stage 2: High-Resolution Grayscale Province Classification (ResNet18 v6 at 256x64)
                 if prov_crop is not None and prov_crop.size > 0 and prov_crop.shape[0] >= 4 and prov_crop.shape[1] >= 4:
-                    pil_lp = Image.fromarray(cv2.cvtColor(prov_crop, cv2.COLOR_BGR2RGB))
-                    ts_lp = self.tf_prov_lao(pil_lp).unsqueeze(0).to(self.device)
-                    with torch.no_grad():
-                        out_lp = self.prov_model_lao(ts_lp)
-                        probs_lp = F.softmax(out_lp, dim=1).squeeze(0)
-                        top_lp, top_lpi = probs_lp.max(0)
-                    prov_name = self.prov_map_lao.get(top_lpi.item(), "Unknown")
-                    prov_conf = float(top_lp.item()) * 100
+                    if self.prov_model_lao_onnx_sess is not None:
+                        gray = cv2.cvtColor(prov_crop, cv2.COLOR_BGR2GRAY)
+                        gh, gw = gray.shape
+                        corners_g = [gray[0, 0], gray[0, -1], gray[-1, 0], gray[-1, -1]]
+                        bg_val = int(np.median(corners_g))
+                        ratio = min(256.0 / gw, 64.0 / gh)
+                        nw = max(4, int(round(gw * ratio)))
+                        nh = max(4, int(round(gh * ratio)))
+                        resized_g = cv2.resize(gray, (nw, nh), interpolation=cv2.INTER_CUBIC)
+                        canvas = np.full((64, 256), bg_val, dtype=np.uint8)
+                        px = (256 - nw) // 2
+                        py = (64 - nh) // 2
+                        canvas[py:py+nh, px:px+nw] = resized_g
+                        norm_g = (canvas.astype(np.float32) / 255.0 - 0.5) / 0.25
+                        blob_g = np.stack([norm_g, norm_g, norm_g], axis=0)[np.newaxis, :]
+                        out_p2 = self.prov_model_lao_onnx_sess.run(None, {self.prov_model_lao_onnx_input: blob_g})[0][0]
+                        exp_p2 = np.exp(out_p2 - np.max(out_p2))
+                        probs_p2 = exp_p2 / np.sum(exp_p2)
+                        top_p2 = int(np.argmax(probs_p2))
+                        prov_name = self.prov_map_lao.get(top_p2, "Unknown")
+                        prov_conf = float(probs_p2[top_p2]) * 100
+                    elif self.prov_model_lao is not None:
+                        pil_lp = Image.fromarray(cv2.cvtColor(prov_crop, cv2.COLOR_BGR2RGB))
+                        ts_lp = self.tf_prov_lao(pil_lp).unsqueeze(0).to(self.device)
+                        with torch.no_grad():
+                            out_lp = self.prov_model_lao(ts_lp)
+                            probs_lp = F.softmax(out_lp, dim=1).squeeze(0)
+                            top_lp, top_lpi = probs_lp.max(0)
+                        prov_name = self.prov_map_lao.get(top_lpi.item(), "Unknown")
+                        prov_conf = float(top_lp.item()) * 100
 
             t_prov = int((time.time() - tprov_start) * 1000)
             raw_chars_str = "".join([c["char"] for c in char_details])
@@ -1062,6 +1250,8 @@ def main():
     parser.add_argument("--save-all", action="store_true", help="Save snapshots for all images non-interactively without GUI window")
     parser.add_argument("--out-dir", type=str, default=None, help="Custom output directory for saving snapshots")
     parser.add_argument("--prov-mode", type=str, choices=["1stage", "2stage"], default="2stage", help="Province prediction mode: '1stage' (PicoDet-S direct) or '2stage' (PicoDet-S box + ResNet18 classifier)")
+    parser.add_argument("--onnx", dest="use_onnx", action="store_true", default=True, help="Run with 100% pure ONNX models (default: True)")
+    parser.add_argument("--pytorch", "--no-onnx", dest="use_onnx", action="store_false", help="Run with PyTorch / LibreYOLO .pt checkpoints")
     args = parser.parse_args()
 
     input_path = args.input_path
@@ -1079,7 +1269,7 @@ def main():
 
     print(f"Found {len(image_paths)} images to test.")
 
-    tester = LaoFullPipelineTester(device="cpu", prov_mode=args.prov_mode)
+    tester = LaoFullPipelineTester(device="cpu", prov_mode=args.prov_mode, use_onnx=args.use_onnx)
 
     output_dir = Path(args.out_dir) if args.out_dir else (cfg.PROJECT_ROOT / "scratch" / "lao_test_snapshots")
     output_dir.mkdir(parents=True, exist_ok=True)

@@ -34,6 +34,7 @@ steps:
         gcloud storage cp "gs://${_WEIGHTS_BUCKET}/*.pt" \
                           "gs://${_WEIGHTS_BUCKET}/*.pth" \
                           "gs://${_WEIGHTS_BUCKET}/*.json" \
+                          "gs://${_WEIGHTS_BUCKET}/*.onnx" \
                           weights/
         echo "--- weights/ contents ---"
         ls -lh weights/

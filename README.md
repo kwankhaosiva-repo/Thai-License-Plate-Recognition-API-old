@@ -134,6 +134,14 @@ flowchart LR
   - Saves **exactly 1 clean consolidated entry** to the database per vehicle event.
 - **High-Precision Thresholding (`conf_m1 = 0.80`):** Rejects road textures and barrier reflections with high-frequency sampling (`STREAM_FRAME_SKIP = 2`, `STREAM_TARGET_SAMPLES = 1`) to capture vehicles reliably on their first pass.
 
+## 8. Production Multi-Frame Voting & Temporal Consensus Engine
+In real-world traffic surveillance, single-frame recognition inevitably encounters optical limits (severe motion blur, rolling shutter, headlamp glare, raindrops, or low contrast on red trade plates). The production service incorporates **Temporal Multi-Frame Voting (3–5 Frames per Vehicle Event)**:
+1. **Physical Symmetry & Centering Prior:** Candidates captured closer to the optical center of the camera lens with lower perspective warp distortion are awarded higher quality weighting ($W_{\text{center}}$).
+2. **Positional Logit Probability Aggregation:** For each character slot $i$, probabilities are summed across captured frames:
+   $$P_{\text{consensus}}(c_i) = \sum_{t=1}^{T} w_t \cdot P_t(c_i)$$
+   This reliably disambiguates fine stroke confusions (e.g., ฌ vs ฒ, ณ vs ฒ, 3 vs 6) where single-frame blur obscures high-frequency ascenders or notches.
+3. **DLT Syntax-Constrained Gating:** Trailing stray detections (such as custom plate graphics like cartoon characters or frame stickers) are strictly pruned if they violate statutory Thai DLT patterns (e.g. no trailing consonant after 4 digits: `CC DDDD C` $\to$ `CC DDDD`).
+
 ---
 
 ## ⚡ Model 1 Candidate Benchmark & Selection Guide
@@ -236,14 +244,15 @@ All Model 1 candidates have been trained and benchmarked on identical test sets 
 | *Alternative Stage 1* | `plate_detector_picodet_s.pt` / `.onnx` | PicoDet-S (ESNet) | **$416 \times 416$** (stretch; predict ต้อง imgsz=416) | `[1, 3598, 5]` (Bounding Boxes) | **Apache-2.0** | Available (`~6.5ms CPU`) |
 | *Alternative Stage 1* | `plate_detector_rfdetr.pt` | RF-DETR-Base | **$560 \times 560$** (native stretch, ImageNet norm) | `[1, 300, 4]` | **Apache-2.0** | Available |
 | **Stage 1.1 (Corner Regressor)**| `plate_corner_regressor_opset18.onnx` | MobileNetV3 Keypoint Regressor | $224 \times 224$ (crop bbox +12% margin) | `[1, 8]` (4 มุม: $x_1, y_1 \dots x_4, y_4$) | **BSD-3** | ✅ Active (`~3.2ms CPU`) |
-| **Stage 1.5 (Country Cls)** | `country_classifier.pth` | MobileNetV3-Small | **$256 \times 128$** (stretch จาก plate crop 320×160) | `[1, 2]` (0: Thai, 1: Laos) | **BSD-3** | ✅ Active (`~1.5ms CPU`) |
-| **Stage 2 (Component Detector)**| `component_detector_dfine_nano.pt` | D-FINE-Nano | **$640 \times 640$ tensor** — serve: upscale rectified plate $320\times160 \to 1280\times640$ (2:1 stretch) แล้ว divide boxes กลับรายแกน | `[1, 300, 4]` (`plate_char`, `province`) | **MIT** | ✅ Active (`~18ms CPU`) |
-| **Stage 3A (Char Box Detector)**| `character_box_detector_rfdetr.pt` | RF-DETR-Base (Deformable Attention) | **$560 \times 560$ tensor** — serve: upscale char row $\to 2088\times560$ (3.7:1 stretch), ไม่มี CLAHE | `[1, 300, 4]` (High-precision character localization) | **Apache-2.0** | ✅ Active (`~45ms CPU`) |
-| **Stage 3A (Thai Char Cls)** | `character_classifier.pth` | MobileNetV2 (50 Classes Balanced) | $64 \times 64$ (crops pre-pad สี่เหลี่ยมด้วยสี median มุม crop; ImageNet norm) | `[1, 50]` (Thai consonants & digits) | **BSD-3** | ✅ Active (`99.58% Val Top-1 / 99.89% Top-3`) |
+| **Stage 1.5 (Country Cls)** | `country_classifier.pth` / `.onnx` | MobileNetV3-Small | **$256 \times 128$** (stretch จาก plate crop 320×160) | `[1, 2]` (0: Thai, 1: Laos) | **BSD-3** | ✅ Active (`~1.5ms CPU / 100% Acc`) |
+| **Stage 2 (Component Detector)**| `component_detector_picodet_s_v6pico320.pt` / `dfine_nano.pt` | PicoDet-S / D-FINE | **$640 \times 640$ tensor** — serve: upscale rectified plate $320\times160 \to 1280\times640$ | `[1, 300, 4]` (`plate_char`, `province`) | **Apache-2.0** | ✅ Active (`~12ms CPU`) |
+| **Stage 3A (Thai Char Box)** | `character_box_detector_picodet_s_v6pico320.pt` | PicoDet-S (320x320) | **$320 \times 320$ tensor** (30% vertical replicate padding) | `[1, 300, 4]` (Natural margin character boxes) | **Apache-2.0** | ✅ Active (`~18ms CPU`) |
+| **Stage 3A (Thai Char Cls)** | `character_classifier_v6pico320.pth` | MobileNetV2 (50 Classes Balanced) | $64 \times 64$ (`ImageOps.autocontrast(cutoff=2)` + square ambient padding) | `[1, 50]` (Thai consonants & digits) | **BSD-3** | ✅ Active (`99.58% Val Top-1 / 99.89% Top-3`) |
 | **Stage 3A (Thai OCR CTC)** | `ocr_model.pth` | ResNet18 + BiLSTM + CTC | **$256 \times 64$** (grayscale, `SmartResize` pad ดำ, ToTensor ไม่ normalize) | `[T, B, 71]` (CTC sequence logits) | **Apache-2.0** | ✅ Active (`~8.5ms CPU`) |
-| **Stage 3A (Lao Char Cls)** | `character_classifier_lao.pth` / `.onnx`| MobileNetV2 (34 Classes) | $64 \times 64$ (pad กฎเดียวกับไทย) | `[1, 34]` (Lao consonants & digits) | **BSD-3** | ✅ Active (`~1.8ms CPU`) |
-| **Stage 3B (Thai Province)** | `province_model_grayscale_thai.pth` | Grayscale ResNet18 | **$256 \times 80$** (⚠️ ไม่ใช่ 64 — `GrayscaleSmartResize(256,80)` pad ด้วยโทนพื้นหลังจริง; norm 0.5/0.25) | `[1, 77]` (77 Thai Provinces) | **BSD-3** | ✅ Active (`99.46% Val Top-1 / 43 MB`) |
-| **Stage 3B (Lao Province)** | `province_model_grayscale_lao.pth` | Grayscale ResNet18 | **$256 \times 64$** (pad โทนพื้นหลังจริงเช่นกัน; norm 0.5/0.25) | `[1, 18]` (18 Lao Provinces) | **BSD-3** | ✅ Active (`99.56% Top-1`) |
+| **Stage 3A (Lao Char Box)** | `character_box_detector_picodet_s_lao_m3a_v6.onnx` | PicoDet-S (320x320) | **$320 \times 320$ tensor** (3:1 letterbox serving) | `[1, 300, 4]` (High-precision Lao characters) | **Apache-2.0** | ✅ Active (`~6.2ms ONNX CPU`) |
+| **Stage 3A (Lao Char Cls)** | `character_recognition_mobilenetv4_lao_v7.onnx` | MobileNetV4-Conv-Small | $64 \times 64$ (30 classes balanced) | `[1, 30]` (Strict DLT Lao characters) | **Apache-2.0** | ✅ Active (`99.56% Top-1 / ~1.8ms`) |
+| **Stage 3B (Thai Province)** | `province_model_grayscale_thai_v6pico320.pth` / `.onnx` | Grayscale ResNet18 | **$256 \times 80$** (`GrayscaleSmartResize(256,80)` pad ด้วยโทนพื้นหลังจริง; norm 0.5/0.25) | `[1, 77]` (77 Thai Provinces) | **BSD-3** | ✅ Active (`100.0% Val Top-1 / 44 MB`) |
+| **Stage 3B (Lao Province)** | `province_model_grayscale_lao_v6.onnx` | Grayscale ResNet18 | **$256 \times 64$** (Letterbox 256x64 ด้วยโทนพื้นหลังจริง; norm 0.5/0.25) | `[1, 19]` (19 Lao Provinces, incl. Xaysomboun) | **BSD-3** | ✅ Active (`100.0% Top-1 / 44.8 MB`) |
 
 ---
 
