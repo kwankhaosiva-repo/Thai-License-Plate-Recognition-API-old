@@ -68,10 +68,10 @@ def get_font(size: int = 20) -> ImageFont.FreeTypeFont:
     if size in _FONT_CACHE:
         return _FONT_CACHE[size]
     candidates = [
-        "/System/Library/Fonts/Supplemental/Lao Sangam MN.ttf",
         "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-        "/System/Library/Fonts/Supplemental/Thonburi.ttc",
         "/Library/Fonts/Arial Unicode.ttf",
+        "/System/Library/Fonts/Supplemental/Thonburi.ttc",
+        "/System/Library/Fonts/Supplemental/Lao Sangam MN.ttf",
     ]
     font = None
     for path in candidates:
@@ -126,8 +126,10 @@ class LaoFullPipelineTester:
         print(" Loading End-to-End Recognition Models (Thai & Lao) ".center(70, "="))
         print("=" * 70)
 
-        # 1. Model 1: Plate Detector (PicoDet-S v6aug)
-        m1_path = self.weights_dir / "plate_detector_picodet_s_v6aug.pt"
+        # 1. Model 1: Plate Detector (PicoDet-S v6pico320 / v6aug)
+        m1_path = self.weights_dir / "plate_detector_picodet_s_v6pico320.pt"
+        if not m1_path.exists():
+            m1_path = self.weights_dir / "plate_detector_picodet_s_v6aug.pt"
         if not m1_path.exists():
             m1_path = self.weights_dir / "plate_detector_picodet_s.pt"
         print(f"  [1/8] Model 1 (Plate Detector)  : {m1_path.name}")
@@ -171,8 +173,10 @@ class LaoFullPipelineTester:
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
 
-        # 4. Model 2: Component Detector (PicoDet-S frame)
-        m2_path = self.weights_dir / "component_detector_picodet_s_v6frame.pt"
+        # 4. Model 2: Component Detector (PicoDet-S v6pico320 / v6frame)
+        m2_path = self.weights_dir / "component_detector_picodet_s_v6pico320.pt"
+        if not m2_path.exists():
+            m2_path = self.weights_dir / "component_detector_picodet_s_v6frame.pt"
         if not m2_path.exists():
             m2_path = self.weights_dir / "component_detector_picodet_s_v2.pt"
         print(f"  [4/8] Model 2 (Component Det)  : {m2_path.name}")
@@ -217,7 +221,11 @@ class LaoFullPipelineTester:
             self.char_map_lao = {int(k): v for k, v in json.load(f).items()}
 
         # 7. Lao Province Detector & Classifier
-        prov_det_path = self.weights_dir / "province_detector_picodet_s_lao_v4.pt"
+        prov_det_path = self.weights_dir / "province_detector_picodet_s_lao_v6.pt"
+        if not prov_det_path.exists():
+            prov_det_path = cfg.PROJECT_ROOT / "chacrit" / "output model" / "province_detector_picodet_s_lao_v6.pt"
+        if not prov_det_path.exists():
+            prov_det_path = self.weights_dir / "province_detector_picodet_s_lao_v4.pt"
         if not prov_det_path.exists():
             prov_det_path = cfg.PROJECT_ROOT / "chacrit" / "output model" / "province_detector_picodet_s_lao_v4.pt"
         if not prov_det_path.exists():
@@ -245,13 +253,17 @@ class LaoFullPipelineTester:
         self.prov_model_lao.to(self.device).eval()
 
         # 8. Thai Models (Fallback for Thai plates)
-        thai_charbox_path = self.weights_dir / "character_box_detector_picodet_s_v6frame.pt"
+        thai_charbox_path = self.weights_dir / "character_box_detector_picodet_s_v6pico320.pt"
+        if not thai_charbox_path.exists():
+            thai_charbox_path = self.weights_dir / "character_box_detector_picodet_s_v6frame.pt"
         if not thai_charbox_path.exists():
             thai_charbox_path = self.weights_dir / "character_box_detector_picodet_s_v2.pt"
         print(f"  [8/8] Thai Models (M3A/Prov)    : {thai_charbox_path.name}")
         self.thai_charbox_detector = LibreYOLO(str(thai_charbox_path)) if thai_charbox_path.exists() else None
 
-        thai_cls_path = self.weights_dir / "character_classifier_v6.pth"
+        thai_cls_path = self.weights_dir / "character_classifier_v6pico320.pth"
+        if not thai_cls_path.exists():
+            thai_cls_path = self.weights_dir / "character_classifier_v6.pth"
         if not thai_cls_path.exists():
             thai_cls_path = self.weights_dir / "character_classifier.pth"
         thai_map_path = self.weights_dir / "char_classifier_map.json"
@@ -265,7 +277,9 @@ class LaoFullPipelineTester:
         self.thai_char_classifier.to(self.device).eval()
 
         # Thai Province Model
-        prov_path_thai = self.weights_dir / "province_model_grayscale_thai_v5.pth"
+        prov_path_thai = self.weights_dir / "province_model_grayscale_thai_v6pico320.pth"
+        if not prov_path_thai.exists():
+            prov_path_thai = self.weights_dir / "province_model_grayscale_thai_v5.pth"
         if not prov_path_thai.exists():
             prov_path_thai = self.weights_dir / "province_model_grayscale_thai_v4.pth"
         prov_map_path_thai = self.weights_dir / "province_map.json"
@@ -283,10 +297,29 @@ class LaoFullPipelineTester:
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
+
+        # Thai CTC OCR Fallback Model (ResNetCRNN)
+        from src.models import ResNetCRNN, best_path_decode
+        from src.preprocess import get_ocr_transforms
+        self.best_path_decode = best_path_decode
+        self.ocr_model = None
+        ocr_path = self.weights_dir / "ocr_model.pth"
+        int_to_char_path = self.weights_dir / "int_to_char.json"
+        if ocr_path.exists() and int_to_char_path.exists():
+            with open(int_to_char_path, "r", encoding="utf-8") as f:
+                self.int_to_char = {int(k): v for k, v in json.load(f).items()}
+            self.ocr_model = ResNetCRNN(img_channel=1, num_classes=len(self.int_to_char))
+            ckpt_ocr = torch.load(ocr_path, map_location=self.device)
+            state = ckpt_ocr.get("model_state_dict", ckpt_ocr.get("model_state", ckpt_ocr))
+            self.ocr_model.load_state_dict(state)
+            self.ocr_model.to(self.device).eval()
+            self.tf_ocr = get_ocr_transforms(is_train=False)
+            print(f"  [8b/8] Thai CTC OCR (Fallback) : {ocr_path.name}")
         print("=" * 70 + "\n")
 
-    def warp_plate(self, raw_bgr: np.ndarray, plate_box: List[int]) -> np.ndarray:
-        """Executes homography perspective warp matching trained plate geometry."""
+    def warp_plate(self, raw_bgr: np.ndarray, plate_box: List[int]) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+        """Executes homography perspective warp matching trained plate geometry.
+        Returns (rectified_plate, quad_corners)."""
         bx1, by1, bx2, by2 = plate_box
         H, W = raw_bgr.shape[:2]
         bw = bx2 - bx1
@@ -323,13 +356,14 @@ class LaoFullPipelineTester:
                         raw_bgr, quad_corners, target_width=320, target_height=160, padding_frac=0.0
                     )
                     if rectified_plate is not None and rectified_plate.size > 0:
-                        return rectified_plate
+                        return rectified_plate, quad_corners
             except Exception as e:
                 print(f"[Model 1 Homography] Warning: {e}")
 
         # Fallback to direct resize
         raw_box = raw_bgr[by1:by2, bx1:bx2]
-        return cv2.resize(raw_box, (320, 160), interpolation=cv2.INTER_CUBIC)
+        fallback_quad = np.array([[bx1, by1], [bx2, by1], [bx2, by2], [bx1, by2]], dtype=np.float32)
+        return cv2.resize(raw_box, (320, 160), interpolation=cv2.INTER_CUBIC), fallback_quad
 
     def run_image(self, raw_bgr: np.ndarray, filename: str = "") -> Dict[str, Any]:
         """Runs the complete end-to-end recognition pipeline on a raw scene image."""
@@ -352,17 +386,18 @@ class LaoFullPipelineTester:
             }
 
         best_box_idx = int(np.argmax([float(b.conf[0]) for b in res1.boxes]))
-        plate_box = res1.boxes[best_box_idx].xyxy[0].cpu().numpy().astype(int)
+        scene_plate_box = res1.boxes[best_box_idx].xyxy[0].cpu().numpy().astype(int).tolist()
         plate_conf = float(res1.boxes[best_box_idx].conf[0])
-        px1, py1, px2, py2 = plate_box
-        px1, py1 = max(0, px1), max(0, py1)
-        px2, py2 = min(W, px2), min(H, py2)
+        scene_x1, scene_y1, scene_x2, scene_y2 = scene_plate_box
+        scene_x1, scene_y1 = max(0, scene_x1), max(0, scene_y1)
+        scene_x2, scene_y2 = min(W, scene_x2), min(H, scene_y2)
+        scene_plate_box = [scene_x1, scene_y1, scene_x2, scene_y2]
 
         # -----------------------------------------------------------------
         # Stage 2: Plate 4-Corner Homography Perspective Rectification
         # -----------------------------------------------------------------
         t_warp_start = time.time()
-        rectified_plate = self.warp_plate(raw_bgr, [px1, py1, px2, py2])
+        rectified_plate, quad_corners = self.warp_plate(raw_bgr, scene_plate_box)
         t_warp = int((time.time() - t_warp_start) * 1000)
 
         if rectified_plate is None or rectified_plate.size == 0 or rectified_plate.shape[0] < 8:
@@ -403,39 +438,46 @@ class LaoFullPipelineTester:
         # =================================================================
         if country_name == "Thai":
             t2_start = time.time()
-            m2_input = cv2.resize(rectified_plate, (1280, 640))
-            res2 = self.m2_detector.predict(m2_input, conf=0.20, device=self.device)
+            res2 = self.m2_detector.predict(rectified_plate, conf=0.15, device=self.device)
             t_m2 = int((time.time() - t2_start) * 1000)
 
             char_crop = None
             char_box_coords = None
+            prov_crop = None
+            prov_box = None
+            best_char_conf = 0.0
+            best_prov_conf = 0.0
+
             if len(res2.boxes) > 0:
                 for b in res2.boxes:
                     c_idx_comp = int(b.cls[0])
+                    bconf = float(b.conf[0])
                     bx1, by1, bx2, by2 = b.xyxy[0].cpu().numpy().astype(int)
-                    bx1 = max(0, min(rw, int(bx1 * rw / 1280.0)))
-                    bx2 = max(0, min(rw, int(bx2 * rw / 1280.0)))
-                    by1 = max(0, min(rh, int(by1 * rh / 640.0)))
-                    by2 = max(0, min(rh, int(by2 * rh / 640.0)))
+                    bx1 = max(0, min(rw, bx1))
+                    bx2 = max(0, min(rw, bx2))
+                    by1 = max(0, min(rh, by1))
+                    by2 = max(0, min(rh, by2))
 
-                    if c_idx_comp == 0 and by1 < int(rh * 0.65):  # Characters
+                    if c_idx_comp == 0 and by1 < int(rh * 0.65) and bconf > best_char_conf:
                         pad_cx = min(10, max(3, int((bx2 - bx1) * 0.04)))
                         pad_cy = min(10, max(3, int((by2 - by1) * 0.10)))
-                        cx1 = max(int(rw * 0.03), bx1 - pad_cx)
-                        cx2 = min(int(rw * 0.97), bx2 + pad_cx)
+                        cx1 = max(int(rw * 0.02), bx1 - pad_cx)
+                        cx2 = min(int(rw * 0.98), bx2 + pad_cx)
                         cy1 = max(int(rh * 0.02), by1 - pad_cy)
-                        cy2 = min(int(rh * 0.76), by2 + pad_cy)
+                        cy2 = min(int(rh * 0.78), by2 + pad_cy)
                         char_crop = rectified_plate[cy1:cy2, cx1:cx2]
                         char_box_coords = [cx1, cy1, cx2, cy2]
-                    elif c_idx_comp == 1 and by2 > int(rh * 0.50):  # Province
+                        best_char_conf = bconf
+                    elif c_idx_comp == 1 and by2 > int(rh * 0.45) and ((by1 + by2) / 2) > int(rh * 0.40) and bconf > best_prov_conf:
                         pad_x = min(14, max(6, int((bx2 - bx1) * 0.08)))
                         pad_y = min(8, max(4, int((by2 - by1) * 0.10)))
-                        px1 = max(0, bx1 - pad_x)
-                        px2 = min(rw, bx2 + pad_x)
-                        py1 = max(int(rh * 0.46), by1 - pad_y)
-                        py2 = min(rh, by2 + pad_y)
-                        prov_crop = rectified_plate[py1:py2, px1:px2]
-                        prov_box = [px1, py1, px2, py2]
+                        pvx1 = max(0, bx1 - pad_x)
+                        pvx2 = min(rw, bx2 + pad_x)
+                        pvy1 = max(int(rh * 0.40), by1 - pad_y)
+                        pvy2 = min(rh, by2 + pad_y)
+                        prov_crop = rectified_plate[pvy1:pvy2, pvx1:pvx2]
+                        prov_box = [pvx1, pvy1, pvx2, pvy2]
+                        best_prov_conf = bconf
 
             if char_crop is None:
                 char_crop = rectified_plate[0:int(rh * 0.75), 0:rw]
@@ -447,7 +489,8 @@ class LaoFullPipelineTester:
             # Thai Character Box Detection
             t3a_start = time.time()
             if self.thai_charbox_detector is not None and char_crop.size > 0:
-                res_tbox = self.thai_charbox_detector.predict(char_crop, conf=0.15, device=self.device)
+                # Use conf=0.30 to filter low-confidence jitter / inner loops of digits
+                res_tbox = self.thai_charbox_detector.predict(char_crop, conf=0.30, device=self.device)
                 ch_w, ch_h = char_crop.shape[1], char_crop.shape[0]
                 raw_boxes = []
                 for b in res_tbox.boxes:
@@ -458,14 +501,51 @@ class LaoFullPipelineTester:
                     fy1 = max(0, min(rh, char_box_coords[1] + by1))
                     fx2 = max(0, min(rw, char_box_coords[0] + bx2))
                     fy2 = max(0, min(rh, char_box_coords[1] + by2))
-                    if (fx2 - fx1) >= 6 and (fy2 - fy1) >= 8:
+                    bw = fx2 - fx1
+                    bh = fy2 - fy1
+                    if bw >= 8 and bh >= 16:
                         raw_boxes.append([fx1, fy1, fx2, fy2, bconf])
 
                 if raw_boxes:
-                    b_t = torch.tensor([[b[0], b[1], b[2], b[3]] for b in raw_boxes], dtype=torch.float32)
-                    s_t = torch.tensor([b[4] for b in raw_boxes], dtype=torch.float32)
-                    keep = nms(b_t, s_t, iou_threshold=0.35)
-                    char_boxes = [raw_boxes[i] for i in keep.tolist()]
+                    # Sort by detection confidence descending
+                    raw_boxes.sort(key=lambda b: b[4], reverse=True)
+
+                    # Containment / Sub-stroke Suppression (IoS & Enclosure)
+                    # Prevents small inner loops inside numbers (like 'บ' inside bottom loop of '3')
+                    deduped_boxes = []
+                    for b in raw_boxes:
+                        bx1, by1, bx2, by2, bconf = b
+                        bw = bx2 - bx1
+                        bh = by2 - by1
+                        b_area = bw * bh
+                        is_substroke = False
+                        for k in deduped_boxes:
+                            kx1, ky1, kx2, ky2, kconf = k
+                            kw = kx2 - kx1
+                            kh = ky2 - ky1
+                            k_area = kw * kh
+
+                            ix1, iy1 = max(bx1, kx1), max(by1, ky1)
+                            ix2, iy2 = min(bx2, kx2), min(by2, ky2)
+                            inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+
+                            iou = inter / float(b_area + k_area - inter) if (b_area + k_area - inter) > 0 else 0
+                            ios = inter / float(min(b_area, k_area)) if min(b_area, k_area) > 0 else 0
+                            is_enclosed_x = (bx1 >= kx1 - 4 and bx2 <= kx2 + 4 and bw < 0.80 * kw)
+
+                            if iou > 0.25 or ios > 0.60 or is_enclosed_x:
+                                is_substroke = True
+                                break
+                        if not is_substroke:
+                            deduped_boxes.append(b)
+
+                    # Filter fragments by median character height (drop artifacts < 55% of character height)
+                    if len(deduped_boxes) >= 2:
+                        med_h = np.median([b[3] - b[1] for b in deduped_boxes])
+                        char_boxes = [b for b in deduped_boxes if (b[3] - b[1]) >= 0.55 * med_h]
+                    else:
+                        char_boxes = deduped_boxes
+
                     char_boxes = sorted(char_boxes, key=lambda b: b[0])
                 else:
                     char_boxes = []
@@ -475,15 +555,36 @@ class LaoFullPipelineTester:
 
             # Thai Character Classification
             trec_start = time.time()
-            for b in char_boxes:
+            n_thai_boxes = len(char_boxes)
+            for idx_b, b in enumerate(char_boxes):
                 bx1, by1, bx2, by2, bconf = b
                 single = rectified_plate[by1:by2, bx1:bx2]
                 if single.size == 0 or single.shape[0] < 4 or single.shape[1] < 4:
                     continue
-                pil_c = Image.fromarray(cv2.cvtColor(single, cv2.COLOR_BGR2RGB))
+
+                # Ambient padding to square: preserves natural character aspect ratio (v2 audit contract)
+                # Prevents vertical/horizontal distortion (which turns tall characters like 'ผ' into 'ม')
+                sh, sw = single.shape[:2]
+                smax = max(sh, sw)
+                corners = np.array([single[0, 0], single[0, -1], single[-1, 0], single[-1, -1]])
+                bg_col = np.median(corners, axis=0).astype(np.uint8)
+                padded_c = np.full((smax, smax, 3), bg_col, dtype=np.uint8)
+                padded_c[(smax - sh) // 2 : (smax - sh) // 2 + sh, (smax - sw) // 2 : (smax - sw) // 2 + sw] = single
+
+                pil_c = Image.fromarray(cv2.cvtColor(padded_c, cv2.COLOR_BGR2RGB))
                 ts_c = self.tf_char(pil_c).unsqueeze(0).to(self.device)
                 with torch.no_grad():
                     out_tc = self.thai_char_classifier(ts_c)
+
+                    # Spatial/Grammar Trailing Digits Mask:
+                    # In Thailand, trailing 1-4 characters are strictly numeric digits (0-9).
+                    # When a box is positioned in the trailing numeric section:
+                    # Suppress Thai consonant classes (indices 10..49 in char_map_thai)
+                    cx = (bx1 + bx2) / 2.0
+                    is_trailing_digit_pos = (n_thai_boxes >= 4 and idx_b >= (n_thai_boxes - 4) and idx_b >= 2) or (cx >= 0.40 * rw and idx_b >= 2)
+                    if is_trailing_digit_pos:
+                        out_tc[0, 10:] = -1e9
+
                     probs_tc = F.softmax(out_tc, dim=1).squeeze(0)
                     top_tc, top_ti = probs_tc.max(0)
                 sym = self.char_map_thai.get(top_ti.item(), "?")
@@ -493,6 +594,30 @@ class LaoFullPipelineTester:
                     "box": [bx1, by1, bx2, by2],
                     "box_conf": round(bconf, 3),
                 })
+
+            raw_chars_str = "".join([c["char"] for c in char_details])
+            formatted_plate = format_thai_plate(raw_chars_str)
+            is_valid = is_valid_thai_plate(formatted_plate)
+
+            # Run CTC OCR on char_crop for fallback / fusion if box prediction is invalid or incomplete
+            if self.ocr_model is not None and char_crop.size > 0:
+                char_pil = Image.fromarray(cv2.cvtColor(char_crop, cv2.COLOR_BGR2RGB)).convert("L")
+                ts_ocr = self.tf_ocr(char_pil).unsqueeze(0).to(self.device)
+                with torch.no_grad():
+                    out_ocr = self.ocr_model(ts_ocr)
+                    probs_ocr = out_ocr.softmax(-1)
+                    ocr_text = self.best_path_decode(probs_ocr, self.int_to_char)[0]
+                formatted_ocr = format_thai_plate(ocr_text)
+                valid_ocr = is_valid_thai_plate(formatted_ocr)
+                if not is_valid and valid_ocr:
+                    formatted_plate = formatted_ocr
+                    raw_chars_str = ocr_text
+                    is_valid = True
+                elif len(char_details) == 0 and formatted_ocr:
+                    formatted_plate = formatted_ocr
+                    raw_chars_str = ocr_text
+                    is_valid = valid_ocr
+
             t_rec = int((time.time() - trec_start) * 1000)
 
             # Thai Province Classification
@@ -507,9 +632,6 @@ class LaoFullPipelineTester:
                 prov_name = self.prov_map_thai.get(top_tpi.item(), "Unknown")
                 prov_conf = float(top_tp.item()) * 100
             t_prov = int((time.time() - tprov_start) * 1000)
-
-            raw_chars_str = "".join([c["char"] for c in char_details])
-            formatted_plate = format_thai_plate(raw_chars_str)
             is_valid = is_valid_thai_plate(formatted_plate)
 
         # =================================================================
@@ -591,7 +713,8 @@ class LaoFullPipelineTester:
 
             # 3. Lao Character Recognition (MobileNetV4 Lao v7 with Exact Preprocessing Contract)
             trec_start = time.time()
-            for b in char_boxes:
+            n_lao_boxes = len(char_boxes)
+            for idx_b, b in enumerate(char_boxes):
                 bx1, by1, bx2, by2, bconf = b
                 # Adaptive margin cushion with safe frame guard (do not cut into outer plate border)
                 cx1 = max(0, bx1 - 2)
@@ -614,11 +737,12 @@ class LaoFullPipelineTester:
                 blob_rec = ((rgb_224 - mean) / std).transpose(2, 0, 1)[np.newaxis, :]
                 out_rec = self.rec_sess.run(None, {self.rec_input_name: blob_rec})[0][0].copy()
 
-                # Spatial Grammar Mask:
-                # First ~38% plate width MUST be Lao consonants (indices >= 10 in v6 map).
-                # Remaining ~62% plate width MUST be digits (indices 0..9).
+                # Spatial & Sequence Grammar Mask:
+                # Lao plates: first 2 characters are consonants (indices >= 10 in v6 map).
+                # Trailing 1-4 characters are strictly numeric digits (indices 0..9).
                 cx = (bx1 + bx2) / 2.0
-                if cx < 0.38 * rw:
+                is_trailing_digit = (idx_b >= 2) or (cx >= 0.38 * rw)
+                if not is_trailing_digit and idx_b < 2:
                     out_rec[:10] = -1e9
                 else:
                     out_rec[10:] = -1e9
@@ -660,13 +784,13 @@ class LaoFullPipelineTester:
                     if len(res_lp.boxes) > 0:
                         best_lp = max(res_lp.boxes, key=lambda b: float(b.conf[0]))
                         lpx1, lpy1, lpx2, lpy2 = best_lp.xyxy[0].tolist()
-                        px1 = int(round(lpx1))
-                        py1 = int(round(lpy1))
-                        px2 = int(round(lpx2))
-                        py2 = int(round(lpy2))
-                        if (px2 - px1) >= 20 and (py2 - py1) >= 8:
-                            prov_box = [px1, py1, px2, py2]
-                            prov_crop = rectified_plate[py1:py2, px1:px2]
+                        pvx1 = int(round(lpx1))
+                        pvy1 = int(round(lpy1))
+                        pvx2 = int(round(lpx2))
+                        pvy2 = int(round(lpy2))
+                        if (pvx2 - pvx1) >= 20 and (pvy2 - pvy1) >= 8:
+                            prov_box = [pvx1, pvy1, pvx2, pvy2]
+                            prov_crop = rectified_plate[pvy1:pvy2, pvx1:pvx2]
 
                 # Fallback to upper banner geometry if detector missed
                 if prov_box is None:
@@ -694,7 +818,8 @@ class LaoFullPipelineTester:
         return {
             "detected": True,
             "filename": filename,
-            "plate_box": [px1, py1, px2, py2],
+            "plate_box": scene_plate_box,
+            "plate_corners": quad_corners.tolist() if quad_corners is not None else None,
             "plate_conf": round(plate_conf, 3),
             "rectified_plate": rectified_plate,
             "country": country_name,
@@ -732,7 +857,7 @@ class LaoFullPipelineTester:
         canvas_w = 1200
         dashboard = np.full((canvas_h, canvas_w, 3), (24, 24, 28), dtype=np.uint8)
 
-        # 1. Left View: Raw Scene with Plate Box
+        # 1. Left View: Raw Scene with Plate Box (AABB + 4-Corner Quad)
         scene_w = 720
         scene_h = 540
         scene_disp = raw_bgr.copy()
@@ -740,10 +865,22 @@ class LaoFullPipelineTester:
         if result.get("detected"):
             px1, py1, px2, py2 = result["plate_box"]
             pconf = result["plate_conf"]
+
+            # 1a. Axis-Aligned Bounding Box (AABB) in Green
             cv2.rectangle(scene_disp, (px1, py1), (px2, py2), (0, 220, 0), 2)
-            c_label = f"{result['country']} Plate {pconf:.2f}"
+
+            # 1b. 4-Corner Homography Polygon (Quad) in Cyan with Corner Keypoints
+            quad = result.get("plate_corners")
+            if quad is not None:
+                pts = np.array(quad, dtype=np.int32)
+                cv2.polylines(scene_disp, [pts], isClosed=True, color=(0, 240, 255), thickness=2)
+                for pt in pts:
+                    cv2.circle(scene_disp, tuple(pt), 4, (0, 0, 255), -1)
+                    cv2.circle(scene_disp, tuple(pt), 2, (255, 255, 255), -1)
+
+            c_label = f"{result['country']} Plate {pconf:.2f} (Green: AABB | Cyan: 4-Corner)"
             scene_disp = draw_text_pil(
-                scene_disp, c_label, (px1, max(0, py1 - 24)), font_size=16,
+                scene_disp, c_label, (px1, max(0, py1 - 24)), font_size=15,
                 text_color=(0, 0, 0), bg_color=(0, 220, 0)
             )
 

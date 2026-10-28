@@ -23,8 +23,8 @@ SPLITS_DIR = PROJECT_ROOT / "datasets" / "Thai" / "thai_character_crops" / "spli
 TRAIN_DIR = SPLITS_DIR / "train"
 VALID_DIR = SPLITS_DIR / "valid"
 
-TARGET_TRAIN_SAMPLES = 400
-TARGET_VALID_SAMPLES = 30
+TARGET_TRAIN_SAMPLES = 500
+TARGET_VALID_SAMPLES = 40
 
 
 def apply_photometric_shadow(im: Image.Image) -> Image.Image:
@@ -67,8 +67,14 @@ def apply_photometric_shadow(im: Image.Image) -> Image.Image:
 
 
 def apply_geometric_transform(im: Image.Image) -> Image.Image:
-    """Applies slight rotation and translation."""
-    angle = random.uniform(-6, 6)
+    """Applies realistic tilt/rotation (up to ±14 deg), perspective shear (up to ±7 deg),
+    and slight translation with ambient background padding matching plate edge color.
+    """
+    w, h = im.size
+    angle = random.uniform(-14, 14)
+    shear_val = random.uniform(-7, 7)
+    scale_val = random.uniform(0.92, 1.08)
+
     corners = [
         im.getpixel((0, 0)),
         im.getpixel((im.width - 1, 0)),
@@ -80,10 +86,20 @@ def apply_geometric_transform(im: Image.Image) -> Image.Image:
     else:
         avg_bg = int(np.mean(corners))
 
+    # 1. Rotate with ambient background fill
     res = im.rotate(angle, resample=Image.BICUBIC, fillcolor=avg_bg)
-    tx = random.randint(-2, 2)
-    ty = random.randint(-2, 2)
-    res = res.transform(res.size, Image.AFFINE, (1, 0, tx, 0, 1, ty), fillcolor=avg_bg)
+
+    # 2. Shear & Translate with ambient background fill
+    tx = random.randint(-3, 3)
+    ty = random.randint(-3, 3)
+    shear_rad = float(np.tan(np.deg2rad(shear_val)))
+    res = res.transform(
+        (w, h),
+        Image.AFFINE,
+        (1.0 / scale_val, -shear_rad, -tx, 0.0, 1.0 / scale_val, -ty),
+        resample=Image.BICUBIC,
+        fillcolor=avg_bg,
+    )
     return res
 
 

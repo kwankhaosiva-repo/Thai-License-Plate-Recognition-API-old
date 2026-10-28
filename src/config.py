@@ -25,7 +25,7 @@ class Config:
     #   "plate_detector_rtdetrv2_r18.pt"     ← RT-DETRv2-R18 (Apache-2.0)
     #   "plate_detector_rfdetr.pt"           ← RF-DETR-Base (More accurate, heavier)
     #   "plate_detector_rtdetr.pt"           ← RT-DETR-L (Older baseline)
-    MODEL_1_FILENAME = "plate_detector_picodet_s_v6aug.pt"
+    MODEL_1_FILENAME = "plate_detector_picodet_s_v6pico320.pt"
 
     # --- Model 2: Component Detector (plate_char / province bbox) ---
     #   "component_detector_dfine_nano.pt"     ← D-FINE-Nano (⚡ recommended: MIT, ultra-fast & high mAP)
@@ -33,7 +33,7 @@ class Config:
     #   "component_detector_rfdetr_small.pt"   ← RF-DETR-Small
     #   "component_detector_rfdetr.pt"         ← RF-DETR-Base
     #   "component_detector_rtdetr.pt"         ← RT-DETR-L (older)
-    MODEL_2_FILENAME = "component_detector_picodet_s_v6frame.pt"
+    MODEL_2_FILENAME = "component_detector_picodet_s_v6pico320.pt"
 
     # --- Model 3A: Character Box Detector ---
     #   "character_box_detector_picodet_s_v2.pt" ← PicoDet-S v2 (⚡ BEST measured on val: P=0.81/R=0.93 with NMS, dup~0%)
@@ -48,7 +48,7 @@ class Config:
     #   "character_box_detector_rtdetr.pt"      ← RT-DETR-L (older)
     # NOTE: filename must be the EXACT weight filename (no "...pt_v2.pt" mistakes —
     # a nonexistent name silently falls back to an older checkpoint via ACTIVE_CHAR_BOX_MODEL_PATH).
-    MODEL_3A_FILENAME = "character_box_detector_picodet_s_v6new.pt"
+    MODEL_3A_FILENAME = "character_box_detector_picodet_s_v6pico320.pt"
 
     # --- Model 3A: Character Classifier (MobileNetV2) ---
     #   "character_classifier.pth" ← MobileNetV2 (50 Thai character & digit classes)
@@ -57,7 +57,7 @@ class Config:
     #     (h4_) + per-class augmentation to ≥50 crops/class. Valid Top-1 99.71% on the
     #     re-split set (v3 scores 96.71% on the same set; rare classes ธ ป ค fixed).
     #     Raw v3-eval numbers (89.09%) were on the OLD split — not comparable.
-    CHAR_CLASSIFIER_THAI_FILENAME = "character_classifier_v6.pth"
+    CHAR_CLASSIFIER_THAI_FILENAME = "character_classifier_v6pico320.pth"
 
     # --- Model 3A: OCR (CTC Text Recognition) ---
     #   v3 = train/serve-matched retrain on ocr_v3 leak-free split (436 train plates).
@@ -74,7 +74,7 @@ class Config:
     # exist (proven to load via _load_prov_model's backbone auto-detection).
     # Default False keeps today's production checkpoint (ResNet18) untouched.
     USE_RESNET34_PROVINCE_THAI = False  # v5: R18 wins in real-world serve tests; R34 kept as backup
-    MODEL_3B_THAI_FILENAME = "province_model_grayscale_thai_v5.pth"
+    MODEL_3B_THAI_FILENAME = "province_model_grayscale_thai_v6pico320.pth"
 
     # --- Lao Plate Detector ---
     #   "plate_detector_lao_dfine_nano.pt"   ← D-FINE-Nano (⚡ recommended: MIT)

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.ML.OnnxRuntime;
@@ -8,19 +8,37 @@ using OpenCvSharp;
 namespace ThaiLpr.Lao
 {
     /// <summary>
-    /// Model 3A: Lao Character Box Detector (PicoDet-S ONNX)
-    /// Detects character bounding boxes on Lao license plates.
-    /// Expects a rectified plate (320x160), pads it to 3:1 (320x888),
-    /// resizes to 320x320 for inference, and maps coordinates back to 320x160.
+    /// Model 3A: Lao Character Box Detector (PicoDet-S Lao v6 ONNX, 320x320)
+    /// Detects individual character bounding boxes on Lao license plates.
+    ///
+    /// Preprocessing Contract (Serve == Train):
+    /// 1. Input plate: Rectified 320x160 BGR image.
+    /// 2. Letterbox/Padding to ~3:1 aspect ratio:
+    ///    padY = 80 (top/bottom) -> height becomes 320px
+    ///    padX = 284 (left/right) -> width becomes 888px
+    ///    cv2.copyMakeBorder(..., BORDER_REPLICATE)
+    /// 3. Resize padded plate to 320x320 RGB (Linear Interpolation).
+    /// 4. ImageNet Normalization (0-255 scale):
+    ///    Mean: [123.675, 116.28, 103.53], Std: [58.395, 57.12, 57.375]
+    /// 5. Output shape: [1, 2125, 5] -> [x1, y1, x2, y2, score] (Single class: 'char')
+    /// 6. Post-processing: Map coordinates back to 320x160 (subtract padX, padY),
+    ///    filter valid characters (width >= 12, height >= 45, y1 < 105),
+    ///    apply IoU NMS (0.28) and sort left-to-right.
     /// </summary>
     public class LaoCharDetectorM3A : IDisposable
     {
         private readonly InferenceSession _session;
         private readonly string _inputName;
 
-        // ImageNet constants in 0-255 scale
+        // ImageNet constants in 0-255 scale (RGB order)
         private static readonly float[] Mean = { 123.675f, 116.28f, 103.53f };
         private static readonly float[] Std  = { 58.395f, 57.12f, 57.375f };
+
+        public class DetectedCharBox
+        {
+            public Rect Box { get; set; }
+            public float Score { get; set; }
+        }
 
         public LaoCharDetectorM3A(string onnxPath)
         {
@@ -31,16 +49,33 @@ namespace ThaiLpr.Lao
 
         /// <summary>
         /// Detects character boxes on a 320x160 rectified plate image.
+        /// Returns character bounding boxes sorted left-to-right.
         /// </summary>
         /// <param name="rectifiedPlate">320x160 BGR plate image</param>
-        /// <param name="confThreshold">Confidence threshold (default: 0.40)</param>
+        /// <param name="confThreshold">Confidence threshold (default: 0.35)</param>
         /// <returns>List of character bounding boxes sorted left-to-right</returns>
-        public List<Rect> DetectCharBoxes(Mat rectifiedPlate, float confThreshold = 0.40f)
+        public List<Rect> DetectCharBoxes(Mat rectifiedPlate, float confThreshold = 0.35f)
         {
-            int rw = rectifiedPlate.Width;  // 320
-            int rh = rectifiedPlate.Height; // 160
+            var detailed = DetectCharBoxesDetailed(rectifiedPlate, confThreshold);
+            return detailed.Select(d => d.Box).ToList();
+        }
 
-            // 1. Pad 3:1 (Top/Bottom 80px, Left/Right 284px) -> total 320 x 888 px
+        /// <summary>
+        /// Detects character boxes with individual confidence scores, sorted left-to-right.
+        /// </summary>
+        /// <param name="rectifiedPlate">320x160 BGR plate image</param>
+        /// <param name="confThreshold">Confidence threshold (default: 0.35)</param>
+        /// <param name="iouThreshold">NMS IoU threshold (default: 0.28)</param>
+        /// <returns>List of detected boxes with scores sorted left-to-right</returns>
+        public List<DetectedCharBox> DetectCharBoxesDetailed(Mat rectifiedPlate, float confThreshold = 0.35f, float iouThreshold = 0.28f)
+        {
+            if (rectifiedPlate == null || rectifiedPlate.Empty() || rectifiedPlate.Width < 20 || rectifiedPlate.Height < 20)
+                return new List<DetectedCharBox>();
+
+            int rw = rectifiedPlate.Width;  // typically 320
+            int rh = rectifiedPlate.Height; // typically 160
+
+            // 1. Pad 3:1 (Top/Bottom 80px, Left/Right 284px) -> total 320 x (rw + 568) px
             const int padY = 80;
             const int padX = 284;
             using var platePadded = new Mat();
@@ -72,7 +107,7 @@ namespace ThaiLpr.Lao
             var output = results.First().AsTensor<float>(); // [1, 2125, 5]
 
             int numBoxes = output.Dimensions[1];
-            var rawBoxes = new List<(Rect Box, float Score)>();
+            var rawBoxes = new List<DetectedCharBox>();
 
             for (int i = 0; i < numBoxes; i++)
             {
@@ -96,28 +131,32 @@ namespace ThaiLpr.Lao
                 // Valid Lao character criteria on 320x160 plates
                 if (bw >= 12 && bh >= 45 && oy1 < 105)
                 {
-                    rawBoxes.Add((new Rect(ox1, oy1, bw, bh), score));
+                    rawBoxes.Add(new DetectedCharBox
+                    {
+                        Box = new Rect(ox1, oy1, bw, bh),
+                        Score = score
+                    });
                 }
             }
 
             // 4. Non-Maximum Suppression (IoU 0.28) & sort left-to-right
-            return ApplyNms(rawBoxes, 0.28f).OrderBy(r => r.X).ToList();
+            return ApplyNms(rawBoxes, iouThreshold).OrderBy(r => r.Box.X).ToList();
         }
 
-        private List<Rect> ApplyNms(List<(Rect Box, float Score)> boxes, float iouThreshold)
+        private static List<DetectedCharBox> ApplyNms(List<DetectedCharBox> boxes, float iouThreshold)
         {
-            var sorted = boxes.OrderByDescending(b => b.Score).Select(b => b.Box).ToList();
-            var kept = new List<Rect>();
+            var sorted = boxes.OrderByDescending(b => b.Score).ToList();
+            var kept = new List<DetectedCharBox>();
 
             foreach (var b in sorted)
             {
                 bool overlap = false;
                 foreach (var kb in kept)
                 {
-                    int iw = Math.Max(0, Math.Min(b.Right, kb.Right) - Math.Max(b.Left, kb.Left));
-                    int ih = Math.Max(0, Math.Min(b.Bottom, kb.Bottom) - Math.Max(b.Top, kb.Top));
+                    int iw = Math.Max(0, Math.Min(b.Box.Right, kb.Box.Right) - Math.Max(b.Box.Left, kb.Box.Left));
+                    int ih = Math.Max(0, Math.Min(b.Box.Bottom, kb.Box.Bottom) - Math.Max(b.Box.Top, kb.Box.Top));
                     float inter = iw * ih;
-                    float union = (b.Width * b.Height) + (kb.Width * kb.Height) - inter;
+                    float union = (b.Box.Width * b.Box.Height) + (kb.Box.Width * kb.Box.Height) - inter;
                     if (union > 0 && (inter / union) > iouThreshold)
                     {
                         overlap = true;
