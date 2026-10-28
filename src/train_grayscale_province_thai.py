@@ -31,10 +31,12 @@ from src.preprocess import GrayscaleSmartResize
 
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
-DATA_DIR = PROJECT_ROOT / "datasets" / "Thai" / "thai_province_crops"
+DATA_DIR = (PROJECT_ROOT / "datasets" / "Thai" / "thai_province_crops_v6") if (PROJECT_ROOT / "datasets" / "Thai" / "thai_province_crops_v6").exists() else (PROJECT_ROOT / "datasets" / "Thai" / "thai_province_crops")
 PROV_MAP_PATH = PROJECT_ROOT / "weights" / "province_map.json"
 WEIGHTS_DIR = PROJECT_ROOT / "weights"
-DEFAULT_MODEL_SAVE_PATH = WEIGHTS_DIR / "province_model_resnet34_grayscale_thai.pth"
+OUTPUT_DIR = PROJECT_ROOT / "chacrit" / "output model"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+DEFAULT_MODEL_SAVE_PATH = WEIGHTS_DIR / "province_model_grayscale_thai_v6pico320.pth"
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
 
@@ -235,7 +237,7 @@ def train_grayscale_thai(epochs=15, batch_size=32, lr=2e-4, backbone="resnet34",
                     print(f"  ⏹ Early stopping at epoch {epoch} (best Top-1 {best_val_top1*100:.2f}% at its best epoch)")
                     break
 
-    # Evaluate best model on test set
+    # Evaluate best model on test set & Export
     if model_save_path.exists():
         ckpt = torch.load(model_save_path, map_location=DEVICE)
         model.load_state_dict(ckpt["model_state"])
@@ -245,6 +247,31 @@ def train_grayscale_thai(epochs=15, batch_size=32, lr=2e-4, backbone="resnet34",
         print(f"  Top-1 Accuracy: {test_top1 * 100:.2f}%")
         print(f"  Top-5 Accuracy: {test_top5 * 100:.2f}%")
         print(f"  Weights saved: {model_save_path}")
+
+        # Copy checkpoint to chacrit/output model/
+        dest_pth = OUTPUT_DIR / model_save_path.name
+        shutil.copy2(model_save_path, dest_pth)
+        print(f"  📦 Checkpoint copied to: {dest_pth}")
+
+        # Export ONNX
+        onnx_save_path = model_save_path.with_suffix(".onnx")
+        try:
+            model.eval().cpu()
+            dummy_input = torch.randn(1, 3, 80, 256, dtype=torch.float32)
+            torch.onnx.export(
+                model,
+                dummy_input,
+                str(onnx_save_path),
+                input_names=["input"],
+                output_names=["output"],
+                opset_version=14,
+                dynamic_axes={"input": {0: "batch_size"}, "output": {0: "batch_size"}},
+            )
+            print(f"  ✅ Exported ONNX to: {onnx_save_path} ({onnx_save_path.stat().st_size / 1e6:.2f} MB)")
+            shutil.copy2(onnx_save_path, OUTPUT_DIR / onnx_save_path.name)
+            print(f"  📦 ONNX copied to: {OUTPUT_DIR / onnx_save_path.name}")
+        except Exception as e:
+            print(f"  ⚠️ ONNX export warning: {e}")
         print("=" * 70)
 
 

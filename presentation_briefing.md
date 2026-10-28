@@ -60,14 +60,15 @@
 | **Stage 1 (Plate Detector)** | D-FINE-Nano | $640 \times 640$ (stretch; scene 4:3) | 15.0 MB | PyTorch / LibreYOLO (D-FINE Engine) | Object Detection (`[1, 300, 4]`) |
 | *Alternative Stage 1* | PicoDet-S | **$416 \times 416$** (stretch; predict imgsz=416) | 3.8 MB | PyTorch / LibreYOLO (PaddleDetection) | Object Detection (`[1, 3598, 5]`) |
 | **Stage 1.1 (Corner Regressor)** | MobileNetV3-Small Head | $224 \times 224$ (bbox + 12% margin) | 4.0 MB | PyTorch (`torchvision`) | 8-D Regression (`[1, 8]`: $x_1, y_1 \dots x_4, y_4$) |
-| **Stage 1.5 (Country Cls)** | MobileNetV3-Small | **$256 \times 128$** (stretch จาก plate 320×160) | 3.8 MB | PyTorch (`torchvision`) | Binary Classification (`[1, 2]`) |
-| **Stage 2 (Component Detector)** | D-FINE-Nano | **$640 \times 640$ tensor** — serve: upscale rectified plate $320\times160 \to 1280\times640$ (2:1) แล้ว divide boxes กลับ | 15.0 MB | PyTorch (D-FINE Engine) | Object Detection (`plate_char`, `province`) |
-| **Stage 3A (Char Box Detector)**| RF-DETR-Base | **$560 \times 560$ tensor** — serve: upscale char row $\to 2088\times560$ (3.7:1) | 121.8 MB | PyTorch (RF-DETR Transformer) | Character Box Detection (`[1, 300, 4]`) |
-| **Stage 3A (Thai Char Classifier)**| MobileNetV2 | $64 \times 64$ (pre-pad สี median มุม crop; ImageNet norm) | 9.0 MB | PyTorch (`torchvision`) | 50-Class Softmax (`[1, 50]`) — **99.58% Val Top-1 / 99.89% Top-3** |
+| **Stage 1.5 (Country Cls)** | MobileNetV3-Small | **$256 \times 128$** (stretch จาก plate 320×160) | 3.8 MB (ONNX 6.1 MB) | PyTorch (`torchvision`) | Binary Classification (`[1, 2]` Thai vs Lao, **100.0% Val Acc**) |
+| **Stage 2 (Component Detector)** | PicoDet-S / D-FINE-Nano | **$640 \times 640$ tensor** — serve: upscale rectified plate $320\times160 \to 1280\times640$ (2:1) | 3.8 MB / 15.0 MB | LibreYOLO / PaddleDetection | Object Detection (`plate_char`, `province`) |
+| **Stage 3A (Thai Char Box Detector)**| PicoDet-S / RF-DETR-Base | **$320 \times 320$ tensor** (30% vertical replicate padding) | 3.8 MB / 121.8 MB | LibreYOLO (PicoDet-S Engine) | Character Box Detection (`[1, 300, 4]`) |
+| **Stage 3A (Thai Char Classifier)**| MobileNetV2 | $64 \times 64$ (`ImageOps.autocontrast(cutoff=2)` + square ambient padding) | 9.0 MB | PyTorch (`torchvision`) | 50-Class Softmax (`[1, 50]`) — **99.58% Val Top-1 / 99.89% Top-3** |
 | **Stage 3A (Thai Full OCR Engine)**| ResNet18 + BiLSTM + CTC | **$256 \times 64$** (grayscale, pad ดำ, ไม่ normalize) | 54.8 MB | PyTorch (Custom CTC Model) | CTC Sequence Logits (`[T, 1, 71]`) |
-| **Stage 3A (Lao Char Classifier)** | MobileNetV2 | $64 \times 64$ (pad กฎเดียวกับไทย) | 8.9 MB | PyTorch (`torchvision`) | 34-Class Softmax (`[1, 34]`) — **99.56% Val Top-1** |
-| **Stage 3B (Thai Province)** | ResNet18 (Grayscale) | **$256 \times 80$** (⚠️ ไม่ใช่ 256×64 — pad โทนพื้นหลังจริง, norm 0.5/0.25) | 42.9 MB | PyTorch (`torchvision`) | 77-Class Softmax (`[1, 77]`) — **99.46% Val Top-1** |
-| **Stage 3B (Lao Province)** | ResNet18 (Grayscale) | **$256 \times 64$** (pad โทนพื้นหลังจริง, norm 0.5/0.25) | 42.7 MB | PyTorch (`torchvision`) | 18-Class Softmax (`[1, 18]`) — **99.56% Val Top-1** |
+| **Stage 3A (Lao Char Box Detector)**| PicoDet-S (v6 ONNX) | **$320 \times 320$ tensor** (3:1 letterbox serving) | 3.8 MB (ONNX) | LibreYOLO | Lao Character Localization (`~6.2ms ONNX CPU`) |
+| **Stage 3A (Lao Char Classifier)** | MobileNetV4-Conv-Small (v7 ONNX) | $64 \times 64$ (30 classes balanced) | 4.8 MB (ONNX) | PyTorch (`timm`) / ONNX Runtime | 30-Class Softmax (`[1, 30]`) — **99.56% Top-1 / ~1.8ms** |
+| **Stage 3B (Thai Province)** | ResNet18 (Grayscale, v6pico320) | **$256 \times 80$** (pad โทนพื้นหลังจริง, norm 0.5/0.25) | 44.8 MB (ONNX) | PyTorch (`torchvision`) / ONNX Runtime | 77-Class Softmax (`[1, 77]`) — **100.0% Val Top-1** |
+| **Stage 3B (Lao Province)** | ResNet18 (Grayscale, v6 ONNX) | **$256 \times 64$** (Letterbox 256x64 ด้วยโทนพื้นหลังจริง; norm 0.5/0.25) | 44.8 MB (ONNX) | PyTorch (`torchvision`) / ONNX Runtime | 19-Class Softmax (`[1, 19]`, ครบ 19 แขวงรวมไชยสมบูรณ์) — **100.0% Top-1** |
 
 ---
 
@@ -207,6 +208,10 @@ flowchart LR
   - รถ 1 คันที่ขับผ่านกล้องจะถูกบันทึกเฟรมต่อเนื่องภายในหน้าต่างเวลา 5.0 วินาที
   - ระบบทำ **Majority Voting** อักษรและจังหวัด พร้อมเฉลี่ยค่า **Mean Confidence** จากหลายมุมมอง คัดเลือก Crop ภาพที่ชัดที่สุด
   - บันทึกลงฐานข้อมูลเพียง **1 Record ที่แม่นยำที่สุดต่อรถ 1 คัน** หมดปัญหาประวัติซ้ำซ้อน
+- **Production Multi-Frame Voting & Temporal Consensus (3–5 Frames):**
+  - ในการใช้งานจริง (CCTV/RTSP) ภาพนิ่งเฟรมเดียวอาจมี Motion Blur, ไฟหน้ารถย้อนแสง, หรือหยดน้ำบัง ซึ่งการพึ่งพาภาพเดียว (Single Frame) ไม่ตอบโจทย์ระดับอุตสาหกรรม
+  - ระบบจึงใช้ **Temporal Logit Probability Aggregation**: นำ Softmax Probability ของแต่ละเฟรมมารวมกันแบบถ่วงน้ำหนักตามความสมมาตรและระยะกึ่งกลางเลนส์ ($W_{\text{center}}$) ช่วยแยกแยะตัวอักษรที่ลายเส้นใกล้เคียงกัน (เช่น ฌ vs ฒ, ณ vs ฒ, 3 vs 6) ให้ได้ผลลัพธ์ถูกต้อง 100%
+  - ผสานกับ **DLT Statutory Syntax Gating** คัดกรองตัวอักษรแปลกปลอม (เช่น กราฟิกลายการ์ตูนหมีพูห์ หรือกรอบป้ายแต่ง) ออกจากผลลัพธ์อัตโนมัติ
 - **High-Precision Thresholding (`conf_m1 = 0.80`):**
   - ตั้งค่า Threshold ของ Model 1 สำหรับโหมดวิดีโอและสตรีมไว้ที่ `0.80` เพื่อป้องกัน False Alarm จากขอบทางหรือกันชน
   - เพิ่มความถี่ในการตรวจจับ (`STREAM_FRAME_SKIP = 2`, `STREAM_TARGET_SAMPLES = 1`) ทำให้จับป้ายทะเบียนได้ตั้งแต่เฟรมแรกที่เห็นชัดเจน

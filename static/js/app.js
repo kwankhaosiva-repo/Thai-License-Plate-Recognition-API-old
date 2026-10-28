@@ -264,15 +264,15 @@
               if (archEl) archEl.textContent = fallbackTag || parsed.tag || 'Neural Engine';
             };
 
-            setField('mInfo1', 'mArch1', m.model_1, tags.model_1 || 'D-FINE Nano');
+            setField('mInfo1', 'mArch1', m.model_1, tags.model_1 || 'PicoDet-S (320x320)');
             setField('mInfo15', 'mArch15', m.model_1_5, tags.model_1_5 || 'MobileNetV3-Small');
-            setField('mInfo2', 'mArch2', m.model_2, tags.model_2 || 'D-FINE Nano');
-            setField('mInfo3a', 'mArch3a', m.model_3a_thai_char_box, tags.char_box || 'RF-DETR Base');
-            setField('mInfo3aCls', 'mArch3aCls', m.model_3a_thai_char_classifier, tags.char_class_thai || 'MobileNetV2 (50 คลาส)');
-            setField('mInfo3aLaoCls', 'mArch3aLaoCls', m.model_3a_lao_char_classifier, tags.char_class_lao || 'MobileNetV2 (34 คลาส)');
+            setField('mInfo2', 'mArch2', m.model_2, tags.model_2 || 'PicoDet-S (320x320)');
+            setField('mInfo3a', 'mArch3a', m.model_3a_thai_char_box, tags.char_box || 'PicoDet-S (320x320)');
+            setField('mInfo3aCls', 'mArch3aCls', m.model_3a_thai_char_classifier, tags.char_class_thai || 'MobileNetV2 (50 Thai Classes)');
+            setField('mInfo3aLaoCls', 'mArch3aLaoCls', m.model_3a_lao_char_classifier, tags.char_class_lao || 'MobileNetV4 (34 Lao Classes)');
             setField('mInfo3aOcr', 'mArch3aOcr', m.model_3a_thai_ctc, tags.ocr_ctc || 'ResNetCRNN CTC');
             setField('mInfo3b', 'mArch3b', m.model_3b_thai, tags.prov_thai || 'ResNet18 (77 จังหวัด)');
-            setField('mInfo3bLao', 'mArch3bLao', m.model_3b_lao, tags.prov_lao || 'ResNet18 (18 จังหวัด)');
+            setField('mInfo3bLao', 'mArch3bLao', m.model_3b_lao, tags.prov_lao || 'ResNet18 / PicoDet (18 แขวง)');
           }
           if (data.device) {
             const devEl = document.getElementById('mDeviceTag');

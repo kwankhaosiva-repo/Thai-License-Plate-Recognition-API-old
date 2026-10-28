@@ -580,6 +580,8 @@ def filter_implausible_char_boxes(boxes, char_crop, strict=True, min_char_h_frac
         feats.append((bw / float(bh), ink_ratio, touches_v, bh))
 
     med_h = float(np.median([f[3] for f in feats])) if feats else 0.0
+    confident_ws = [max(1, b[2] - b[0]) for b in boxes if len(b) > 4 and b[4] >= 0.70]
+    med_w = float(np.median(confident_ws)) if confident_ws else 0.0
 
     kept = []
     for box, (aspect, ink_ratio, touches_v, bh) in zip(boxes, feats):
@@ -592,6 +594,11 @@ def filter_implausible_char_boxes(boxes, char_crop, strict=True, min_char_h_frac
                 continue  # sub-stroke fragment
             if bh > max_char_h_frac * med_h and aspect > 1.3:
                 continue  # un-split glued composite
+        if strict and med_w > 0 and len(box) > 4:
+            b_conf = box[4]
+            bw = max(1, box[2] - box[0])
+            if bw < 0.65 * med_w and b_conf < 0.80:
+                continue  # narrow low-confidence sliver artifact between digits
         kept.append(box)
     return kept
 
@@ -1195,6 +1202,32 @@ class LPRPipelineService:
 
         # 6. Load Model 3B_Lao (Lao Province Model)
         self.prov_model_lao, self.int_to_prov_lao = self._load_lao_prov_model(prov_lao_path, prov_lao_map_path)
+
+        # 6.5. Load Lao Specialized Recognition Models (v6/v7 ONNX)
+        self.lao_m3a_sess = None
+        self.lao_rec_sess = None
+        self.char_map_lao_v7 = {}
+        try:
+            import onnxruntime as ort
+            lao_m3a_onnx = cfg.WEIGHTS_DIR / "character_box_detector_picodet_s_lao_m3a_v6.onnx"
+            lao_rec_onnx = cfg.WEIGHTS_DIR / "character_recognition_mobilenetv4_lao_v7.onnx"
+            if lao_m3a_onnx.exists():
+                opts = ort.SessionOptions()
+                opts.intra_op_num_threads = 2
+                self.lao_m3a_sess = ort.InferenceSession(str(lao_m3a_onnx), opts)
+                self.lao_m3a_inp = self.lao_m3a_sess.get_inputs()[0].name
+            if lao_rec_onnx.exists():
+                opts = ort.SessionOptions()
+                opts.intra_op_num_threads = 2
+                self.lao_rec_sess = ort.InferenceSession(str(lao_rec_onnx), opts)
+                self.lao_rec_inp = self.lao_rec_sess.get_inputs()[0].name
+            
+            v7_map = cfg.WEIGHTS_DIR / "char_classifier_map_lao_v7.json"
+            if v7_map.exists():
+                with open(v7_map, "r", encoding="utf-8") as f:
+                    self.char_map_lao_v7 = {int(k): v for k, v in json.load(f).items()}
+        except Exception as e:
+            logger.warning(f"Could not load Lao ONNX models: {e}")
 
         # 7. Transforms
         self.tf_ocr = get_ocr_transforms(is_train=False)
@@ -1833,9 +1866,9 @@ class LPRPipelineService:
                                 for cx, cy in norm_corners
                             ], dtype=np.float32)
 
-                            # Exact homography warp without fake extra bumper expansion (padding_frac=0.0)
+                            # Homography warp with 6% safety margin to preserve plate borders and top banners
                             raw_warped = warp_perspective_plate(
-                                img_bgr, quad_corners, target_width=320, target_height=160, padding_frac=0.0
+                                img_bgr, quad_corners, target_width=320, target_height=160, padding_frac=0.06
                             )
                             rectified_plate = apply_residual_deskew(raw_warped)
                     except Exception as e:
@@ -1911,6 +1944,7 @@ class LPRPipelineService:
                 res2 = self.model_comp(m2_input, conf=conf_m2, verbose=False)[0]
 
             if len(res2.boxes) > 0:
+                char_cands = []
                 for c_box in res2.boxes:
                     c_idx = int(c_box.cls[0])
                     c_name = self.model_comp.names[c_idx].lower()
@@ -1926,32 +1960,12 @@ class LPRPipelineService:
                     if comp_crop.size == 0:
                         continue
 
-                    if ("plate" in c_name or "char" in c_name) and (c_conf > char_conf):
+                    if ("plate" in c_name or "char" in c_name):
                         # Characters must not be purely at the bottom edge
                         if by1 < int(rh * 0.65):
                             bw_char = bx2 - bx1
                             bh_char = by2 - by1
-                            # Natural, tight padding: avoids capturing outer plate frame borders or province text
-                            pad_cx = min(10, max(3, int(bw_char * 0.04)))
-                            # MARGIN CONTRACT: the M3A char-box training set has its
-                            # glyph boxes spanning 8.4%..94.6% of the row height, i.e.
-                            # ~8% margin above and ~5% below every character. The old
-                            # formula (pad 2-6px + a hard clamp at 0.68*rh) left a
-                            # median of only 4px above / 2px below on real plates, and
-                            # 16/30 images had ZERO bottom margin — the lower vowels and
-                            # descenders were being cut off before M3A ever saw them.
-                            # Scale the pad with the box so the crop matches training.
-                            pad_cy = min(10, max(3, int(bh_char * 0.10)))
-
-                            # Inset from outer plate frame borders to reject black frame strips
-                            cx1 = max(int(rw * 0.03), bx1 - pad_cx)
-                            cx2 = min(int(rw * 0.97), bx2 + pad_cx)
-                            cy1 = max(int(rh * 0.02), by1 - pad_cy)
-                            cy2 = min(int(rh * 0.76), by2 + pad_cy)
-                            char_crop = rectified_plate[cy1:cy2, cx1:cx2]
-                            # Use genuine raw detection box for overlay (never stretched visually):
-                            char_box_coords = (bx1, by1, bx2, by2)
-                            char_conf = c_conf
+                            char_cands.append((c_conf, bw_char, bh_char, bx1, by1, bx2, by2))
                     elif "prov" in c_name and (c_conf > prov_conf):
                         # Thai Province text is strictly located in the lower half (y > 0.45*rh)
                         # Prevents top banners (e.g. THAILAND 27 on commercial trucks) from being mistaken as province
@@ -1971,13 +1985,40 @@ class LPRPipelineService:
                             prov_box_coords = (px1, py1, px2, py2)
                             prov_conf = c_conf
 
+                # Select best character row candidate:
+                # Discard top banners (e.g. THAILAND 73 on commercial trucks) when a genuine character row exists
+                if char_cands:
+                    valid_cands = [c for c in char_cands if c[2] >= 35 and c[1] >= 100]
+                    chosen_pool = valid_cands if valid_cands else char_cands
+                    chosen = max(chosen_pool, key=lambda c: c[0])
+                    c_conf, bw_char, bh_char, bx1, by1, bx2, by2 = chosen
+
+                    # Safe horizontal margins: Model 2 character row box can slightly undershoot outer characters.
+                    pad_cx = max(10, int(bw_char * 0.05))
+                    # Generous vertical margins: allow plenty of headroom and footroom
+                    # so character boxes extend beyond glyph top/bottom margins, matching user annotations.
+                    pad_cy_top = max(14, int(bh_char * 0.20))
+                    pad_cy_bottom = max(18, int(bh_char * 0.22))
+
+                    # Inset from outer plate frame borders to reject black frame strips while preserving all character ink
+                    cx1 = max(0, bx1 - pad_cx)
+                    cx2 = min(rw, bx2 + pad_cx)
+                    cy1 = max(int(rh * 0.02), by1 - pad_cy_top)
+                    cy2 = min(int(rh * 0.74), by2 + pad_cy_bottom)
+                    char_crop = rectified_plate[cy1:cy2, cx1:cx2]
+                    # Use genuine raw detection box for overlay (never stretched visually):
+                    char_box_coords = (bx1, by1, bx2, by2)
+                    char_conf = c_conf
+
             if char_crop is None:
                 char_crop = rectified_plate[0 : int(rh * 0.75), 0:rw]
                 char_box_coords = (0, 0, rw, int(rh * 0.75))
                 char_conf = 0.50
             if prov_crop is None:
-                prov_crop = rectified_plate[int(rh * 0.60) : int(rh * 0.98), int(rw * 0.12) : int(rw * 0.88)]
-                prov_box_coords = (int(rw * 0.12), int(rh * 0.60), int(rw * 0.88), int(rh * 0.98))
+                # Fallback: province is centered in the bottom band below character ink
+                prov_y1 = max(int(rh * 0.72), char_box_coords[3] - 2) if char_box_coords is not None else int(rh * 0.70)
+                prov_box_coords = (int(rw * 0.22), min(prov_y1, int(rh * 0.78)), int(rw * 0.78), int(rh * 0.98))
+                prov_crop = rectified_plate[prov_box_coords[1] : prov_box_coords[3], prov_box_coords[0] : prov_box_coords[2]]
                 prov_conf = 0.50
 
         else:
@@ -2072,10 +2113,18 @@ class LPRPipelineService:
                 # raw crops (no CLAHE/unsharp at train time), so enhancing at inference
                 # created a domain mismatch (duplicate boxes on complex Thai chars such
                 # as ณ / ฌ). The model now sees the exact domain it was trained on.
-                det_char_input = char_crop
-                # Upscale to the train pixel geometry (~3.7:1 crops at a 560 tensor);
-                # the per-axis scale is undone right after detection below.
-                det_char_input, m3a_scale = upscale_to_train_geometry(det_char_input, self.m3a_spec)
+                is_picodet_m3a = "picodet" in getattr(self.m3a_spec, "name", "").lower()
+                if is_picodet_m3a:
+                    ch_h = char_crop.shape[0]
+                    pad_y = int(round(ch_h * 0.30))
+                    det_char_input = cv2.copyMakeBorder(char_crop, pad_y, pad_y, 0, 0, cv2.BORDER_REPLICATE)
+                    m3a_scale = (1.0, 1.0)
+                else:
+                    pad_y = 0
+                    det_char_input = char_crop
+                    # Upscale to the train pixel geometry (~3.7:1 crops at a 560 tensor);
+                    # the per-axis scale is undone right after detection below.
+                    det_char_input, m3a_scale = upscale_to_train_geometry(det_char_input, self.m3a_spec)
 
                 try:
                     box_res = self.char_box_model(det_char_input, conf=self.m3a_conf, verbose=False, device=self.device)[0]
@@ -2090,7 +2139,14 @@ class LPRPipelineService:
                     # incl. the debug overlay + stream cache) ended up reporting
                     # the LAST character box in char-crop coordinates, i.e. a
                     # portrait "square" that has nothing to do with the plate.
-                    cbx1, cby1, cbx2, cby2 = [int(v) for v in divide_boxes_by_scale(b.xyxy[0].cpu().numpy(), m3a_scale)[0]]
+                    if is_picodet_m3a:
+                        raw_b = b.xyxy[0].cpu().numpy()
+                        cbx1 = int(round(raw_b[0]))
+                        cby1 = int(round(max(0, raw_b[1] - pad_y)))
+                        cbx2 = int(round(raw_b[2]))
+                        cby2 = int(round(min(char_crop.shape[0], raw_b[3] - pad_y)))
+                    else:
+                        cbx1, cby1, cbx2, cby2 = [int(v) for v in divide_boxes_by_scale(b.xyxy[0].cpu().numpy(), m3a_scale)[0]]
                     bconf = float(b.conf[0])
                     cbw = cbx2 - cbx1
                     cbh = cby2 - cby1
@@ -2702,7 +2758,92 @@ class LPRPipelineService:
                 top_prov_prob = 0.95
 
             # 3A-1: Lao Character Box Detection & Individual Classification
-            if self.char_box_model is not None and self.char_classifier_lao is not None and char_crop is not None and char_crop.size > 0:
+            if self.lao_m3a_sess is not None and self.lao_rec_sess is not None and rectified_plate is not None and rectified_plate.size > 0:
+                try:
+                    rh, rw = rectified_plate.shape[:2]
+                    scale_y = 160.0 / rh
+                    scale_x = 320.0 / rw
+                    plate_160 = cv2.resize(rectified_plate, (320, 160))
+                    padded_m3a = cv2.copyMakeBorder(plate_160, 80, 80, 284, 284, cv2.BORDER_CONSTANT, value=[0, 0, 0])
+                    padded_320 = cv2.resize(padded_m3a, (320, 320))
+                    blob_m3a = (padded_320.transpose(2, 0, 1)[np.newaxis, :] / 255.0).astype(np.float32)
+                    preds_m3a = self.lao_m3a_sess.run(None, {self.lao_m3a_inp: blob_m3a})[0][0]
+
+                    boxes_unpadded = []
+                    score_thr = 0.25
+                    for row in preds_m3a:
+                        score = float(row[4])
+                        if score < score_thr:
+                            continue
+                        px1, py1, px2, py2 = row[0:4]
+                        px1 = px1 * (888.0 / 320.0)
+                        px2 = px2 * (888.0 / 320.0)
+                        py1 = py1 * (320.0 / 320.0)
+                        py2 = py2 * (320.0 / 320.0)
+                        ox1 = max(0, px1 - 284)
+                        ox2 = min(320, px2 - 284)
+                        oy1 = max(0, py1 - 80)
+                        oy2 = min(160, py2 - 80)
+                        if ox2 - ox1 < 8 or oy2 - oy1 < 12:
+                            continue
+                        rx1 = int(round(ox1 / scale_x))
+                        rx2 = int(round(ox2 / scale_x))
+                        ry1 = int(round(oy1 / scale_y))
+                        ry2 = int(round(oy2 / scale_y))
+                        boxes_unpadded.append([rx1, ry1, rx2, ry2, score])
+
+                    boxes_unpadded = charbox_greedy_nms(boxes_unpadded, iou_thr=0.35)
+                    boxes_unpadded.sort(key=lambda b: b[0])
+
+                    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32) * 255.0
+                    std = np.array([0.229, 0.224, 0.225], dtype=np.float32) * 255.0
+                    chars_predicted = []
+                    char_box_overlay = rectified_plate.copy()
+
+                    for idx_b, b in enumerate(boxes_unpadded):
+                        bx1, by1, bx2, by2, bconf = b
+                        cx1 = max(0, bx1 - 2)
+                        cx2 = min(rw, bx2 + 2)
+                        cy1 = max(0, by1 - 1)
+                        cy2 = min(int(rh * 0.938), by2 + 2)
+                        c_crop = rectified_plate[cy1:cy2, cx1:cx2].copy()
+                        if c_crop.shape[0] < 4 or c_crop.shape[1] < 4:
+                            continue
+                        sh, sw = c_crop.shape[:2]
+                        smax = max(sh, sw)
+                        corners = np.array([c_crop[0, 0], c_crop[0, -1], c_crop[-1, 0], c_crop[-1, -1]])
+                        bg_col = np.median(corners, axis=0).astype(np.uint8)
+                        padded_c = np.full((smax, smax, 3), bg_col, dtype=np.uint8)
+                        padded_c[(smax - sh) // 2 : (smax - sh) // 2 + sh, (smax - sw) // 2 : (smax - sw) // 2 + sw] = c_crop
+
+                        pil_sc = ImageOps.autocontrast(Image.fromarray(cv2.cvtColor(padded_c, cv2.COLOR_BGR2RGB)), cutoff=2)
+                        rgb_224 = cv2.resize(np.array(pil_sc), (224, 224), interpolation=cv2.INTER_CUBIC).astype(np.float32)
+                        blob_rec = ((rgb_224 - mean) / std).transpose(2, 0, 1)[np.newaxis, :]
+                        out_rec = self.lao_rec_sess.run(None, {self.lao_rec_inp: blob_rec})[0][0].copy()
+
+                        cx = (bx1 + bx2) / 2.0
+                        if (idx_b >= 2) or (cx >= 0.38 * rw):
+                            out_rec[10:] = -1e9
+                        else:
+                            out_rec[:10] = -1e9
+
+                        exp_v = np.exp(out_rec - np.max(out_rec))
+                        probs = exp_v / np.sum(exp_v)
+                        top_idx = int(np.argmax(probs))
+                        char_sym = self.char_map_lao_v7.get(top_idx, "?")
+                        char_prob = float(probs[top_idx])
+                        chars_predicted.append(char_sym)
+                        char_boxes_detail.append({
+                            "char": char_sym,
+                            "prob": round(char_prob * 100, 1),
+                            "box": [bx1, by1, bx2, by2],
+                        })
+                        cv2.rectangle(char_box_overlay, (bx1, by1), (bx2, by2), (0, 255, 0), 2)
+
+                    char_box_text = "".join(chars_predicted)
+                except Exception as e:
+                    logger.warning(f"[Lao ONNX M3A] Error: {e}")
+            elif self.char_box_model is not None and self.char_classifier_lao is not None and char_crop is not None and char_crop.size > 0:
                 # PREPROCESS FIX: same train-geometry upscale as the Thai branch.
                 lao_char_input, lao_m3a_scale = upscale_to_train_geometry(char_crop, self.m3a_spec)
                 lao_m3a_conf = max(self.m3a_conf, 0.12)
@@ -3068,6 +3209,11 @@ class LPRPipelineService:
                 m2_ok = (m2_score > getattr(cfg, "CONF_GATE_M2_MIN", 0.50)) and (char_crop is not None)
                 m3_ok = (m3_score >= getattr(cfg, "CONF_GATE_M3_MIN", 0.30))
 
+                # Lao plate layout is inverted (province top, chars bottom) and evaluated
+                # via dedicated Lao M3A/MNv4 sessions — bypass Thai M2 threshold when plate syntax is valid
+                if country_name == "Laos" and is_valid_lao_plate(formatted_plate_text):
+                    m2_ok = True
+
                 if not (m2_ok and m3_ok):
                     if plate_conf >= getattr(cfg, "CONF_GATE_M1_KEEP", 0.60):
                         result_dict["low_confidence"] = True
@@ -3176,16 +3322,16 @@ def api_health():
         "service": "Multi-Country (Thai & Laos) LPR Recognition Engine",
         "device": str(cfg.DEVICE),
         "debug_mode": cfg.DEBUG_MODE,
-        "models_loaded": 9,
-        "models_total": 9,
+        "models_loaded": 10,
+        "models_total": 10,
         "models": {
             "model_1": f"{cfg.ACTIVE_MODEL_1_PATH.name} (Plate Detection)",
-            "model_1_5": "country_classifier.pth (Thai vs Laos Classifier)",
+            "model_1_5": f"{cfg.MODEL_1_5_PATH.name} & plate_corner_regressor.pth",
             "model_2": f"{cfg.ACTIVE_MODEL_2_PATH.name} (Adaptive Layout Localization)",
-            "model_3a_thai_ctc": "ocr_model.pth (ResNetCRNN CTC)",
+            "model_3a_thai_ctc": f"{cfg.OCR_FILENAME} (ResNetCRNN CTC)",
             "model_3a_thai_char_box": f"{cfg.ACTIVE_CHAR_BOX_MODEL_PATH.name} (Individual Char BBox)",
-            "model_3a_thai_char_classifier": "character_classifier.pth (50 Thai Classes)",
-            "model_3a_lao_char_classifier": "character_classifier_lao.pth (34 Lao Classes)",
+            "model_3a_thai_char_classifier": f"{cfg.CHAR_CLASSIFIER_THAI_FILENAME} (50 Thai Classes)",
+            "model_3a_lao_char_classifier": "character_recognition_mobilenetv4_lao_v7.onnx (Lao MNv4)",
             "model_3b_thai": f"{cfg.ACTIVE_PROV_MODEL_THAI_PATH.name} ({cfg.PROV_MODEL_THAI_TAG})",
             "model_3b_lao": f"{cfg.ACTIVE_PROV_MODEL_LAO_PATH.name} ({cfg.PROV_MODEL_LAO_TAG})",
         },

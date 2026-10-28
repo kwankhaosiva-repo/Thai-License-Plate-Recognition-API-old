@@ -48,27 +48,48 @@ RESUME.docx
 rules.txt
 test_evaluation_results.csv
 
-# ---- Weights: blacklist everything, then whitelist the 19 production files ----
+# ---- Weights: blacklist everything, then whitelist the production v6 files ----
 weights/*
 !weights/char_classifier_map.json
 !weights/char_classifier_map_lao.json
-!weights/character_box_detector_dfine_nano_v2.pt
-!weights/character_classifier.pth
-!weights/character_classifier_lao.pth
-!weights/component_detector_picodet_s_v2.pt
-!weights/country_classifier.pth
-!weights/digit_classifier.pth
+!weights/char_classifier_map_lao_v7.json
 !weights/int_to_char.json
 !weights/int_to_char_lao.json
-!weights/ocr_model.pth
-!weights/plate_character_detector.pt
-!weights/plate_corner_regressor.pth
-!weights/plate_detector_picodet_s_v2.pt
-!weights/province_abbr_map.json
 !weights/province_map.json
 !weights/province_map_lao.json
-!weights/province_model_grayscale_lao.pth
-!weights/province_model_grayscale_thai.pth
+!weights/province_abbr_map.json
+
+# Model 1 (Plate Detector) & 4-Corner Warp
+!weights/plate_detector_picodet_s_v6pico320.pt
+!weights/plate_detector_picodet_s_v6pico320.onnx
+!weights/plate_corner_regressor.pth
+!weights/plate_corner_regressor.onnx
+
+# Model 1.5 (Country Classifier)
+!weights/country_classifier.pth
+!weights/country_classifier.onnx
+
+# Model 2 (Component Detector)
+!weights/component_detector_picodet_s_v6pico320.pt
+
+# Model 3A (Thai Character Box & Recognition)
+!weights/character_box_detector_picodet_s_v6pico320.pt
+!weights/character_box_detector_picodet_s_v6pico320.onnx
+!weights/character_classifier_v6pico320.pth
+!weights/ocr_model_v3.pth
+!weights/ocr_model.pth
+!weights/digit_classifier.pth
+
+# Model 3B (Thai Province Classifier)
+!weights/province_model_grayscale_thai_v6pico320.pth
+
+# Lao Pipeline (M1, M3A, Recognizer, Province)
+!weights/plate_detector_lao_dfine_nano.pt
+!weights/character_box_detector_picodet_s_lao_m3a_v6.onnx
+!weights/character_recognition_mobilenetv4_lao_v7.onnx
+!weights/province_detector_picodet_s_lao_v6.onnx
+!weights/province_model_grayscale_lao_v6.pth
+!weights/province_model_grayscale_lao_v6.onnx
 
 # Security: never bake the private service account key into the image
 lpr-car-plate-e4c1f71338f3.json

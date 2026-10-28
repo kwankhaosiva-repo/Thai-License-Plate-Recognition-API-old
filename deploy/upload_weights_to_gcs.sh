@@ -24,26 +24,42 @@ GCS_BUCKET="${GCS_BUCKET:-lpr-weight}"
 GCP_PROJECT="${GCP_PROJECT:-lpr-car-plate}"
 
 FILES=(
-  # --- Detectors: .pt (torch) + .onnx (export) ---
-  plate_detector_picodet_s_v2.pt
-  plate_detector_picodet_s_v2.onnx
-  component_detector_picodet_s_v2.pt
-  component_detector_picodet_s_v2.onnx
-  character_box_detector_dfine_nano_v2.pt
-  character_box_detector_dfine_nano_v2.onnx
-  # --- Lao plate detector (giox Lao branch) ---
-  plate_detector_lao_dfine_nano.pt
-  # --- Torch classifiers ---
-  character_classifier.pth
-  character_classifier_lao.pth
-  ocr_model.pth
-  province_model_grayscale_thai.pth
-  province_model_grayscale_lao.pth
-  country_classifier.pth
+  # --- Model 1: Plate Detector & 4-Corner Warp Regressor ---
+  plate_detector_picodet_s_v6pico320.pt
+  plate_detector_picodet_s_v6pico320.onnx
   plate_corner_regressor.pth
+  plate_corner_regressor.onnx
+
+  # --- Model 1.5: Country Classifier ---
+  country_classifier.pth
+  country_classifier.onnx
+
+  # --- Model 2: Component Layout Detector ---
+  component_detector_picodet_s_v6pico320.pt
+
+  # --- Model 3A: Thai Character Box & Recognition ---
+  character_box_detector_picodet_s_v6pico320.pt
+  character_box_detector_picodet_s_v6pico320.onnx
+  character_classifier_v6pico320.pth
+  ocr_model.pth
+  ocr_model_v3.pth
+  digit_classifier.pth
+
+  # --- Model 3B: Thai Province Model ---
+  province_model_grayscale_thai_v6pico320.pth
+
+  # --- Lao Pipeline ---
+  plate_detector_lao_dfine_nano.pt
+  character_box_detector_picodet_s_lao_m3a_v6.onnx
+  character_recognition_mobilenetv4_lao_v7.onnx
+  province_detector_picodet_s_lao_v6.onnx
+  province_model_grayscale_lao_v6.pth
+  province_model_grayscale_lao_v6.onnx
+
   # --- JSON class maps ---
   char_classifier_map.json
   char_classifier_map_lao.json
+  char_classifier_map_lao_v7.json
   int_to_char.json
   int_to_char_lao.json
   province_map.json
