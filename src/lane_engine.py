@@ -54,6 +54,8 @@ class RoadCalibration:
     lanes: Optional[Dict[str, List[Point2D]]] = None
     bev_width: int = 400
     bev_height: int = 800
+    ref_width: int = 1280
+    ref_height: int = 720
     world_width_m: float = 3.5
     world_length_m: float = 35.0
     homography_matrix: Optional[np.ndarray] = None
@@ -70,6 +72,35 @@ class RoadCalibration:
                 }
             if self.homography_matrix is None:
                 self.compute_homography()
+
+    def rescale_to_image(self, img_w: int, img_h: int) -> "RoadCalibration":
+        """
+        Dynamically rescales the calibrated road corridor to match the resolution
+        of the target image (e.g. 1280x720, 640x480, 1920x1080), guaranteeing
+        seamless calibration sharing across any resolution without off-screen handles.
+        """
+        if img_w == self.ref_width and img_h == self.ref_height:
+            return self
+
+        sx = float(img_w) / float(self.ref_width)
+        sy = float(img_h) / float(self.ref_height)
+
+        scaled_quad = [Point2D(p.x * sx, p.y * sy) for p in self.ground_quad]
+        scaled_lanes = {
+            k: [Point2D(p.x * sx, p.y * sy) for p in pts]
+            for k, pts in self.lanes.items()
+        } if self.lanes else None
+
+        return RoadCalibration(
+            ground_quad=scaled_quad,
+            lanes=scaled_lanes,
+            bev_width=self.bev_width,
+            bev_height=self.bev_height,
+            ref_width=img_w,
+            ref_height=img_h,
+            world_width_m=self.world_width_m,
+            world_length_m=self.world_length_m,
+        )
 
     def compute_homography(self) -> None:
         if len(self.ground_quad) != 4:
@@ -125,6 +156,8 @@ class RoadCalibration:
             "lanes": {k: [p.to_list() for p in v] for k, v in self.lanes.items()},
             "bev_width": self.bev_width,
             "bev_height": self.bev_height,
+            "ref_width": self.ref_width,
+            "ref_height": self.ref_height,
             "world_width_m": self.world_width_m,
             "world_length_m": self.world_length_m,
         }
@@ -138,21 +171,67 @@ class RoadCalibration:
             lanes=lanes,
             bev_width=data.get("bev_width", 400),
             bev_height=data.get("bev_height", 800),
+            ref_width=data.get("ref_width", 1280),
+            ref_height=data.get("ref_height", 720),
             world_width_m=data.get("world_width_m", 3.5),
-            world_length_m=data.get("world_length_m", 15.0),
+            world_length_m=data.get("world_length_m", 35.0),
         )
 
-    def save_json(self, file_path: Union[str, Path]) -> None:
+    def save_json(self, file_path: Union[str, Path], profile_key: Optional[str] = None) -> None:
         p = Path(file_path)
         p.parent.mkdir(parents=True, exist_ok=True)
+        key = profile_key or f"{self.ref_width}x{self.ref_height}"
+        existing_data = {}
+        if p.exists():
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    existing_data = json.load(f)
+            except Exception:
+                existing_data = {}
+
+        if "profiles" in existing_data and isinstance(existing_data["profiles"], dict):
+            existing_data["profiles"][key] = self.to_dict()
+            if "default_profile" not in existing_data:
+                existing_data["default_profile"] = key
+            output_data = existing_data
+        else:
+            # Create multi-profile format preserving default
+            output_data = {
+                "default_profile": key,
+                "profiles": {
+                    key: self.to_dict()
+                }
+            }
+            # If previous file had a single flat calibration, preserve it if different key
+            if "ground_quad" in existing_data and "profiles" not in existing_data:
+                old_key = f"{existing_data.get('ref_width', 1280)}x{existing_data.get('ref_height', 720)}"
+                if old_key != key:
+                    output_data["profiles"][old_key] = existing_data
+
         with open(p, "w", encoding="utf-8") as f:
-            json.dump(self.to_dict(), f, indent=2)
+            json.dump(output_data, f, indent=2)
 
     @classmethod
-    def load_json(cls, file_path: Union[str, Path]) -> "RoadCalibration":
+    def load_json(cls, file_path: Union[str, Path], resolution: Optional[Tuple[int, int]] = None) -> "RoadCalibration":
         p = Path(file_path)
         with open(p, "r", encoding="utf-8") as f:
             data = json.load(f)
+
+        if "profiles" in data and isinstance(data["profiles"], dict):
+            profiles = data["profiles"]
+            if resolution is not None:
+                target_key = f"{resolution[0]}x{resolution[1]}"
+                if target_key in profiles:
+                    return cls.from_dict(profiles[target_key])
+
+            # Fall back to default_profile or first profile
+            default_key = data.get("default_profile")
+            if default_key and default_key in profiles:
+                return cls.from_dict(profiles[default_key])
+            if profiles:
+                first_key = next(iter(profiles))
+                return cls.from_dict(profiles[first_key])
+
         return cls.from_dict(data)
 
 
@@ -200,7 +279,7 @@ def estimate_vehicle_ground_contact(
     bbox: List[float],
     calib: RoadCalibration,
     class_name: str = "truck",
-    wheel_inset_ratio: float = 0.10,
+    wheel_inset_ratio: float = 0.09,
 ) -> GroundContact:
     """
     Estimates the left and right front wheel ground contact points based on physical
@@ -223,7 +302,7 @@ def estimate_vehicle_ground_contact(
 
     cls_lower = class_name.lower()
     if cls_lower in ("truck", "bus", "train"):
-        ratio = 0.72  # 2.5m cab on 3.5m lane
+        ratio = 0.70  # Max 2.45m cab on 3.50m lane (rejects dark road shadows)
     elif cls_lower in ("car",):
         ratio = 0.55  # 1.85m car on 3.5m lane
     else:
@@ -258,7 +337,7 @@ def estimate_vehicle_ground_contact(
 def assess_lane_straddling(
     ground_contact: GroundContact,
     calib: RoadCalibration,
-    tolerance_cm: float = 5.0,
+    tolerance_cm: float = 0.0,
 ) -> StraddleAssessment:
     left_lane_pts = calib.lanes.get("left")
     right_lane_pts = calib.lanes.get("right")

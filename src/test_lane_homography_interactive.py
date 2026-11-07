@@ -58,14 +58,16 @@ class InteractiveLaneTester:
         weights_dir: Path,
         calib_path: Optional[Path] = None,
         model_size: str = "nano",
-        conf_thresh: float = 0.15,
+        conf_thresh: float = 0.35,
         device: str = "cpu",
+        target_nearest: bool = True,
     ):
         self.weights_dir = weights_dir
-        self.calib_path = calib_path or (weights_dir.parent / "lane_calibration.json")
+        self.calib_path = calib_path or Path("lane_calibration.json")
         self.device = device
         self.conf_thresh = conf_thresh
         self.model_size = model_size.lower()
+        self.target_nearest = target_nearest
 
         self.detector = self._load_detector(self.model_size)
         self.tracker = TemporalLaneTracker(min_straddle_frames=5)
@@ -100,29 +102,38 @@ class InteractiveLaneTester:
         self.detector = self._load_detector(self.model_size)
         return self.model_size
 
-    def _load_calibration(self) -> Optional[RoadCalibration]:
+    def _load_calibration(self, resolution: Optional[Tuple[int, int]] = None) -> Optional[RoadCalibration]:
         if self.calib_path and self.calib_path.exists():
             try:
-                calib = RoadCalibration.load_json(self.calib_path)
-                print(f"📐 Loaded existing lane calibration from: {self.calib_path.name}")
+                calib = RoadCalibration.load_json(self.calib_path, resolution=resolution)
+                print(f"📐 Loaded lane calibration ({calib.ref_width}x{calib.ref_height}) from: {self.calib_path.name}")
                 return calib
             except Exception as e:
                 print(f"⚠️ Could not load calibration {self.calib_path}: {e}")
         return None
 
     def load_calibration_for_image(self, img_path_str: str) -> None:
-        # Global calibration across all images
-        if self.calib is not None:
+        # Auto-switch calibration profile based on image resolution (e.g. Cam01 1280x720 vs Cam02 640x480)
+        img = cv2.imread(img_path_str)
+        if img is None:
             return
+        h, w = img.shape[:2]
+        self.last_orig_w = w
+        self.last_orig_h = h
+
+        if self.calib is not None and self.calib.ref_width == w and self.calib.ref_height == h:
+            return
+
         if self.calib_path and self.calib_path.exists():
-            self.calib = self._load_calibration()
+            self.calib = self._load_calibration(resolution=(w, h))
         if self.calib is None:
             self.apply_camera_default_calibration()
 
     def save_current_calibration(self) -> None:
         if self.calib and self.calib_path:
-            self.calib.save_json(self.calib_path)
-            print(f"💾 Saved global lane calibration to: {self.calib_path.name} (Active for ALL images)")
+            profile_key = f"{self.calib.ref_width}x{self.calib.ref_height}"
+            self.calib.save_json(self.calib_path, profile_key=profile_key)
+            print(f"💾 Saved lane calibration profile [{profile_key}] to: {self.calib_path.name}")
 
     def on_mouse(self, event: int, x: int, y: int, flags: int, param: Any) -> None:
         self.mouse_cursor_pos = (x, y)
@@ -194,34 +205,78 @@ class InteractiveLaneTester:
         self.just_calibrated = False
         self.temp_points = []
         self.dragging_corner_idx = None
-        print("\n🔧 ENTERING LANE CORRIDOR CALIBRATION:")
-        print("  - Drag any of the 4 yellow corners to adjust live, OR")
-        print("  - Press [R] to clear and click 4 new corners (Far-L -> Far-R -> Near-R -> Near-L)")
+        w = getattr(self, "last_orig_w", 1280)
+        h = getattr(self, "last_orig_h", 720)
+        if self.calib is not None:
+            self.calib = self.calib.rescale_to_image(w, h)
+            import copy
+            self.calib_backup = copy.deepcopy(self.calib)
+        else:
+            self.calib_backup = None
+        print(f"\n🔧 ENTERING LANE CORRIDOR CALIBRATION ({w}x{h}):")
+        print("  - Drag any of the 4 yellow corners to align with road lane lines")
+        print("  - Press [ENTER] or [C] to save & exit")
+        print("  - Press [ESC] to cancel changes (revert)")
+        print("  - Press [R] to redraw 4 fresh corners")
         print("  - Press [D] for camera golden defaults (35m corridor)\n")
 
+    def finish_calibration(self) -> None:
+        if self.calib_mode:
+            self.calib_mode = False
+            self.temp_points = []
+            self.dragging_corner_idx = None
+            self.save_current_calibration()
+            self.just_calibrated = True
+            print("💾 Calibration saved & exited calibration mode.")
+
+    def cancel_calibration(self) -> None:
+        if self.calib_mode:
+            self.calib_mode = False
+            self.temp_points = []
+            self.dragging_corner_idx = None
+            if hasattr(self, "calib_backup") and self.calib_backup is not None:
+                self.calib = self.calib_backup
+            self.just_calibrated = True
+            print("↩️ Calibration cancelled (changes reverted).")
+
     def apply_camera_default_calibration(self) -> None:
-        quad = [
-            Point2D(460.0, 270.0), # Far-Left
-            Point2D(640.0, 280.0), # Far-Right
-            Point2D(430.0, 660.0), # Near-Right
-            Point2D(200.0, 650.0), # Near-Left
-        ]
+        ref_w = getattr(self, "last_orig_w", 1280)
+        ref_h = getattr(self, "last_orig_h", 720)
+        if ref_w == 640 and ref_h == 480:
+            quad = [
+                Point2D(0.0, 77.0),
+                Point2D(42.0, 65.0),
+                Point2D(424.0, 395.0),
+                Point2D(306.0, 480.0),
+            ]
+            world_len = 25.0
+        else:
+            quad = [
+                Point2D(674.0, 61.0),
+                Point2D(715.0, 79.0),
+                Point2D(471.0, 709.0),
+                Point2D(175.0, 711.0),
+            ]
+            world_len = 35.0
+
         self.calib = RoadCalibration(
             ground_quad=quad,
             lanes={
-                "left": [Point2D(460.0, 270.0), Point2D(200.0, 650.0)],
-                "right": [Point2D(640.0, 280.0), Point2D(430.0, 660.0)],
+                "left": [quad[0], quad[3]],
+                "right": [quad[1], quad[2]],
             },
             bev_width=400,
             bev_height=800,
+            ref_width=ref_w,
+            ref_height=ref_h,
             world_width_m=3.5,
-            world_length_m=35.0,
+            world_length_m=world_len,
         )
         self.save_current_calibration()
         self.calib_mode = False
         self.temp_points = []
         self.just_calibrated = True
-        print("📐 Restored golden default calibration for Camera 01 (vws-18)")
+        print(f"📐 Restored golden default calibration for Camera ({ref_w}x{ref_h})")
 
     def reset_calibration_in_progress(self) -> None:
         if self.calib_mode:
@@ -236,6 +291,9 @@ class InteractiveLaneTester:
 
     def _finalize_4pt_calibration(self, quad_pts: List[Point2D]) -> None:
         canon_quad = canonicalize_road_quad(quad_pts[:4])
+        ref_w = getattr(self, "last_orig_w", 1280)
+        ref_h = getattr(self, "last_orig_h", 720)
+        world_len = 25.0 if ref_w == 640 and ref_h == 480 else 35.0
         self.calib = RoadCalibration(
             ground_quad=canon_quad,
             lanes={
@@ -244,15 +302,17 @@ class InteractiveLaneTester:
             },
             bev_width=400,
             bev_height=800,
+            ref_width=ref_w,
+            ref_height=ref_h,
             world_width_m=3.5,
-            world_length_m=35.0,
+            world_length_m=world_len,
         )
         self.save_current_calibration()
         self.calib_mode = False
         self.temp_points = []
         self.dragging_corner_idx = None
         self.just_calibrated = True
-        print("✅ Lane Corridor Calibration saved! (Applies globally to ALL images)\n")
+        print(f"✅ Road & Lane Calibration saved! (Profile: {ref_w}x{ref_h})\n")
         self.just_calibrated = True
         print("✅ Road & Lane Calibration saved! (Separated Ground Surface Quad + Lane Lines)\n")
 
@@ -260,6 +320,8 @@ class InteractiveLaneTester:
         t0 = time.perf_counter()
         raw_detections = self.detector.detect_vehicles(frame_bgr)
         results = []
+        h, w = frame_bgr.shape[:2]
+        active_calib = self.calib.rescale_to_image(w, h) if self.calib else None
 
         for det in raw_detections:
             bbox = det["bbox"]
@@ -267,9 +329,9 @@ class InteractiveLaneTester:
             cls_id = det["cls_id"]
             name = det["name"]
 
-            if self.calib is not None:
-                contact = estimate_vehicle_ground_contact(bbox, self.calib, class_name=name)
-                assessment = assess_lane_straddling(contact, self.calib)
+            if active_calib is not None:
+                contact = estimate_vehicle_ground_contact(bbox, active_calib, class_name=name)
+                assessment = assess_lane_straddling(contact, active_calib, tolerance_cm=5.0)
             else:
                 p_dummy = Point2D(x=float((bbox[0] + bbox[2]) / 2), y=float(bbox[3]))
                 contact = GroundContact(
@@ -290,6 +352,10 @@ class InteractiveLaneTester:
                 ground_contact=contact,
                 assessment=assessment,
             ))
+
+        if getattr(self, "target_nearest", True) and len(results) > 1:
+            results.sort(key=lambda r: r.bbox[3], reverse=True)
+            results = results[:1]
 
         latency_ms = (time.perf_counter() - t0) * 1000.0
         return results, latency_ms
@@ -338,17 +404,20 @@ class InteractiveLaneTester:
 
     def _draw_active_calibration(self, img: np.ndarray) -> None:
         assert self.calib is not None
+        h, w = img.shape[:2]
+        active_calib = self.calib.rescale_to_image(w, h)
+
         # Ground Quad
-        quad_pts = np.int32([p.to_tuple() for p in self.calib.ground_quad])
+        quad_pts = np.int32([p.to_tuple() for p in active_calib.ground_quad])
         cv2.polylines(img, [quad_pts], isClosed=True, color=(255, 200, 0), thickness=2)
-        for i, pt in enumerate(self.calib.ground_quad):
+        for i, pt in enumerate(active_calib.ground_quad):
             cv2.circle(img, pt.to_tuple(), 5, (255, 255, 0), -1)
             cv2.putText(img, f"G{i+1}", (pt.to_tuple()[0] + 6, pt.to_tuple()[1] - 6),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
 
         # Lane Boundaries
         for lane_name, color in [("left", (0, 0, 255)), ("right", (0, 0, 255))]:
-            pts = self.calib.lanes.get(lane_name)
+            pts = active_calib.lanes.get(lane_name)
             if pts and len(pts) >= 2:
                 p1, p2 = pts[0], pts[1]
                 y_bot = float(img.shape[0] - 1)
@@ -365,8 +434,8 @@ class InteractiveLaneTester:
         n_pts = len(self.temp_points)
 
         if n_pts == 0 and self.calib and len(self.calib.ground_quad) == 4:
-            prompt = "CALIBRATION MODE: Drag yellow corners to adjust live, or [R] to click fresh 4 corners"
-            hint = "Tip: Drag handles to align lane boundaries. Applies globally to ALL images. [C] or [ESC] to finish."
+            prompt = "CALIBRATION MODE: Drag yellow corners to align with road lane lines"
+            hint = "Tip: Press [ENTER] or [C] to save & exit | [ESC] to cancel | [D] golden defaults | [R] redraw"
         else:
             prompt = f"LANE CORRIDOR SETUP: Click 4 Corners [{n_pts}/4]"
             hint = "Click: 1.Far-Left -> 2.Far-Right -> 3.Near-Right -> 4.Near-Left. Auto-aligns BEV map!"
@@ -374,10 +443,15 @@ class InteractiveLaneTester:
         cv2.putText(img, prompt, (25, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (0, 255, 255), 2)
         cv2.putText(img, hint, (25, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (200, 200, 200), 1)
 
-        # Draw Corridor Polygon if 2 or more points exist
+        # Draw Corridor Polygon if 2 or more points exist (prevent crossing into an X)
         if len(pts_to_draw) > 1:
-            poly_pts = np.int32([p.to_tuple() for p in pts_to_draw])
-            is_closed = (len(pts_to_draw) == 4)
+            if len(pts_to_draw) == 4:
+                draw_quad = canonicalize_road_quad(pts_to_draw)
+                poly_pts = np.int32([p.to_tuple() for p in draw_quad])
+                is_closed = True
+            else:
+                poly_pts = np.int32([p.to_tuple() for p in pts_to_draw])
+                is_closed = False
             cv2.polylines(img, [poly_pts], isClosed=is_closed, color=(0, 200, 255), thickness=2)
 
         # Draw Handles
@@ -441,91 +515,87 @@ class InteractiveLaneTester:
     def _render_bev_panel(self, frame_bgr: np.ndarray, results: List[VehicleLaneResult]) -> np.ndarray:
         bev_w, bev_h = 380, 720
         panel = np.zeros((bev_h, bev_w, 3), dtype=np.uint8)
-        panel[:] = (30, 30, 30)
+        panel[:] = (24, 26, 30)
 
         if self.calib is None:
             cv2.putText(panel, "NO CALIBRATION", (50, 320), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
             cv2.putText(panel, "Press [C] to Calibrate", (60, 360), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
             return panel
 
-        # Warp real road patch
-        warped_road = self.calib.warp_image_to_bev(frame_bgr)
-        warped_road = cv2.resize(warped_road, (bev_w, bev_h))
-        # Darken road slightly to highlight graphics
-        warped_road = cv2.addWeighted(warped_road, 0.65, panel, 0.35, 0)
+        h, w = frame_bgr.shape[:2]
+        active_calib = self.calib.rescale_to_image(w, h)
 
-        # Scale factor from calib BEV (400x800) to panel (bev_w x bev_h)
-        sx = bev_w / float(self.calib.bev_width)
-        sy = bev_h / float(self.calib.bev_height)
+        margin_x = 35
+        lane_px_w = bev_w - 2 * margin_x
+        sx = lane_px_w / float(active_calib.bev_width)
+        sy = bev_h / float(active_calib.bev_height)
 
-        # Draw Lane Lines in BEV (Extrapolate to full BEV height)
-        for lane_name in ["left", "right"]:
-            pts = self.calib.lanes.get(lane_name)
-            if pts and len(pts) >= 2:
-                bev_pts = self.calib.project_points_to_bev(pts)
-                x_top = interpolate_x_on_line(bev_pts[0], bev_pts[1], 0.0)
-                x_bot = interpolate_x_on_line(bev_pts[0], bev_pts[1], float(self.calib.bev_height))
-                if x_top is not None and x_bot is not None:
-                    p1 = (int(x_top * sx), 0)
-                    p2 = (int(x_bot * sx), bev_h)
-                else:
-                    p1 = (int(bev_pts[0].x * sx), int(bev_pts[0].y * sy))
-                    p2 = (int(bev_pts[1].x * sx), int(bev_pts[1].y * sy))
-                cv2.line(warped_road, p1, p2, (0, 0, 255), 3)
+        # 1. Clean Asphalt Lane Surface (Dark Asphalt)
+        cv2.rectangle(panel, (margin_x, 0), (bev_w - margin_x, bev_h), (34, 37, 42), -1)
 
-        # Draw Meter Grid Lines
-        for m in range(1, int(self.calib.world_length_m), 3):
-            y_px = int((m / self.calib.world_length_m) * bev_h)
-            cv2.line(warped_road, (10, y_px), (bev_w - 10, y_px), (80, 80, 80), 1)
-            cv2.putText(warped_road, f"{m}m", (15, y_px - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (160, 160, 160), 1)
+        # 2. Left Painted Dashed Lane Line (Upright & Straight)
+        y = 0
+        dash_len, gap_len = 24, 24
+        while y < bev_h:
+            cv2.line(panel, (margin_x, y), (margin_x, min(bev_h, y + dash_len)), (220, 220, 220), 3)
+            y += dash_len + gap_len
 
-        # Draw Vehicles on BEV Map
+        # 3. Right Painted Solid Lane Line (Upright & Straight)
+        cv2.line(panel, (bev_w - margin_x, 0), (bev_w - margin_x, bev_h), (240, 240, 240), 4)
+
+        # 4. Longitudinal Distance Grid Lines (Every 5 meters along corridor)
+        for m in range(5, int(active_calib.world_length_m) + 1, 5):
+            y_px = int((m / active_calib.world_length_m) * bev_h)
+            cv2.line(panel, (margin_x - 10, y_px), (bev_w - margin_x + 10, y_px), (65, 70, 78), 1)
+            cv2.putText(panel, f"{m}m", (8, y_px - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (130, 135, 142), 1)
+
+        # 5. Top-down Vehicles footprint on BEV Map
         approaching_vehicles = []
         for res in results:
             contact = res.ground_contact
-            p_left = (int(contact.bev_left_wheel.x * sx), int(contact.bev_left_wheel.y * sy))
-            p_right = (int(contact.bev_right_wheel.x * sx), int(contact.bev_right_wheel.y * sy))
+            p_left = (int(margin_x + contact.bev_left_wheel.x * sx), int(contact.bev_left_wheel.y * sy))
+            p_right = (int(margin_x + contact.bev_right_wheel.x * sx), int(contact.bev_right_wheel.y * sy))
             color = (0, 0, 255) if res.assessment.is_straddling else (0, 255, 0)
 
             if -20 <= p_left[1] <= bev_h + 30:
                 # Top-down vehicle footprint rectangle in BEV
                 v_len_m = 9.5 if res.class_name.lower() in ("truck", "bus", "train") else 4.5
-                v_len_px = int(v_len_m * (bev_h / float(self.calib.world_length_m)))
+                v_len_px = int(v_len_m * (bev_h / float(active_calib.world_length_m)))
                 bx1 = min(p_left[0], p_right[0])
                 bx2 = max(p_left[0], p_right[0])
                 by_front = p_left[1]
                 by_rear = max(0, by_front - v_len_px)
 
                 # Semi-transparent vehicle footprint overlay
-                footprint_overlay = warped_road.copy()
+                footprint_overlay = panel.copy()
                 cv2.rectangle(footprint_overlay, (bx1, by_rear), (bx2, by_front), color, -1)
-                cv2.addWeighted(footprint_overlay, 0.30, warped_road, 0.70, 0, warped_road)
-                cv2.rectangle(warped_road, (bx1, by_rear), (bx2, by_front), color, 2)
+                cv2.addWeighted(footprint_overlay, 0.35, panel, 0.65, 0, panel)
+                cv2.rectangle(panel, (bx1, by_rear), (bx2, by_front), color, 2)
 
                 # Wheel axle and contact dots in BEV
-                cv2.line(warped_road, p_left, p_right, (0, 255, 255), 3)
-                cv2.circle(warped_road, p_left, 7, color, -1)
-                cv2.circle(warped_road, p_right, 7, color, -1)
+                cv2.line(panel, p_left, p_right, (0, 255, 255), 3)
+                cv2.circle(panel, p_left, 7, color, -1)
+                cv2.circle(panel, p_right, 7, color, -1)
 
                 # Measurement labels
                 lbl_y = max(45, min(bev_h - 15, p_left[1] - 12))
                 lbl = f"L: {res.assessment.left_wheel_dist_to_lane_cm:+.0f}cm | R: {res.assessment.right_wheel_dist_to_lane_cm:+.0f}cm"
-                cv2.putText(warped_road, lbl, (max(10, min(bev_w - 220, p_left[0] - 40)), lbl_y),
+                cv2.putText(panel, lbl, (max(10, min(bev_w - 230, bx1 - 20)), lbl_y),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.42, color, 1)
             elif p_left[1] < -20:
                 approaching_vehicles.append(res)
 
         if approaching_vehicles:
             first_v = approaching_vehicles[0]
-            dist_m = abs(first_v.ground_contact.bev_left_wheel.y) / float(self.calib.pixels_per_meter_y)
+            dist_m = abs(first_v.ground_contact.bev_left_wheel.y) / float(active_calib.pixels_per_meter_y)
             app_text = f"^ {first_v.class_name.upper()} APPROACHING ({dist_m:.0f}m)"
-            cv2.putText(warped_road, app_text, (15, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 255), 1)
+            cv2.putText(panel, app_text, (15, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 255), 1)
 
         # BEV Panel Title
-        cv2.rectangle(warped_road, (0, 0), (bev_w, 40), (20, 20, 20), -1)
-        cv2.putText(warped_road, "TOP-DOWN BIRD'S EYE VIEW (BEV)", (15, 26),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 255, 255), 2)
-        return warped_road
+        cv2.rectangle(panel, (0, 0), (bev_w, 40), (16, 18, 20), -1)
+        cv2.putText(panel, "TOP-DOWN BIRD EYE VIEW (BEV)", (15, 26),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 255, 255), 2)
+        return panel
 
     def _draw_header(self, img: np.ndarray, results: List[VehicleLaneResult], latency_ms: float, title_info: str) -> np.ndarray:
         header_h = 50
@@ -536,11 +606,12 @@ class InteractiveLaneTester:
         left_str = f"{title_info} | LibreDFINE-{self.model_size.upper()} ({latency_ms:.0f}ms)"
         cv2.putText(header, left_str, (15, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 1)
 
-        # Center/Dynamic: Confidence Threshold Badge with adjustment hint
+        # Center/Dynamic: Confidence & Target Badge
+        target_mode_str = "NEAREST [T]" if getattr(self, "target_nearest", True) else "ALL [T]"
+        conf_str = f"Conf: {self.conf_thresh:.2f} [Keys: +/-] | Target: {target_mode_str}"
         (lw, _), _ = cv2.getTextSize(left_str, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 1)
-        conf_x = max(lw + 35, img.shape[1] // 2 - 90)
-        conf_str = f"Conf: {self.conf_thresh:.2f} [Keys: +/-]"
-        cv2.putText(header, conf_str, (conf_x, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 255, 255), 1)
+        conf_x = max(lw + 25, img.shape[1] // 2 - 140)
+        cv2.putText(header, conf_str, (conf_x, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 255, 255), 1)
 
         # Right: Violations count
         viol_count = sum(1 for r in results if r.assessment.is_straddling)
@@ -726,19 +797,32 @@ def main():
             if key == 255:  # No key pressed
                 continue
 
+            # Special handling while in calibration mode
+            if tester.calib_mode:
+                if key in (13, ord("\r"), ord("\n"), ord("c"), ord("C")):
+                    tester.finish_calibration()
+                    need_reprocess = True
+                elif key == 27:
+                    tester.cancel_calibration()
+                    need_reprocess = True
+                elif key in (ord("r"), ord("R")):
+                    tester.reset_calibration_in_progress()
+                    need_reprocess = True
+                elif key in (ord("d"), ord("D")):
+                    tester.apply_camera_default_calibration()
+                    need_reprocess = True
+                continue
+
+            # Standard Navigation Mode key handling
             if key in (ord("q"), ord("Q"), 27):
                 cur_idx = -1  # Signal exit program
                 break
             elif key in (ord(" "), ord("\r"), ord("\n"), 13):
-                # Space or Enter: next image (only if not currently clicking calibration)
-                if not tester.calib_mode:
-                    cur_idx += 1
-                    break
+                cur_idx += 1
+                break
             elif key in (ord("b"), ord("B")):
-                # B: previous image
-                if not tester.calib_mode:
-                    cur_idx = max(0, cur_idx - 1)
-                    break
+                cur_idx = max(0, cur_idx - 1)
+                break
             elif key in (ord("c"), ord("C")):
                 tester.start_calibration()
             elif key in (ord("d"), ord("D")):
@@ -747,6 +831,11 @@ def main():
             elif key in (ord("r"), ord("R")):
                 tester.reset_calibration_in_progress()
                 need_reprocess = True
+            elif key in (ord("t"), ord("T")):
+                tester.target_nearest = not getattr(tester, "target_nearest", True)
+                need_reprocess = True
+                mode_str = "NEAREST ONLY" if tester.target_nearest else "ALL VEHICLES"
+                print(f"🎯 Toggled vehicle target mode: {mode_str}")
             elif key in (ord("+"), ord("=")):
                 tester.conf_thresh = min(0.95, round(tester.conf_thresh + 0.05, 2))
                 tester.detector.conf_threshold = tester.conf_thresh

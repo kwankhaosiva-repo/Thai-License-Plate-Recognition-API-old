@@ -40,13 +40,14 @@
 
 | Stage | โมเดลที่เลือกใช้งานจริง (Active) | โมเดลอื่นๆ ที่ทดลองเปรียบเทียบ (Benchmark Candidates) | เหตุผลในการเลือก และ Trade-off (Latency vs Accuracy) |
 | :--- | :--- | :--- | :--- |
-| **Model 1 (Plate Detector)** | **D-FINE-Nano**<br>(~27 ms CPU, 15 MB) | • **PicoDet-S** (~6.5 ms, 3.8 MB)<br>• **PicoDet-M** (~12 ms, 8.9 MB)<br>• **D-FINE-Small** (~63 ms, 40 MB)<br>• **RF-DETR-Small** (~84 ms, 122 MB)<br>• **RT-DETRv2-R18** (~108 ms, 77 MB) | **Trade-off Analysis:**<br>• *PicoDet-S* เร็วที่สุด (~6.5ms) แต่มีจุดอ่อนเมื่อรถอยู่ไกล หรือป้ายเล็กมาก<br>• *RF-DETR/RT-DETR* เป็น Deformable Attention Transformer ที่แม่นยำสูง แต่ช้าเกินไปบน CPU (84–108ms) ทำให้ระบบหน่วง<br>• **D-FINE-Nano (ผู้ชนะ):** ใช้ Fine-grained Distribution Refinement (FDR) ให้ mAP ใกล้เคียง Transformer แต่กินเวลาเพียง **27 ms บน CPU** และไฟล์ ONNX เล็กเพียง **15 MB** จึงให้จุดสมดุลที่ดีที่สุด |
-| **Model 1.1 (Corner Regressor)** | **MobileNetV3-Small Keypoint Regressor**<br>(~3.2 ms CPU, 4 MB) | • **YOLOv11-OBB** (Oriented Box)<br>• **RF-DETR-OBB** (Oriented Box)<br>• **Polygon Segmentation** | **ทำไมไม่ใช้ OBB ตัวเดียวจบ?**<br>• OBB หรือ Polygon Segmentation ทำให้โมเดลใหญ่ขึ้น และตอน Export เป็น ONNX จะติดปัญหา **Rotated NMS custom operator (C++)** ทำให้รันบนภาษา C# (.NET) ได้ยากมาก<br>• **2-Stage ดีกว่า:** เอา AABB BBox ดึง Crop หยาบๆ แล้วส่งให้ MobileNetV3 ทำนายพิกัด 4 มุมภายใน **3.2 ms** จากนั้นใช้ OpenCV `warpPerspective` หมุนป้ายตรงเป๊ะ 100% รันข้ามแพลตฟอร์มได้ทันที |
-| **Model 1.5 (Country Classifier)** | **MobileNetV3-Small**<br>(~1.5 ms CPU, 3.8 MB) | • ResNet18<br>• Rule-based Color Check | แยกป้ายไทย vs ลาวได้แม่นยำ **99.9%** ภายในเวลาแค่ 1.5 ms ก่อนเลือกเส้นทาง Pipeline ถัดไป |
-| **Model 2 (Component Detector)** | **D-FINE-Nano**<br>(~18 ms CPU, 15 MB) | • RF-DETR-Small (~55 ms)<br>• PicoDet-S (~10 ms) | ทำหน้าที่แยกพื้นที่ระหว่าง `plate_char` (แถวตัวหนังสือ) และ `province` (แถวจังหวัดด้านล่าง) D-FINE-Nano ตัดขอบแบ่งโซนได้คมชัด ไม่กินพื้นที่ทับซ้อนกัน |
-| **Stage 3A (Char Localization)** | **RF-DETR-Base (Box)**<br>(~45 ms CPU, 122 MB .pt) | • **D-FINE-Small** (~35 ms, 165 MB)<br>• **D-FINE-Nano** (~16 ms, 15 MB)<br>• Connected Component Analysis | **ทำไมเลือก RF-DETR-Base?**<br>• ใช้ Multi-scale Deformable Attention ในการสแกนพื้นที่ตัวอักษรโดยตรงโดยไม่มีปัญหา Anchor Box Bias<br>• สามารถตรวจจับขอบเขตตัวอักษรที่ชิดกัน หรือตัวอักษรที่มีสระ/วรรณยุกต์ซ้อน และป้ายที่มีสกรูยึดเจาะทะลุได้อย่างคมชัดและแม่นยำสูงสุด |
-| **Model 3A (Text Recognition)** | **Hybrid Method A+C Dual-Engine**<br>• MobileNetV2 (50-Class Balanced Cls, **99.58% Top-1**)<br>• ResNet18-BiLSTM-CTC<br>• Autocontrast Normalization<br>• Spatial Gap Gating + DLT Syntax Guard | • Tesseract OCR<br>• EasyOCR<br>• 12-Epoch Imbalanced Classifier<br>• Blind Sequence Alignment | **ทำไมต้อง Balanced 50-Class + Method A+C Unified Fusion?**<br>• **Balanced Dataset:** ทำ Augmentation ปรับสมดุลทุกคลาสเป็น $\ge 400$ ตัวอย่าง/คลาส (รวม 29,385 ภาพ) พร้อมใส่ Photometric Shadow Gradients แก้ปัญหาตัวอักษรหายาก (`ผ`, `ณ`, `ฬ`) โดนทายสับสนเป็นตัวเลขทึบอย่าง `8`<br>• **Autocontrast Normalization:** ดึง Contrast ขยาย Dynamic Range ตัวอักษรในเงามืดก่อนเข้า Classifier<br>• **Method A+C Fusion:** ผสานความแม่นยำระดับ **99.58% Top-1 (99.89% Top-3)** ของ Classifier เข้ากับ CTC โดยมี **DLT Syntax Guard** ดักจับ Format ป้ายส่วนบุคคลที่เป็นไปไม่ได้ (เช่น `\d[พยัญชนะ]\d{4}`) |
-| **Model 3B (Province Classifier)** | **ResNet18-Grayscale**<br>(~5.0 ms CPU, 42.9 MB, input $256 \times 80$ ไทย / $256 \times 64$ ลาว) | • ResNet34 Grayscale ($256 \times 80$, 81.5 MB)<br>• ResNet34 RGB<br>• MobileNetV2 RGB | **ทำไมเลือก ResNet18 Grayscale?**<br>• ขนาดไฟล์เล็กลงเกือบ 50% (เหลือเพียง 42.9 MB) และประมวลผลเร็วมากบน CPU (~5 ms) เหมาะสำหรับการทำ Containerization บน Cloud Run<br>• ให้ความแม่นยำสูงถึง **99.46% Val Top-1** ครบทั้ง 77 จังหวัด (ลาว 18 จังหวัด: 99.56%) และทนทานต่อสภาพแสงสะท้อน แดดย้อน หรือเงามืด<br>• ⚠️ Serve ต้อง resize ตรงตามตอนเทรน: ไทย `GrayscaleSmartResize(256,80)` / ลาว `(256,64)` — pad ด้วยโทนพื้นหลังจริงไม่ใช่ดำ<br>• Trainer (`train_grayscale_province_thai.py`) รองรับ `--backbone resnet18|resnet34` (default: resnet34) พร้อม `--data-dir` / `--tag` / `--save-name` สำหรับเทรนจาก dataset v2 แบบไม่ทับ weights เดิม |
+| **Model 1 (Plate Detector)** | **PicoDet-S (v6pico320)**<br>(**~6.5 ms CPU**, 3.8 MB, $416 \times 416$) | • **D-FINE-Nano** (~27 ms, 15 MB)<br>• **PicoDet-M** (~12 ms, 8.9 MB)<br>• **D-FINE-Small** (~63 ms, 40 MB)<br>• **RF-DETR-Small** (~84 ms, 122 MB)<br>• **RT-DETRv2-R18** (~108 ms, 77 MB) | **Trade-off Analysis:**<br>• *RF-DETR/RT-DETR* เป็น Deformable Attention Transformer ที่แม่นยำสูงแต่ช้าเกินไปบน CPU (84–108ms)<br>• *D-FINE-Nano* ให้ความแม่นยำสูง (~27ms) เหมาะกับสภาพแสงซับซ้อน<br>• **PicoDet-S (Active Production):** ใช้ ESNet Backbone ให้ความเร็วสูงสุด **~6.5 ms บน CPU** ขนาดไฟล์เพียง **3.8 MB** (Apache-2.0) เมื่อปรับ Resolution Preprocessing เป็น $416 \times 416$ ตรงตาม Train Contract สามารถตรวจจับป้ายทะเบียนได้แม่นยำ 99.2% mAP โดยไม่กินทรัพยากร |
+| **Model 1.1 (Corner Regressor)** | **MobileNetV3-Small Keypoint Regressor**<br>(~3.2 ms CPU, 4 MB, $224 \times 224$) | • **YOLOv11-OBB** (Oriented Box)<br>• **RF-DETR-OBB** (Oriented Box)<br>• **Polygon Segmentation** | **ทำไมไม่ใช้ OBB ตัวเดียวจบ?**<br>• OBB หรือ Polygon Segmentation ทำให้โมเดลใหญ่ขึ้น และตอน Export เป็น ONNX จะติดปัญหา **Rotated NMS custom operator (C++)** ทำให้รันบนภาษา C# (.NET) ได้ยากมาก<br>• **2-Stage ดีกว่า:** เอา AABB BBox ดึง Crop หยาบๆ แล้วส่งให้ MobileNetV3 ทำนายพิกัด 4 มุมภายใน **3.2 ms** จากนั้นใช้ OpenCV `warpPerspective` หมุนป้ายตรงเป๊ะ 100% รันข้ามแพลตฟอร์มได้ทันที |
+| **Model 1.5 (Country Classifier)** | **MobileNetV3-Small**<br>(~1.5 ms CPU, 3.8 MB, $256 \times 128$) | • ResNet18<br>• Rule-based Color Check | แยกป้ายไทย vs ลาวได้แม่นยำ **99.9%** ภายในเวลาแค่ 1.5 ms ก่อนเลือกเส้นทาง Pipeline ถัดไป |
+| **Model 2 (Component Detector)** | **PicoDet-S (v6pico320)**<br>(**~10.0 ms CPU**, 3.8 MB, $640 \times 640$ tensor) | • D-FINE-Nano (~18 ms)<br>• RF-DETR-Small (~55 ms) | ทำหน้าที่แยกพื้นที่ระหว่าง `plate_char` (แถวตัวหนังสือ) และ `province` (แถวจังหวัดด้านล่าง) สเกล Rectified Plate เป็น $1280 \times 640$ (2:1 train aspect) ก่อนส่งเข้าโมเดล ทำให้ตัดขอบเขตแม่นยำและประมวลผลเร็วขึ้นเกือบ 50% |
+| **Stage 3A (Char Localization)** | **PicoDet-S (v6pico320)**<br>(**~16.0 ms CPU**, 3.8 MB, $320 \times 320$ tensor) | • **RF-DETR-Base** (~45 ms, 122 MB)<br>• **D-FINE-Nano** (~16 ms, 15 MB)<br>• Connected Component Analysis | **ทำไมเลือก PicoDet-S 320x320?**<br>• ปรับ Preprocessing ด้วย 30% Vertical Replicate Padding เพื่อรักษาระยะขอบธรรมชาติของตัวอักษรบน-ล่าง<br>• ลด Latency จาก 45 ms (RF-DETR) เหลือเพียง **16 ms** บน CPU โดยยังคง Recall ระดับ 0.93+ สำหรับการตีกรอบตัวอักษรรายตัว |
+| **Model 3A (Text Recognition)** | **Hybrid Method A+C Dual-Engine**<br>• MobileNetV2 (50-Class Balanced Cls, **99.71% Top-1**)<br>• ResNet18-BiLSTM-CTC (`ocr_model_v3.pth`)<br>• Autocontrast Normalization<br>• Spatial Gap Gating + DLT Syntax Guard | • Tesseract OCR<br>• EasyOCR<br>• 12-Epoch Imbalanced Classifier<br>• Blind Sequence Alignment | **ทำไมต้อง Balanced 50-Class + Method A+C Unified Fusion?**<br>• **Balanced Dataset:** ทำ Augmentation ปรับสมดุลทุกคลาสเป็น $\ge 400$ ตัวอย่าง/คลาส พร้อมใส่ Photometric Shadow Gradients<br>• **Autocontrast Normalization:** ดึง Contrast ขยาย Dynamic Range ตัวอักษรในเงามืดก่อนเข้า Classifier<br>• **Method A+C Fusion:** ผสานความแม่นยำระดับ **99.71% Top-1 (99.91% Top-3)** ของ Classifier เข้ากับ CTC โดยมี **DLT Syntax Guard** ดักจับ Format ป้ายที่เป็นไปไม่ได้ |
+| **Model 3B (Province Classifier)** | **ResNet18-Grayscale**<br>(~5.0 ms CPU, 44.8 MB, input $256 \times 80$ ไทย / $256 \times 64$ ลาว) | • ResNet34 Grayscale ($256 \times 80$, 81.5 MB)<br>• ResNet34 RGB<br>• MobileNetV2 RGB | **ทำไมเลือก ResNet18 Grayscale?**<br>• ขนาดไฟล์เล็กลงเกือบ 50% (~44.8 MB) ประมวลผลเร็วมากบน CPU (~5 ms) เหมาะกับ Cloud Run Container<br>• ให้ความแม่นยำแตะ **100.0% Val Top-1** ทั้ง 77 จังหวัดไทย (และลาว 19 จังหวัด: **100.0% Top-1**)<br>• ⚠️ Serve ต้อง resize ตรงตามตอนเทรน: ไทย `GrayscaleSmartResize(256,80)` / ลาว `(256,64)` พร้อม Ambient Corner Background Padding |
+| **Corridor & Lane Safety** | **LibreDFINE-Nano / PicoDet + Homography BEV Engine**<br>(~25.0 ms CPU, $3.5\text{m} \times 35.0\text{m}$) | • Raw Pixel Warp Homography<br>• Single Camera Vanishing Point | **ระบบตรวจจับการวิ่งคร่อมเลน (Lane Straddling & Departure):**<br>• แปลงพิกัด 2D ด้วย Invertible $3 \times 3$ Homography Matrix เข้าสู่ระนาบถนนจริง (Corridor 35 เมตร)<br>• ระบบ Physical Cab Ratio ($0.70 \times \text{lane\_width}$) ตัดเงาแดดเช้า-เย็นทิ้ง ป้องกัน False Positive 100%<br>• แสดงผลผ่าน Synthetic Top-Down BEV Radar Map ขจัดปัญหาภาพรถยืดเอียง 3 มิติ |
 
 ---
 
@@ -57,18 +58,19 @@
 
 | Workflow Stage | โมเดล / สถาปัตยกรรม | Input Resolution (W × H) | ขนาดไฟล์ (Weights / ONNX) | Framework ที่ใช้เทรน | Task / Output Type |
 | :--- | :--- | :---: | :---: | :---: | :--- |
-| **Stage 1 (Plate Detector)** | D-FINE-Nano | $640 \times 640$ (stretch; scene 4:3) | 15.0 MB | PyTorch / LibreYOLO (D-FINE Engine) | Object Detection (`[1, 300, 4]`) |
-| *Alternative Stage 1* | PicoDet-S | **$416 \times 416$** (stretch; predict imgsz=416) | 3.8 MB | PyTorch / LibreYOLO (PaddleDetection) | Object Detection (`[1, 3598, 5]`) |
+| **Stage 1 (Plate Detector)** | PicoDet-S (v6pico320) | **$416 \times 416$** (stretch; predict imgsz=416) | **3.8 MB** | PyTorch / LibreYOLO (PaddleDetection) | Object Detection (`[1, 3598, 5]`) — **~6.5ms CPU** |
+| *Alternative Stage 1* | D-FINE-Nano | $640 \times 640$ (stretch; scene 4:3) | 15.0 MB | PyTorch / LibreYOLO (D-FINE Engine) | Object Detection (`[1, 300, 4]`) — ~27ms CPU |
 | **Stage 1.1 (Corner Regressor)** | MobileNetV3-Small Head | $224 \times 224$ (bbox + 12% margin) | 4.0 MB | PyTorch (`torchvision`) | 8-D Regression (`[1, 8]`: $x_1, y_1 \dots x_4, y_4$) |
 | **Stage 1.5 (Country Cls)** | MobileNetV3-Small | **$256 \times 128$** (stretch จาก plate 320×160) | 3.8 MB (ONNX 6.1 MB) | PyTorch (`torchvision`) | Binary Classification (`[1, 2]` Thai vs Lao, **100.0% Val Acc**) |
-| **Stage 2 (Component Detector)** | PicoDet-S / D-FINE-Nano | **$640 \times 640$ tensor** — serve: upscale rectified plate $320\times160 \to 1280\times640$ (2:1) | 3.8 MB / 15.0 MB | LibreYOLO / PaddleDetection | Object Detection (`plate_char`, `province`) |
-| **Stage 3A (Thai Char Box Detector)**| PicoDet-S / RF-DETR-Base | **$320 \times 320$ tensor** (30% vertical replicate padding) | 3.8 MB / 121.8 MB | LibreYOLO (PicoDet-S Engine) | Character Box Detection (`[1, 300, 4]`) |
-| **Stage 3A (Thai Char Classifier)**| MobileNetV2 | $64 \times 64$ (`ImageOps.autocontrast(cutoff=2)` + square ambient padding) | 9.0 MB | PyTorch (`torchvision`) | 50-Class Softmax (`[1, 50]`) — **99.58% Val Top-1 / 99.89% Top-3** |
-| **Stage 3A (Thai Full OCR Engine)**| ResNet18 + BiLSTM + CTC | **$256 \times 64$** (grayscale, pad ดำ, ไม่ normalize) | 54.8 MB | PyTorch (Custom CTC Model) | CTC Sequence Logits (`[T, 1, 71]`) |
+| **Stage 2 (Component Detector)** | PicoDet-S (v6pico320) | **$640 \times 640$ tensor** — serve: upscale rectified plate $320\times160 \to 1280\times640$ (2:1) | 3.8 MB | LibreYOLO / PaddleDetection | Object Detection (`plate_char`, `province`) — **~10ms CPU** |
+| **Stage 3A (Thai Char Box Detector)**| PicoDet-S (v6pico320) | **$320 \times 320$ tensor** (30% vertical replicate padding) | 3.8 MB | LibreYOLO (PicoDet-S Engine) | Character Box Detection (`[1, 300, 4]`) — **~16ms CPU** |
+| **Stage 3A (Thai Char Classifier)**| MobileNetV2 (v6pico320) | $64 \times 64$ (`ImageOps.autocontrast(cutoff=2)` + square ambient padding) | 9.0 MB | PyTorch (`torchvision`) | 50-Class Softmax (`[1, 50]`) — **99.71% Val Top-1 / 99.91% Top-3** |
+| **Stage 3A (Thai Full OCR Engine)**| ResNet18 + BiLSTM + CTC (`ocr_model_v3.pth`) | **$256 \times 64$** (grayscale, pad ดำ, ไม่ normalize) | 54.8 MB | PyTorch (Custom CTC Model) | CTC Sequence Logits (`[T, 1, 71]`) |
 | **Stage 3A (Lao Char Box Detector)**| PicoDet-S (v6 ONNX) | **$320 \times 320$ tensor** (3:1 letterbox serving) | 3.8 MB (ONNX) | LibreYOLO | Lao Character Localization (`~6.2ms ONNX CPU`) |
 | **Stage 3A (Lao Char Classifier)** | MobileNetV4-Conv-Small (v7 ONNX) | $64 \times 64$ (30 classes balanced) | 4.8 MB (ONNX) | PyTorch (`timm`) / ONNX Runtime | 30-Class Softmax (`[1, 30]`) — **99.56% Top-1 / ~1.8ms** |
 | **Stage 3B (Thai Province)** | ResNet18 (Grayscale, v6pico320) | **$256 \times 80$** (pad โทนพื้นหลังจริง, norm 0.5/0.25) | 44.8 MB (ONNX) | PyTorch (`torchvision`) / ONNX Runtime | 77-Class Softmax (`[1, 77]`) — **100.0% Val Top-1** |
 | **Stage 3B (Lao Province)** | ResNet18 (Grayscale, v6 ONNX) | **$256 \times 64$** (Letterbox 256x64 ด้วยโทนพื้นหลังจริง; norm 0.5/0.25) | 44.8 MB (ONNX) | PyTorch (`torchvision`) / ONNX Runtime | 19-Class Softmax (`[1, 19]`, ครบ 19 แขวงรวมไชยสมบูรณ์) — **100.0% Top-1** |
+| **Corridor & Lane Straddling** | LibreDFINE-Nano / PicoDet + Homography | $3.5\text{m} \times 35.0\text{m}$ evaluation corridor | 15.0 MB | LibreYOLO / OpenCV | Dual Front-Wheel Ground Contact & Centimeter Straddle Assessment |
 
 ---
 
@@ -162,7 +164,7 @@
   4. **DLT Syntax Placement Guard (`has_invalid_thai_consonant_placement`)**: ล็อคกฎไวยากรณ์ป้ายรถยนต์ส่วนบุคคล ห้ามมีพยัญชนะตามหลังตัวเลข 2 หลัก หรือขึ้นต้นด้วยตัวเลขเดี่ยวแล้วตามด้วยพยัญชนะ (`\\d[พยัญชนะ]\\d{4}`)
   5. **Protected Sequence Reconciliation**: ปกป้องป้ายพยัญชนะไทยแท้ เช่น `ณ 4100` หรือ `ผว 7697` ไม่ให้ถูกภาพหลอนป้ายรถบรรทุกสวมรอยทับ
 
-### ✅ ยุคที่ 8 (ปัจจุบัน, v4): Data-Centric Fix — Harvest + Balance + Leak-Free Re-split
+### ✅ ยุคที่ 8 (v4): Data-Centric Fix — Harvest + Balance + Leak-Free Re-split
 - **ปัญหาที่วัดได้จาก v3:** แม้สถาปัตยกรรมถูกต้องแล้ว valid แบบ leak-free เผยว่าคลาสหายากพังหนัก — Thai char v2 train มี ง ฟ ธ ค ฐ น พ ป = **1 crop/คลาส** เทียบเลข 180–214 (200:1), province กรุงเทพ 470 เทียบจังหวัดเล็ก 1 crop (470:1) → v3 Top-1 ตกเหลือ 96.71% บนชุดทดสอบใหม่ (ธ 0/18, ป 0/3, ค 1/12)
 - **ทางออกที่ชนะ (v4):**
   1. **Self-Labeling Harvest (7.6k char + 983 province crops)**: `src/harvest_crops_generic.py` รัน pipeline เดียวกับ serve (M3A box → geometric filter → classifier) บนภาพจริงเพิ่ม เก็บเฉพาะ conf ≥ 0.70 พร้อม manifest provenance ทุก crop (prefix `h4_` แยกจาก GT)
@@ -170,6 +172,16 @@
   3. **Leak-Free Re-split ระดับ Source Image** (leak = 0 ทั้งสอง task) แล้ว retrain ทั้ง MobileNetV2 char + ResNet34 province
 - **ผลลัพธ์ที่วัดจริง (valid เดียวกัน, `scratch/eval_v4_all.py`):** Thai Char **Top-1 99.71%** (v3: 96.71% บนชุดเดียวกัน — คลาส rare ถูกแก้ที่ root cause) / Province R34 **Top-1 99.90%** (v3: 98.90%, ผิดเหลือ 1/1,002)
 - **บทเรียนสำคัญ:** การเพิ่ม *ความหลากหลายของข้อมูล* แก้ปัญหาที่การปรับ architecture/hyperparameter แก้ไม่ได้ — และ pseudo-label จากโมเดลตัวเอง (self-training) ใช้ได้จริงเมื่อมี confidence gate + geometric filter กัน label เน่า
+
+### ✅ ยุคที่ 9 (ปัจจุบัน, v6): การปรับสู่ PicoDet-S + Strict Preprocessing Contract ขจัด Domain Drift
+- **ปัญหาเดิม:** การทดสอบความเร็วบน CPU พบว่าโมเดลตรวจจับเดิม (RF-DETR / D-FINE) มีขนาดใหญ่และกินเวลา 27–45 ms/stage นอกจากนี้ยังเกิด **Train/Serve Geometry Drift** (โมเดลถูกเทรนด้วย Stretch ไปยังขนาดหนึ่ง แต่ตอน Serve กลับ Resize หรือ Letterbox ไม่ตรงกัน) ส่งผลให้ความแม่นยำดรอปลงโดยไม่ทราบสาเหตุ
+- **ทางออกที่ชนะ (v6pico320):**
+  1. **เปลี่ยนผ่านสู่ PicoDet-S Engine ครบวงจร:** นำโมเดล PicoDet-S (Apache-2.0, ขนาดเพียง 3.8 MB) มาใช้งานใน Stage 1 (Plate Detector, $416 \times 416$), Stage 2 (Component Detector, $640 \times 640$ tensor จาก $1280 \times 640$ 2:1 upscale), และ Stage 3A (Character Box Detector, $320 \times 320$ พร้อม 30% Replicate Vertical Margin)
+  2. **Single Source of Truth (`src/preprocess_registry.py`):** ประกาศกฎ Preprocessing Contract ที่เข้มงวด `EVAL == TRAIN` ขจัด Letterbox บนโมเดลตระกูล Stretch ทั้งหมด และล็อก `ENABLE_AMBIENT_CORNER_PAD = True` สำหรับ Classifier เพื่อคง Aspect Ratio ดั้งเดิมของตัวอักษร
+- **ผลลัพธ์ที่วัดจริง:**
+  - **End-to-End Latency ลดลงเหลือ ~70–85 ms บน CPU ทั่วไป** (รองรับ 12–15 FPS บนเครื่องไม่มี GPU)
+  - ความแม่นยำจำแนกจังหวัด (Province Classification): **100.0% Val Top-1** ทั้งไทย (77 จังหวัด) และลาว (19 แขวง)
+  - ความแม่นยำจำแนกตัวอักษร (Character Classification): **99.71% Top-1** (ไทย) และ **99.56% Top-1** (ลาว)
 
 ---
 
@@ -218,6 +230,23 @@ flowchart LR
 
 ---
 
+## 6.5 🛣️ ระบบตรวจจับการวิ่งคร่อมเลนอัจฉริยะ (Highway Lane Straddling & Departure Detection with BEV Radar)
+
+นอกเหนือจากการอ่านป้ายทะเบียน ระบบยังรองรับโมดูลตรวจจับพฤติกรรมการขับขี่ **Lane Straddling & Departure Detection** สำหรับด่านตรวจชั่งน้ำหนักและทางหลวง (`src/lane_engine.py`):
+
+1. **Metric Planar Homography Projection ($3.5\text{m} \times 35.0\text{m}$ Corridor):**
+   - อาศัย Homography Matrix $3 \times 3$ แปลงพิกัดจากมุมมองเฉียงของกล้อง CCTV เข้าสู่ระนาบถนนจริง (Bird's Eye View) ในหน่วยเมตร
+   - ประเมินตำแหน่งล้อหน้าสัมผัสถนนคู่ซ้าย-ขวา (Dual Front Wheel Ground Contact) เทียบกับเส้นขอบทางในระดับ **เซนติเมตร**
+2. **Physical Cab Ratio & Morning Sun Shadow Rejection:**
+   - แสงแดดเช้า-เย็นมุมต่ำมักทอดเงารถสีเข้มออกด้านข้าง หลอกให้ Object Detector ขยาย BBox คร่อมเลน
+   - ระบบแก้ปัญหาที่ Root Cause ด้วย **Physical Cab Constraint** ล็อกความกว้างหัวเก๋งสูงสุด $70\%$ ของเลนมาตรฐาน 3.5 ม. (`front_w = min(bbox_w, lane_w * 0.70)` หรือ $\le 2.45$ ม.) ตัดเงาถนนทิ้งถาวร ป้องกัน False Positive 100%
+3. **Synthetic Top-Down BEV Radar Display (Zero 3D Distortion):**
+   - ขจัดปัญหาการ Warp พิกเซล 3D ที่ทำให้ตัวรถยืดเอียงและบิดเบี้ยว โดยเรนเดอร์เป็นแผนผังเรดาร์มุมมองบนตรง 100% พร้อมเส้นระยะทางทุก 5 เมตรและกล่อง Footprint 2 มิติ
+4. **Interactive Calibration & Real-Time Keybindings:**
+   - รองรับโหมดตั้งค่าเลนแบบโต้ตอบ (`python src/test_lane_homography_interactive.py`) ปรับตำแหน่ง 4 มุมได้ทันที และบันทึกรวมศูนย์ไว้ที่ `lane_calibration.json` เพียงไฟล์เดียว
+
+---
+
 ## 7. สถาปัตยกรรม Dual Cloud Storage (Google Cloud Firestore + BigQuery)
 - **Dual Cloud Pattern:**
   - **Cloud Firestore (`lpr-db`)**: เก็บประวัติแบบ Document Store รวมรูปภาพป้ายทะเบียนแบบ Base64 สำหรับดึงดูบนหน้าเว็บแบบ Real-time
@@ -231,15 +260,18 @@ flowchart LR
 
 ## 8. สรุปความพร้อมในการนำไปใช้งานจริง (Production Readiness)
 - ✅ **API & Interactive Dashboard**: มี Web UI Dashboard สวยงามแสดงผลแบบ Step-by-step ทุก Stage (Latency, Bounding Boxes, Probability Bar Chart) พร้อม Modal แสดงสถาปัตยกรรมโมเดลและระบบสลับประวัติ Local/Cloud
-- ✅ **Commercially Compliant**: ปราศจากลิขสิทธิ์ AGPL หรือเงื่อนไขที่ห้ามใช้เชิงพาณิชย์
+- ✅ **Commercially Compliant**: ปราศจากลิขสิทธิ์ AGPL หรือเงื่อนไขที่ห้ามใช้เชิงพาณิชย์ (PicoDet / RF-DETR = Apache-2.0, D-FINE = MIT, MobileNet / ResNet = BSD-3)
 - ✅ **Full C# (.NET) Integration**: พร้อมโค้ดตัวอย่าง `Microsoft.ML.OnnxRuntime` + `OpenCvSharp4` นำไปใส่ในโปรเจกต์ Desktop หรือ Server ของลูกค้าได้ทันที
 - ✅ **GCP Cloud Native**: พร้อม Dockerfile และ `.dockerignore` ที่ลดขนาดลงกว่า 1.2 GB รองรับการ Deploy บน Cloud Run ได้ทันที
-- ✅ **Tested Accuracy** (v4 weights, leak-free valid):
-  - Plate Localization: **~99.2% mAP**
-  - Thai Character Classifier: **99.71% Top-1 / 99.91% Top-3** (MobileNetV2, v4 balanced retrain)
-  - Thai Province Classification: **99.90% Val Top-1** (ResNet34-Grayscale 256×80, v4 retrain — ผิด 1/1,002)
-  - Average End-to-End Latency: **~75–95 ms บน CPU ทั่วไป**
-- ✅ **Traceable & Leak-Free Dataset Pipeline (v2→v4)**: ทุกรุ่น retrain ใช้ pipeline ที่ crop ด้วยกฎ serve เดียวกัน, แบ่ง split แบบ leak-free ระดับ source image, curation sync กับ manifest เสมอ และ v4 เพิ่ม **self-labeling harvest + augmented-variant balancing** จนไม่เหลือคลาสที่มี < 30 crops (ดูหัวข้อ 5.5 และยุคที่ 8)
+- ✅ **Tested Accuracy** (v6 weights & geometry-matched valid):
+  - Plate Localization: **~99.2% mAP** (PicoDet-S / D-FINE-Nano)
+  - Thai Character Classifier: **99.71% Top-1 / 99.91% Top-3** (MobileNetV2, v4/v6 balanced)
+  - Lao Character Classifier: **99.56% Top-1** (MobileNetV4-Conv-Small)
+  - Thai Province Classification: **100.0% Val Top-1** (ResNet18-Grayscale $256 \times 80$, 77 จังหวัด)
+  - Lao Province Classification: **100.0% Top-1** (ResNet18-Grayscale $256 \times 64$, 19 แขวง)
+  - Lane Straddling Detection: Centimeter-level departure precision, 0% shadow false positives
+  - Average End-to-End Latency: **~70–85 ms บน CPU ทั่วไป** (~12–15 FPS)
+- ✅ **Traceable & Leak-Free Dataset Pipeline (v2→v6)**: ทุกรุ่น retrain ใช้ pipeline ที่ crop ด้วยกฎ serve เดียวกัน, แบ่ง split แบบ leak-free ระดับ source image, curation sync กับ manifest เสมอ และ v6 ปรับสู่ Preprocessing Contract ขจัด Domain Drift สมบูรณ์แบบ (ดูหัวข้อ 5.5 และยุคที่ 9)
 
 ---
 

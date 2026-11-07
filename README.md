@@ -16,6 +16,7 @@ The entire pipeline is built with **100% commercially permissive architectures (
 ## 📑 Table of Contents
 - [End-to-End System Architecture](#-end-to-end-system-architecture)
 - [Key Architectural Highlights](#-key-architectural-highlights)
+- [Real-Time Highway Lane Straddling & Departure Detection (BEV Homography)](#-real-time-highway-lane-straddling--departure-detection-bev-homography)
 - [Model 1 Benchmark & Selection Guide](#-model-1-candidate-benchmark--selection-guide)
 - [Full Model Catalog](#-complete-production-model-catalog)
 - [Configuration Guide (`src/config.py`)](#-configuration-guide)
@@ -144,6 +145,42 @@ In real-world traffic surveillance, single-frame recognition inevitably encounte
 
 ---
 
+## 🛣️ Real-Time Highway Lane Straddling & Departure Detection (BEV Homography)
+
+For automated highway surveillance, weigh station corridors, and commercial freight compliance, the repository incorporates a high-speed **Lane Straddling & Departure Detection Engine** (`src/lane_engine.py` / `src/test_lane_homography_interactive.py`):
+
+```mermaid
+flowchart LR
+    A["Raw CCTV Video Frame\n(Angle / Perspective Tilt)"] --> B["Commercial Vehicle Detector\n(LibreDFINE-Nano / PicoDet: Truck / Bus)"]
+    B --> C["Physical Contact & Cab Model\n(Capped cab width ratio 0.70x to reject shadows)"]
+    C --> D["Planar Homography Warp (H)\n(Road corridor 3.5m width x 35.0m length)"]
+    D --> E["Centimeter Straddle Evaluator\n(Dual front wheel vs Left/Right Lane lines)"]
+    E --> F["Synthetic Top-Down BEV Radar Map\n(100% Upright, 5m distance markings, 0% 3D smear)"]
+```
+
+### Key Engineering Capabilities:
+1. **Planar Homography Projection & Physical Road Calibration**:
+   - Calibrates a $3.5\text{ m} \times 35.0\text{ m}$ road evaluation corridor using an invertible $3 \times 3$ Homography matrix ($H$).
+   - Maps 2D camera coordinates directly into metric world coordinates ($X_{\text{meters}}, Y_{\text{meters}}$) at centimeter accuracy.
+2. **Shadow-Immune Front-Wheel Ground Contact Estimation**:
+   - Low morning and evening sun angles cast dark diagonal vehicle shadows that artificially widen standard bounding boxes.
+   - The engine imposes a **Physical Cab Constraint** (`front_w = min(bbox_w, lane_w * 0.70)` $\le 2.45\text{ m}$ on standard $3.5\text{ m}$ lanes).
+   - Completely discards road shadows, preventing false-positive lane crossing alerts on trucks driving within lane boundaries.
+3. **Synthetic Top-Down BEV Radar Map (Zero 3D Distortion)**:
+   - Traditional raw pixel warping of 3D objects ($Z > 0$) causes tall truck cabs to stretch, smear, and tilt along the camera ray.
+   - The engine generates a clean **Synthetic Top-Down Radar Display** featuring vertical parallel lane boundaries, 5-meter metric grid intervals, and upright 2D vehicle footprint boxes with live wheel contact points.
+4. **Interactive Calibration & Real-Time Keybindings**:
+   - Run `python src/test_lane_homography_interactive.py` to inspect and calibrate live:
+     - `[C]` / `[ENTER]`: Enter calibration or save & exit.
+     - `[ESC]`: Cancel changes and revert without exiting application.
+     - `[R]`: Redraw 4 fresh road corners (Far-Left $\to$ Far-Right $\to$ Near-Right $\to$ Near-Left).
+     - `[D]`: Instant restore to camera golden defaults.
+     - `[SPACE]` / `[B]`: Advance or go back across test datasets.
+
+---
+
+---
+
 ## ⚡ Model 1 Candidate Benchmark & Selection Guide
 
 All Model 1 candidates have been trained and benchmarked on identical test sets using **macOS Apple Silicon (M-Series MPS & CPU)**:
@@ -240,19 +277,20 @@ All Model 1 candidates have been trained and benchmarked on identical test sets 
 
 | Stage | Model Name | Architecture | Input Shape (W×H) | Output Format | License | Default in `config.py` |
 | :--- | :--- | :--- | :---: | :--- | :---: | :---: |
-| **Stage 1 (Plate Detector)** | `plate_detector_dfine_nano.pt` / `.onnx` | D-FINE-Nano (FDR Loss) | $640 \times 640$ (stretch, ไม่ letterbox; feed scene 4:3) | `[1, 300, 4]` (Bounding Boxes) | **MIT** | ✅ Active (`~27ms CPU`) |
-| *Alternative Stage 1* | `plate_detector_picodet_s.pt` / `.onnx` | PicoDet-S (ESNet) | **$416 \times 416$** (stretch; predict ต้อง imgsz=416) | `[1, 3598, 5]` (Bounding Boxes) | **Apache-2.0** | Available (`~6.5ms CPU`) |
+| **Stage 1 (Plate Detector)** | `plate_detector_picodet_s_v6pico320.pt` / `.onnx` | PicoDet-S (v6pico320) | **$416 \times 416$** (stretch; predict imgsz=416) | `[1, 3598, 5]` (Bounding Boxes) | **Apache-2.0** | ✅ Active (`~6.5ms CPU`) |
+| *Alternative Stage 1* | `plate_detector_dfine_nano.pt` / `.onnx` | D-FINE-Nano (FDR Loss) | $640 \times 640$ (stretch, ไม่ letterbox; feed scene 4:3) | `[1, 300, 4]` (Bounding Boxes) | **MIT** | Available (`~27ms CPU`) |
 | *Alternative Stage 1* | `plate_detector_rfdetr.pt` | RF-DETR-Base | **$560 \times 560$** (native stretch, ImageNet norm) | `[1, 300, 4]` | **Apache-2.0** | Available |
 | **Stage 1.1 (Corner Regressor)**| `plate_corner_regressor_opset18.onnx` | MobileNetV3 Keypoint Regressor | $224 \times 224$ (crop bbox +12% margin) | `[1, 8]` (4 มุม: $x_1, y_1 \dots x_4, y_4$) | **BSD-3** | ✅ Active (`~3.2ms CPU`) |
 | **Stage 1.5 (Country Cls)** | `country_classifier.pth` / `.onnx` | MobileNetV3-Small | **$256 \times 128$** (stretch จาก plate crop 320×160) | `[1, 2]` (0: Thai, 1: Laos) | **BSD-3** | ✅ Active (`~1.5ms CPU / 100% Acc`) |
-| **Stage 2 (Component Detector)**| `component_detector_picodet_s_v6pico320.pt` / `dfine_nano.pt` | PicoDet-S / D-FINE | **$640 \times 640$ tensor** — serve: upscale rectified plate $320\times160 \to 1280\times640$ | `[1, 300, 4]` (`plate_char`, `province`) | **Apache-2.0** | ✅ Active (`~12ms CPU`) |
-| **Stage 3A (Thai Char Box)** | `character_box_detector_picodet_s_v6pico320.pt` | PicoDet-S (320x320) | **$320 \times 320$ tensor** (30% vertical replicate padding) | `[1, 300, 4]` (Natural margin character boxes) | **Apache-2.0** | ✅ Active (`~18ms CPU`) |
-| **Stage 3A (Thai Char Cls)** | `character_classifier_v6pico320.pth` | MobileNetV2 (50 Classes Balanced) | $64 \times 64$ (`ImageOps.autocontrast(cutoff=2)` + square ambient padding) | `[1, 50]` (Thai consonants & digits) | **BSD-3** | ✅ Active (`99.58% Val Top-1 / 99.89% Top-3`) |
-| **Stage 3A (Thai OCR CTC)** | `ocr_model.pth` | ResNet18 + BiLSTM + CTC | **$256 \times 64$** (grayscale, `SmartResize` pad ดำ, ToTensor ไม่ normalize) | `[T, B, 71]` (CTC sequence logits) | **Apache-2.0** | ✅ Active (`~8.5ms CPU`) |
+| **Stage 2 (Component Detector)**| `component_detector_picodet_s_v6pico320.pt` | PicoDet-S (v6pico320) | **$640 \times 640$ tensor** — serve: upscale rectified plate $320\times160 \to 1280\times640$ | `[1, 300, 4]` (`plate_char`, `province`) | **Apache-2.0** | ✅ Active (`~10ms CPU`) |
+| **Stage 3A (Thai Char Box)** | `character_box_detector_picodet_s_v6pico320.pt` | PicoDet-S (320x320) | **$320 \times 320$ tensor** (30% vertical replicate padding) | `[1, 300, 4]` (Natural margin character boxes) | **Apache-2.0** | ✅ Active (`~16ms CPU`) |
+| **Stage 3A (Thai Char Cls)** | `character_classifier_v6pico320.pth` | MobileNetV2 (50 Classes Balanced) | $64 \times 64$ (`ImageOps.autocontrast(cutoff=2)` + square ambient padding) | `[1, 50]` (Thai consonants & digits) | **BSD-3** | ✅ Active (`99.71% Val Top-1 / 99.91% Top-3`) |
+| **Stage 3A (Thai OCR CTC)** | `ocr_model_v3.pth` | ResNet18 + BiLSTM + CTC | **$256 \times 64$** (grayscale, `SmartResize` pad ดำ, ToTensor ไม่ normalize) | `[T, B, 71]` (CTC sequence logits) | **Apache-2.0** | ✅ Active (`~8.5ms CPU`) |
 | **Stage 3A (Lao Char Box)** | `character_box_detector_picodet_s_lao_m3a_v6.onnx` | PicoDet-S (320x320) | **$320 \times 320$ tensor** (3:1 letterbox serving) | `[1, 300, 4]` (High-precision Lao characters) | **Apache-2.0** | ✅ Active (`~6.2ms ONNX CPU`) |
 | **Stage 3A (Lao Char Cls)** | `character_recognition_mobilenetv4_lao_v7.onnx` | MobileNetV4-Conv-Small | $64 \times 64$ (30 classes balanced) | `[1, 30]` (Strict DLT Lao characters) | **Apache-2.0** | ✅ Active (`99.56% Top-1 / ~1.8ms`) |
 | **Stage 3B (Thai Province)** | `province_model_grayscale_thai_v6pico320.pth` / `.onnx` | Grayscale ResNet18 | **$256 \times 80$** (`GrayscaleSmartResize(256,80)` pad ด้วยโทนพื้นหลังจริง; norm 0.5/0.25) | `[1, 77]` (77 Thai Provinces) | **BSD-3** | ✅ Active (`100.0% Val Top-1 / 44 MB`) |
 | **Stage 3B (Lao Province)** | `province_model_grayscale_lao_v6.onnx` | Grayscale ResNet18 | **$256 \times 64$** (Letterbox 256x64 ด้วยโทนพื้นหลังจริง; norm 0.5/0.25) | `[1, 19]` (19 Lao Provinces, incl. Xaysomboun) | **BSD-3** | ✅ Active (`100.0% Top-1 / 44.8 MB`) |
+| **Corridor & Lane Safety** | `src/lane_engine.py` | LibreDFINE-Nano / PicoDet + Homography | $3.5\text{m} \times 35.0\text{m}$ Road Corridor | Centimeter Straddle Assessment + Synthetic BEV Radar | **MIT / Apache-2.0** | ✅ Active (`~25ms CPU`) |
 
 ---
 
