@@ -228,6 +228,34 @@ class TestLaneEngine(unittest.TestCase):
         self.assertEqual(len(matched), 1)
         self.assertEqual(matched[0]["conf"], 0.40)
 
+    def test_articulated_truck_single_front_tire_flips_projection_towards_cab(self):
+        # Truck with wide bounding box (trailer on left, cab face on right)
+        # Bbox spans from x1=100 to x2=700 (span ~3.5m in BEV).
+        # Steer tire detected at tx=450.0 (near cab face on right, but trailer extends far left).
+        fake_steer = [
+            {
+                "conf": 0.45,
+                "bbox": [430.0, 560.0, 470.0, 600.0],
+                "x1": 430.0, "y1": 560.0, "x2": 470.0, "y2": 600.0,
+                # 3 trailer tires to the left of the steer tire
+                "all_vehicle_tires": [
+                    {"bbox": [150.0, 500.0, 180.0, 540.0], "x1": 150.0, "x2": 180.0},
+                    {"bbox": [200.0, 510.0, 230.0, 550.0], "x1": 200.0, "x2": 230.0},
+                    {"bbox": [250.0, 520.0, 280.0, 560.0], "x1": 250.0, "x2": 280.0},
+                    {"bbox": [430.0, 560.0, 470.0, 600.0], "x1": 430.0, "x2": 470.0},
+                ],
+            }
+        ]
+        bbox = [100.0, 300.0, 700.0, 600.0]
+        contact = estimate_vehicle_ground_contact(
+            bbox, self.calib, class_name="truck", detected_tires=fake_steer
+        )
+
+        # Because trailer is on the left, tx=450 is the LEFT steer wheel.
+        # Opposite right wheel MUST be projected to the RIGHT (x_right > x_left).
+        self.assertEqual(contact.left_wheel.x, 450.0)
+        self.assertGreater(contact.right_wheel.x, 450.0)
+
 
 if __name__ == "__main__":
     unittest.main()

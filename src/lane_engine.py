@@ -244,6 +244,7 @@ class GroundContact:
     bev_right_wheel: Point2D
     bev_center_bottom: Point2D
     trailer_tires: Optional[List[Dict[str, Any]]] = None
+    cab_face: Optional[List[float]] = None
 
 
 @dataclass
@@ -295,11 +296,38 @@ def estimate_vehicle_ground_contact(
     # Standard physical front axle track width in meters
     cls_lower = class_name.lower()
     if cls_lower in ("truck", "bus", "train"):
-        track_w_m = 2.05
+        base_track_w_m = 2.05
     elif cls_lower in ("car", "van", "suv"):
-        track_w_m = 1.65
+        base_track_w_m = 1.65
     else:
-        track_w_m = 0.90  # motorcycle / small
+        base_track_w_m = 0.90  # motorcycle / small
+
+    cab_face_bbox: Optional[List[float]] = None
+    if detected_tires:
+        for t in detected_tires:
+            if t.get("class_name") == "cab_face":
+                cab_face_bbox = t.get("bbox")
+                break
+            elif "cab_bbox" in t:
+                cab_face_bbox = t.get("cab_bbox")
+                break
+
+    # Physical track width constraint based on BEV cab width
+    track_w_m = base_track_w_m
+    if cab_face_bbox is not None:
+        cab_bottom_y = float(cab_face_bbox[3])
+        bev_cab_l = calib.project_points_to_bev([Point2D(x=float(cab_face_bbox[0]), y=cab_bottom_y)])[0]
+        bev_cab_r = calib.project_points_to_bev([Point2D(x=float(cab_face_bbox[2]), y=cab_bottom_y)])[0]
+        cab_w_bev = abs(bev_cab_r.x - bev_cab_l.x)
+        cab_w_m = cab_w_bev / calib.pixels_per_meter_x
+
+        if cab_w_m < 1.95:
+            # Compact truck, pickup truck with canopy, or van (even if classified as 'truck')
+            # Real physical track width is ~0.88 of cab width
+            track_w_m = min(base_track_w_m, max(1.40, cab_w_m * 0.88))
+        else:
+            # Full commercial heavy truck / bus
+            track_w_m = min(base_track_w_m, cab_w_m * 0.90)
 
     track_w_bev = track_w_m * calib.pixels_per_meter_x
     v_cx = (x1 + x2) / 2.0
@@ -308,9 +336,16 @@ def estimate_vehicle_ground_contact(
     p_right: Optional[Point2D] = None
 
     if detected_tires:
-        # Filter for front-most steer axle tires (nearest Y to camera)
-        max_ty = max(t.get("y2", t["bbox"][3]) for t in detected_tires)
-        steer_tires = [t for t in detected_tires if t.get("y2", t["bbox"][3]) >= max_ty - 25.0]
+        # Filter for front-most steer axle tires (nearest Y to camera, ignoring cab_face boxes)
+        wheel_candidates = [
+            t for t in detected_tires
+            if t.get("class_name") != "cab_face" and t.get("is_front_steer", True)
+        ]
+        if wheel_candidates:
+            max_ty = max(t.get("y2", t["bbox"][3]) for t in wheel_candidates)
+            steer_tires = [t for t in wheel_candidates if t.get("y2", t["bbox"][3]) >= max_ty - 25.0]
+        else:
+            steer_tires = []
 
         if len(steer_tires) >= 2:
             # Sort horizontally: first is left front wheel, second is right front wheel
@@ -324,53 +359,133 @@ def estimate_vehicle_ground_contact(
             best_t = steer_tires[0]
             tx = float((best_t.get("x1", best_t["bbox"][0]) + best_t.get("x2", best_t["bbox"][2])) / 2.0)
             ty = float(best_t.get("y2", best_t["bbox"][3]))
-            # Determine if anchor is left or right based on proximity to vehicle sides
-            if (tx - x1) <= (x2 - tx):
-                # Anchor is left front wheel
+
+            if cab_face_bbox is not None:
+                # With verified front cab face (no trailer / side mirror overshoot):
+                # Any tire to the right of cab center is definitively the RIGHT front wheel.
+                # Any tire to the left of cab center is definitively the LEFT front wheel.
+                cab_cx = (cab_face_bbox[0] + cab_face_bbox[2]) / 2.0
+                anchor_is_left = (tx < cab_cx)
+            else:
+                # Project bounding box horizontal extents at tire road-contact level to BEV
+                bev_left_edge = calib.project_points_to_bev([Point2D(x=x1, y=ty)])[0]
+                bev_right_edge = calib.project_points_to_bev([Point2D(x=x2, y=ty)])[0]
+                bev_tire = calib.project_points_to_bev([Point2D(x=tx, y=ty)])[0]
+
+                span_left_m = abs(bev_tire.x - bev_left_edge.x) / calib.pixels_per_meter_x
+                span_right_m = abs(bev_right_edge.x - bev_tire.x) / calib.pixels_per_meter_x
+                total_span_m = abs(bev_right_edge.x - bev_left_edge.x) / calib.pixels_per_meter_x
+
+                # Check if other tires on the vehicle indicate trailer side
+                vehicle_all_tires = best_t.get("all_vehicle_tires") or detected_tires or []
+                num_tires_left = sum(
+                    1 for t in vehicle_all_tires
+                    if ((t.get("x1", t["bbox"][0]) + t.get("x2", t["bbox"][2])) / 2.0) < tx - 15.0
+                )
+                num_tires_right = sum(
+                    1 for t in vehicle_all_tires
+                    if ((t.get("x1", t["bbox"][0]) + t.get("x2", t["bbox"][2])) / 2.0) > tx + 15.0
+                )
+
+                is_articulated = (total_span_m > 2.60) and (cls_lower in ("truck", "bus", "train"))
+
+                if is_articulated:
+                    # On an articulated / trailer truck, one side is the long trailer (with all side wheels)
+                    # and the other side is the front cab face (~2.0 - 2.5m wide).
+                    # The steer wheel visible on the side facing the camera is on the trailer side of the cab:
+                    # - If trailer is on the left: steer wheel is the LEFT wheel, project RIGHT (+track_w_bev towards x2)
+                    # - If trailer is on the right: steer wheel is the RIGHT wheel, project LEFT (-track_w_bev towards x1)
+                    if num_tires_left > num_tires_right or (num_tires_left == num_tires_right and span_left_m > span_right_m):
+                        anchor_is_left = True
+                    else:
+                        anchor_is_left = False
+                else:
+                    # Symmetric / standard vehicle: anchor based on horizontal proximity to bbox center
+                    anchor_is_left = (tx - x1) <= (x2 - tx)
+
+            if anchor_is_left:
+                # Anchor is left front wheel -> project right front wheel to the RIGHT (+track_w_bev)
                 p_left = Point2D(x=tx, y=ty)
                 bev_l = calib.project_points_to_bev([p_left])[0]
                 bev_r = Point2D(x=bev_l.x + track_w_bev, y=bev_l.y)
-                p_right = calib.project_points_from_bev([bev_r])[0]
+                proj = calib.project_points_from_bev([bev_r])[0]
+                if cab_face_bbox is not None:
+                    ref_y = float(cab_face_bbox[3])
+                    proj_y = float(np.clip(proj.y, ref_y - 8.0, ref_y + 8.0))
+                    proj_x = float(min(proj.x, cab_face_bbox[2] + 10.0))
+                    p_right = Point2D(x=proj_x, y=proj_y)
+                else:
+                    p_right = proj
             else:
-                # Anchor is right front wheel
+                # Anchor is right front wheel -> project left front wheel to the LEFT (-track_w_bev)
                 p_right = Point2D(x=tx, y=ty)
                 bev_r = calib.project_points_to_bev([p_right])[0]
                 bev_l = Point2D(x=bev_r.x - track_w_bev, y=bev_r.y)
-                p_left = calib.project_points_from_bev([bev_l])[0]
+                proj = calib.project_points_from_bev([bev_l])[0]
+                if cab_face_bbox is not None:
+                    ref_y = float(cab_face_bbox[3])
+                    proj_y = float(np.clip(proj.y, ref_y - 8.0, ref_y + 8.0))
+                    proj_x = float(max(proj.x, cab_face_bbox[0] - 10.0))
+                    p_left = Point2D(x=proj_x, y=proj_y)
+                else:
+                    p_left = proj
 
     # Robust Fallback if no front tires were detected
+    bev_left_wheel: Optional[Point2D] = bev_l if (p_left is not None and 'bev_l' in locals()) else None
+    bev_right_wheel: Optional[Point2D] = bev_r if (p_right is not None and 'bev_r' in locals()) else None
+
     if p_left is None or p_right is None:
-        bev_left_edge = calib.project_points_to_bev([Point2D(x=x1, y=y2)])[0]
-        bev_right_edge = calib.project_points_to_bev([Point2D(x=x2, y=y2)])[0]
-        bev_span_m = abs(bev_right_edge.x - bev_left_edge.x) / calib.pixels_per_meter_x
-
-        if bev_span_m > 2.80 and cls_lower in ("truck", "bus", "train"):
-            # Articulated/trailer truck: 2D bbox width includes trailer swing.
-            # Anchor front cab near the leading front corner (x1) with 0.20m inset.
-            cab_inset_bev = 0.20 * calib.pixels_per_meter_x
-            bev_l = Point2D(x=bev_left_edge.x + cab_inset_bev, y=bev_left_edge.y)
-            bev_r = Point2D(x=bev_l.x + track_w_bev, y=bev_l.y)
-        else:
-            # Symmetrical vehicle fallback: center standard physical track width under vehicle
-            bev_center = calib.project_points_to_bev([Point2D(x=v_cx, y=y2)])[0]
+        if cab_face_bbox is not None:
+            # Cab face provides clean ground width without trailer or side mirror overhang
+            cab_cx = (cab_face_bbox[0] + cab_face_bbox[2]) / 2.0
+            cab_bottom_y = cab_face_bbox[3]
+            bev_cab_center = calib.project_points_to_bev([Point2D(x=cab_cx, y=cab_bottom_y)])[0]
             half_w = track_w_bev / 2.0
-            bev_l = Point2D(x=bev_center.x - half_w, y=bev_center.y)
-            bev_r = Point2D(x=bev_center.x + half_w, y=bev_center.y)
+            bev_l = Point2D(x=bev_cab_center.x - half_w, y=bev_cab_center.y)
+            bev_r = Point2D(x=bev_cab_center.x + half_w, y=bev_cab_center.y)
+            p_left = calib.project_points_from_bev([bev_l])[0]
+            p_right = calib.project_points_from_bev([bev_r])[0]
+            bev_left_wheel = bev_l
+            bev_right_wheel = bev_r
+        else:
+            bev_left_edge = calib.project_points_to_bev([Point2D(x=x1, y=y2)])[0]
+            bev_right_edge = calib.project_points_to_bev([Point2D(x=x2, y=y2)])[0]
+            bev_span_m = abs(bev_right_edge.x - bev_left_edge.x) / calib.pixels_per_meter_x
 
-        p_left = calib.project_points_from_bev([bev_l])[0]
-        p_right = calib.project_points_from_bev([bev_r])[0]
+            if bev_span_m > 2.80 and cls_lower in ("truck", "bus", "train"):
+                cab_inset_bev = 0.35 * calib.pixels_per_meter_x
+                bev_l = Point2D(x=bev_left_edge.x + cab_inset_bev, y=bev_left_edge.y)
+                bev_r = Point2D(x=bev_l.x + track_w_bev, y=bev_l.y)
+            else:
+                bev_center = calib.project_points_to_bev([Point2D(x=v_cx, y=y2)])[0]
+                half_w = track_w_bev / 2.0
+                bev_l = Point2D(x=bev_center.x - half_w, y=bev_center.y)
+                bev_r = Point2D(x=bev_center.x + half_w, y=bev_center.y)
+
+            p_left = calib.project_points_from_bev([bev_l])[0]
+            p_right = calib.project_points_from_bev([bev_r])[0]
+            bev_left_wheel = bev_l
+            bev_right_wheel = bev_r
 
     p_center = Point2D(x=(p_left.x + p_right.x) / 2.0, y=(p_left.y + p_right.y) / 2.0)
-    projected = calib.project_points_to_bev([p_left, p_right, p_center])
+    if bev_left_wheel is None or bev_right_wheel is None:
+        projected = calib.project_points_to_bev([p_left, p_right, p_center])
+        bev_left_wheel = projected[0]
+        bev_right_wheel = projected[1]
+        bev_center_bottom = projected[2]
+    else:
+        bev_center_bottom = Point2D(x=(bev_left_wheel.x + bev_right_wheel.x) / 2.0,
+                                    y=(bev_left_wheel.y + bev_right_wheel.y) / 2.0)
 
     return GroundContact(
         left_wheel=p_left,
         right_wheel=p_right,
         center_bottom=p_center,
-        bev_left_wheel=projected[0],
-        bev_right_wheel=projected[1],
-        bev_center_bottom=projected[2],
+        bev_left_wheel=bev_left_wheel,
+        bev_right_wheel=bev_right_wheel,
+        bev_center_bottom=bev_center_bottom,
         trailer_tires=None,
+        cab_face=cab_face_bbox,
     )
 
 
@@ -378,6 +493,8 @@ def assess_lane_straddling(
     ground_contact: GroundContact,
     calib: RoadCalibration,
     tolerance_cm: float = 0.0,
+    vehicle_class: str = "truck",
+    tire_half_w_cm: Optional[float] = None,
 ) -> StraddleAssessment:
     left_lane_pts = calib.lanes.get("left")
     right_lane_pts = calib.lanes.get("right")
@@ -392,6 +509,18 @@ def assess_lane_straddling(
             details="Lane boundaries not configured",
         )
 
+    # Determine physical tire contact patch half-width:
+    # A commercial truck steer tire has contact width ~28-30cm (half-width = 14cm).
+    # A passenger vehicle tire has contact width ~20-22cm (half-width = 10cm).
+    if tire_half_w_cm is None:
+        cls_lower = (vehicle_class or "truck").lower()
+        if cls_lower in ("truck", "bus", "train"):
+            tire_half_w_cm = 14.0
+        elif cls_lower in ("car", "van", "suv"):
+            tire_half_w_cm = 10.0
+        else:
+            tire_half_w_cm = 5.0
+
     left_lane_bev = calib.project_points_to_bev(left_lane_pts)
     right_lane_bev = calib.project_points_to_bev(right_lane_pts)
 
@@ -403,19 +532,21 @@ def assess_lane_straddling(
 
     px_per_cm = calib.pixels_per_meter_x / 100.0
 
-    left_dist_cm = 999.0
-    right_dist_cm = 999.0
-    straddle_left = False
-    straddle_right = False
-    depth_cm = 0.0
-
     if left_line_x_at_left_wheel is None:
         left_line_x_at_left_wheel = 0.0
     if right_line_x_at_right_wheel is None:
         right_line_x_at_right_wheel = float(calib.bev_width - 1)
 
+    # Physical distance from tire center to lane line (positive = inside lane corridor)
     diff_left = ground_contact.bev_left_wheel.x - left_line_x_at_left_wheel
-    left_dist_cm = diff_left / px_per_cm
+    diff_right = right_line_x_at_right_wheel - ground_contact.bev_right_wheel.x
+    left_center_dist_cm = diff_left / px_per_cm
+    right_center_dist_cm = diff_right / px_per_cm
+
+    # Clearance from outer tire edge to lane line (negative = tire edge penetrates lane line)
+    left_clearance_cm = left_center_dist_cm - tire_half_w_cm
+    right_clearance_cm = right_center_dist_cm - tire_half_w_cm
+
     # Check if vehicle is in the active evaluation corridor
     avg_bev_y = (left_wheel_y + right_wheel_y) / 2.0
     if avg_bev_y < -150.0:
@@ -424,21 +555,23 @@ def assess_lane_straddling(
             is_straddling=False,
             status_label="APPROACHING",
             violation_side=None,
-            left_wheel_dist_to_lane_cm=left_dist_cm,
-            right_wheel_dist_to_lane_cm=right_dist_cm,
+            left_wheel_dist_to_lane_cm=left_clearance_cm,
+            right_wheel_dist_to_lane_cm=right_clearance_cm,
             straddle_depth_cm=0.0,
             details=f"Vehicle approaching corridor ({dist_m:.1f}m away)",
         )
 
-    if left_dist_cm < -tolerance_cm:
-        straddle_left = True
-        depth_cm = max(depth_cm, abs(left_dist_cm))
+    straddle_left = False
+    straddle_right = False
+    depth_cm = 0.0
 
-    diff_right = right_line_x_at_right_wheel - ground_contact.bev_right_wheel.x
-    right_dist_cm = diff_right / px_per_cm
-    if right_dist_cm < -tolerance_cm:
+    if left_clearance_cm < -tolerance_cm:
+        straddle_left = True
+        depth_cm = max(depth_cm, abs(left_clearance_cm))
+
+    if right_clearance_cm < -tolerance_cm:
         straddle_right = True
-        depth_cm = max(depth_cm, abs(right_dist_cm))
+        depth_cm = max(depth_cm, abs(right_clearance_cm))
 
     depth_cm = min(500.0, depth_cm)
 
@@ -447,40 +580,40 @@ def assess_lane_straddling(
             is_straddling=True,
             status_label="OUT_OF_LANE",
             violation_side="both",
-            left_wheel_dist_to_lane_cm=left_dist_cm,
-            right_wheel_dist_to_lane_cm=right_dist_cm,
+            left_wheel_dist_to_lane_cm=left_clearance_cm,
+            right_wheel_dist_to_lane_cm=right_clearance_cm,
             straddle_depth_cm=depth_cm,
-            details=f"Crossed both lanes (L: {left_dist_cm:+.1f}cm, R: {right_dist_cm:+.1f}cm)",
+            details=f"Crossed both lanes (L: {left_clearance_cm:+.1f}cm, R: {right_clearance_cm:+.1f}cm)",
         )
     elif straddle_left:
         return StraddleAssessment(
             is_straddling=True,
             status_label="STRADDLE_LEFT",
             violation_side="left",
-            left_wheel_dist_to_lane_cm=left_dist_cm,
-            right_wheel_dist_to_lane_cm=right_dist_cm,
+            left_wheel_dist_to_lane_cm=left_clearance_cm,
+            right_wheel_dist_to_lane_cm=right_clearance_cm,
             straddle_depth_cm=depth_cm,
-            details=f"Left wheel crossed lane by {abs(left_dist_cm):.1f}cm",
+            details=f"Left tire crossed lane by {abs(left_clearance_cm):.1f}cm",
         )
     elif straddle_right:
         return StraddleAssessment(
             is_straddling=True,
             status_label="STRADDLE_RIGHT",
             violation_side="right",
-            left_wheel_dist_to_lane_cm=left_dist_cm,
-            right_wheel_dist_to_lane_cm=right_dist_cm,
+            left_wheel_dist_to_lane_cm=left_clearance_cm,
+            right_wheel_dist_to_lane_cm=right_clearance_cm,
             straddle_depth_cm=depth_cm,
-            details=f"Right wheel crossed lane by {abs(right_dist_cm):.1f}cm",
+            details=f"Right tire crossed lane by {abs(right_clearance_cm):.1f}cm",
         )
     else:
         return StraddleAssessment(
             is_straddling=False,
             status_label="IN_LANE",
             violation_side=None,
-            left_wheel_dist_to_lane_cm=left_dist_cm,
-            right_wheel_dist_to_lane_cm=right_dist_cm,
+            left_wheel_dist_to_lane_cm=left_clearance_cm,
+            right_wheel_dist_to_lane_cm=right_clearance_cm,
             straddle_depth_cm=0.0,
-            details=f"Inside lane (Margin L: {left_dist_cm:.1f}cm, R: {right_dist_cm:.1f}cm)",
+            details=f"Inside lane (Clearance L: {left_clearance_cm:.1f}cm, R: {right_clearance_cm:.1f}cm)",
         )
 
 
@@ -597,7 +730,7 @@ class TruckWheelDetector:
                 cid = int(box.cls[0])
                 score = float(box.conf[0])
                 name = self.model.names.get(cid, "")
-                if name.lower() in ("tire", "wheel"):
+                if name.lower() in ("tire", "wheel", "front_wheel", "cab_face"):
                     coords = box.xyxy[0].cpu().numpy().tolist()
                     gx1, gy1, gx2, gy2 = coords
                     detected_tires.append({
@@ -608,6 +741,7 @@ class TruckWheelDetector:
                         "x2": gx2,
                         "y2": gy2,
                         "bottom_contact": Point2D((gx1 + gx2) / 2.0, gy2),
+                        "class_name": name.lower(),
                     })
 
         return detected_tires
@@ -617,7 +751,7 @@ class TruckWheelDetector:
         image_bgr: np.ndarray,
         vehicle_bbox: List[float],
         all_tires: Optional[List[Dict[str, Any]]] = None,
-        min_conf: float = 0.20,
+        min_conf: float = 0.10,
     ) -> List[Dict[str, Any]]:
         """
         Associates detected tires with the specified vehicle bounding box and tags
@@ -631,21 +765,55 @@ class TruckWheelDetector:
         if all_tires is None:
             all_tires = self.detect_all_tires(image_bgr)
 
+        # Check for matching front cab face proposal (eliminates trailer & side mirror errors)
+        matching_cab = None
+        for t in all_tires:
+            if t.get("class_name") == "cab_face" and t.get("conf", 0.0) >= 0.20:
+                bx1, by1, bx2, by2 = t["bbox"]
+                cx = (bx1 + bx2) / 2.0
+                cy = (by1 + by2) / 2.0
+                if (vx1 - 30.0 <= cx <= vx2 + 30.0) and (vy1 - 30.0 <= cy <= vy2 + 30.0):
+                    if matching_cab is None or t["conf"] > matching_cab["conf"]:
+                        matching_cab = t
+
+        ref_x1, ref_y1, ref_x2, ref_y2 = matching_cab["bbox"] if matching_cab else (vx1, vy1, vx2, vy2)
+
         # Spatial containment filter:
-        # 1. Tire must sit inside vehicle horizontally (margins <= 10px).
-        # 2. Tire must be in lower vehicle region and NOT extend below vehicle into road shadows (by2 <= vy2 + 6.0).
+        # 1. Tire must sit inside vehicle/cab horizontally.
+        # 2. Tire must touch the road surface near vehicle bottom.
+        #    This strictly eliminates side mirrors, windshields, and door handles floating in the air.
         # 3. Minimum confidence gating (rejects noisy shadows / tar marks).
         matched: List[Dict[str, Any]] = []
         for t in all_tires:
+            if t.get("class_name") == "cab_face":
+                continue
             if t.get("conf", 0.0) < min_conf:
                 continue
             bx1, by1, bx2, by2 = t["bbox"]
             cx = (bx1 + bx2) / 2.0
-            if (vx1 - 8.0 <= cx <= vx2 + 8.0) and (bx1 >= vx1 - 12.0 and bx2 <= vx2 + 12.0):
-                if (by2 >= vy1 + 0.25 * vh and by2 <= vy2 + 6.0 and by1 < vy2):
+            
+            if matching_cab is not None:
+                # Confined to front cab face with dynamic scale-aware margins
+                cab_w = ref_x2 - ref_x1
+                cab_h = ref_y2 - ref_y1
+                margin_x = max(35.0, 0.30 * cab_w)
+                margin_y = max(45.0, 0.35 * cab_h)
+                if (ref_x1 - margin_x <= cx <= min(ref_x2 + margin_x, vx2 + 25.0)) and (by2 >= ref_y2 - margin_y and by2 <= ref_y2 + 25.0):
                     matched.append(t)
+            else:
+                if (vx1 - 15.0 <= cx <= vx2 + 15.0) and (bx1 >= vx1 - 20.0 and bx2 <= vx2 + 20.0):
+                    if (by2 >= vy2 - 50.0 and by2 <= vy2 + 10.0 and by1 < vy2):
+                        matched.append(t)
 
         if not matched:
+            if matching_cab is not None:
+                return [{
+                    "class_name": "cab_face",
+                    "bbox": matching_cab["bbox"],
+                    "conf": matching_cab["conf"],
+                    "cab_bbox": matching_cab["bbox"],
+                    "is_front_steer": False,
+                }]
             return []
 
         # Keep strictly front-most tires (nearest Y to camera = steer axle)
@@ -674,8 +842,17 @@ class TruckWheelDetector:
             clustered_tires.sort(key=lambda t: (t["bbox"][0] + t["bbox"][2]) / 2.0)
             t_left = clustered_tires[0]
             t_right = clustered_tires[-1]
-            # Front steer axle co-planarity check: left and right wheels must have similar Y contact level (within 16px)
-            if abs(t_left["y2"] - t_right["y2"]) <= 16.0:
+            conf_l = t_left.get("conf", 0.0)
+            conf_r = t_right.get("conf", 0.0)
+            y_diff = abs(t_left["y2"] - t_right["y2"])
+
+            # If one wheel is clearly dominant (LOS visible) while the opposite wheel is low-confidence
+            # (occluded / fog lamp / shadow artifact), use ONLY the high-confidence dominant wheel as anchor!
+            if conf_l >= 0.40 and conf_r < 0.35:
+                front_steer = [t_left]
+            elif conf_r >= 0.40 and conf_l < 0.35:
+                front_steer = [t_right]
+            elif y_diff <= 18.0 and min(conf_l, conf_r) >= 0.30:
                 front_steer = [t_left, t_right]
             else:
                 # One wheel is skewed or a residual shadow: retain only the single higher-confidence wheel
@@ -687,6 +864,18 @@ class TruckWheelDetector:
 
         for t in front_steer:
             t["is_front_steer"] = True
+            t["all_vehicle_tires"] = matched
+            if matching_cab is not None:
+                t["cab_bbox"] = matching_cab["bbox"]
+
+        if not front_steer and matching_cab is not None:
+            return [{
+                "class_name": "cab_face",
+                "bbox": matching_cab["bbox"],
+                "conf": matching_cab["conf"],
+                "cab_bbox": matching_cab["bbox"],
+                "is_front_steer": False,
+            }]
 
         return front_steer
 

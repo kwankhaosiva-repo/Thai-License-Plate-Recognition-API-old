@@ -67,3 +67,14 @@ lpr-car-plate-e4c1f71338f3.json
 repomix-output.md
 skills/
 chacrit/
+
+# Test / debug image outputs
+*.png
+*.jpg
+*.jpeg
+
+# Test / debug image outputs
+*.png
+*.jpg
+*.jpeg
+*.png

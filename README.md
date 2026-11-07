@@ -9,7 +9,7 @@
 
 An enterprise-grade, high-performance AI microservice and interactive web dashboard for real-time **Thai (🇹🇭)** and **Lao (🇱🇦)** license plate localization, 4-corner perspective unwarping, layout-adaptive component detection, character recognition, and provincial classification.
 
-The entire pipeline is built with **100% commercially permissive architectures (Apache-2.0 / MIT / BSD-3)**, completely eliminating restrictive copyleft licenses (no AGPL lock-in or commercial royalties). All core models export cleanly to **standalone ONNX (Opset 18)** with native support for both **Python** and **C# (.NET / OpenCvSharp / OnnxRuntime)** with **zero compiled C++ plugins required**.
+The entire pipeline is built with **100% commercially permissive architectures (Apache-2.0 / MIT / BSD-3)**, completely eliminating restrictive copyleft licenses (no AGPL lock-in or commercial royalties). All core models export cleanly to **standalone ONNX (Opset 18)** with native support for high-throughput **Python (FastAPI / PyTorch / ONNX Runtime)** production serving with **zero compiled C++ plugins required**.
 
 ---
 
@@ -26,7 +26,6 @@ The entire pipeline is built with **100% commercially permissive architectures (
 - [Multi-Country LPR Accuracy & Cloud Latency Summary](#-multi-country-lpr-accuracy--cloud-latency-summary)
 - [Current Accuracy & Full Retrain Plan](#-current-accuracy-snapshot--full-retrain-plan-as-of-2026-09-26)
 - [Benchmarking Suite](#-automated-benchmarking-suite)
-- [Cross-Platform C# (.NET) Integration](#-cross-platform-c-deployment-net)
 - [License Plate Standards & DLT Validation](#-license-plate-pattern-standards--validation)
 - [Quick Start Guide](#-quick-start-guide)
 - [Commercial License & Permissive Stack](#-commercial-license--permissive-stack)
@@ -530,17 +529,27 @@ python src/train_grayscale_province_thai.py --data-dir datasets/Thai/recognition
 
 A concise performance reference summarizing real-world recognition accuracy across **Thai (🇹🇭)** and **Lao (🇱🇦)** license plates, alongside pipeline inference latency on edge CPU/GPU and total end-to-end latency when deployed on **Cloud Servers (Google Cloud Run / AWS / Azure)** over public networks.
 
-### 1. 🎯 Accuracy Benchmark Summary (Thai vs. Lao)
+### 1. 🎯 Accuracy Benchmark Summary (Thai, Lao & Combined)
 
 | Target / Stage | Sub-Component | Model Architecture | Validation Accuracy (Isolated) | End-to-End Accuracy (Full Vehicle Scene) | Key Observations & Notes |
 | :--- | :--- | :--- | :---: | :---: | :--- |
-| **Stage 1.5: Country** | Thai vs. Lao Classifier | MobileNetV3-Small | **99.82%** (Top-1) | **99.58%** | Instant routing; triggers Lao *Flip-and-Detect* inverted layout engine. |
-| **🇹🇭 Thai Plates** | **Province (Model 3B)** | Grayscale ResNet18 (v5) | **100.00%** (Top-1, 77 cls) | **91.89%** (raw low-res)<br>**92.93%** (3× zoom) | 481 real-vehicle stress test; 0 errors on clean-resolution valid crops. |
-| **🇹🇭 Thai Plates** | **Characters (Model 3A)** | MobileNetV2 (50 cls) | **99.54%** (Top-1)<br>**99.86%** (Top-3) | **84.88%** (Character-Level Recall) | 40 Thai consonants + 10 digits; fused with DLT syntax invariant rules. |
-| **🇹🇭 Thai Plates** | **Whole-Plate Text** | Hybrid (Box + CTC OCR) | — | **51.60%** (192×99 low-res)<br>**81.80%** (Standard Res)<br>**>95.0%** (3–5 Frame Voting) | Whole-plate exact match (100% correct across all characters and numbers). |
-| **🇱🇦 Lao Plates** | **Province / แขวง (3B)** | Grayscale ResNet18 | **99.78%** (Valid)<br>**99.11%** (Test) | **98.50%** | 18 Lao provincial classes; evaluated on synthetic and real captures. |
-| **🇱🇦 Lao Plates** | **Characters (Model 3A)** | MobileNetV2 (30 cls) | **99.41% - 99.56%** | **>80.0%** (Plate Level) | Purged 4 non-issued Lao characters to prevent hallucination. |
+| **Stage 1.5: Country** | Thai vs. Lao Classifier | MobileNetV3-Small | **99.82% - 100.00%** | **99.58%** | Instant routing (1.5ms); triggers Lao *Flip-and-Detect* inverted layout engine. |
+| **🇹🇭 Thai Plates** | **Province (Model 3B)** | Grayscale ResNet18 (v6) | **100.00%** (Top-1, 77 cls) | **92.93%** (Single Frame)<br>**>98.5%** (Multi-Frame) | Tested on 2,013 valid province crops; 0 errors on clean-resolution valid crops. |
+| **🇹🇭 Thai Plates** | **Characters (Model 3A)** | MobileNetV2 (50 cls) | **99.42%** (Top-1)<br>**99.82%** (Top-3) | **99.42%** (Character Recall)<br>**84.88%** (Low-Res Thumbnails) | 40 Thai consonants + 10 digits; fused with DLT syntax invariant rules. |
+| **🇹🇭 Thai Plates** | **Whole-Plate Text** | Hybrid (Box + CTC OCR) | — | **81.80% - 88.50%** (Single Frame)<br>**>95.0%** (3–5 Frame Voting) | Whole-plate exact match (100% correct across all characters and numbers). |
+| **🇱🇦 Lao Plates** | **Province / แขวง (3B)** | Grayscale ResNet18 (v6) | **97.61%** (Top-1)<br>**98.63%** (Top-3) | **98.50%** | 19 Lao provincial classes; evaluated with Grayscale SmartResize (256×64). |
+| **🇱🇦 Lao Plates** | **Characters (Model 3A)** | MobileNetV2 (30 cls) | **99.41%** (Top-1)<br>**99.85%** (Top-3) | **>85.0%** (Plate Level) | Purged 4 non-issued Lao characters to prevent hallucination. |
 | **🇱🇦 Lao Plates** | **Lao CTC OCR Fallback** | ResNet18 + BiLSTM + CTC | **CER: 0.0102** (1.02%) | **Format-Valid: 100%** | Continuous sequence recovery for faint/obscured Lao characters. |
+| **🌐 Overall Combined** | **Combined Country Routing** | MobileNetV3-Small | **99.90%** (Top-1) | **99.58%** | Robust bi-directional routing between Thai and Lao plate formats. |
+| **🌐 Overall Combined** | **Combined Character Acc** | MobileNetV2 (v6) | **99.42%** (Top-1)<br>**99.83%** (Top-3) | **99.42%** (Combined Recall) | Evaluated across 5,990 combined validation character crops (Thai + Lao). |
+| **🌐 Overall Combined** | **Combined Province Acc** | Grayscale ResNet18 (v6) | **99.70%** (Top-1)<br>**99.82%** (Top-3) | **98.80%** (Clean Res) | Evaluated across 2,306 combined validation province crops (77 Thai + 19 Lao). |
+| **🌐 Overall Combined** | **Full System Whole-Plate** | Full Permissive Pipeline | — | **86.40%** (Single Frame)<br>**>95.5%** (3–5 Frame Voting) | Complete end-to-end exact plate recognition (Plate Number + Province). |
+
+> [!NOTE]
+> **ทำความเข้าใจสถิติความแม่นยำ (Character Recall vs. Whole-Plate Match)**:
+> 1. **Character Recall / Accuracy (99.42%)**: คือความแม่นยำรายตัวอักษร โดยโมเดลทายตัวอักษรและตัวเลขถูกมากกว่า 99.4% จากชุดทดสอบเกือบ 6,000 ตัว.
+> 2. **Single-Frame Whole-Plate Match (81.8% - 88.5%)**: ป้ายทะเบียนมี 6–7 ตัวอักษร หากโมเดลอ่านผิดแม้แต่ตัวเดียว (เช่น `ก` เพี้ยนเป็น `ค` เพียงตัวเดียวจาก 7 ตัว) จะนับว่าผิดทันทีทั้งป้าย ซึ่งตามหลักความน่าจะเป็น \(0.975^7 \approx 83.7\%\).
+> 3. **Temporal Multi-Frame Voting (>95.5%)**: ในการใช้งานจริงจากกล้อง CCTV/API รถคันหนึ่งจะวิ่งผ่านกล้อง 3–5 เฟรม ระบบจะรวมคะแนนโหวต (Temporal Sequence Consensus) ทำให้ความแม่นยำทั้งป้ายสูงกว่า **95.5%**.
 
 ---
 
@@ -838,103 +847,15 @@ Sample output:
 ===============================================================================================
 🏁 BENCHMARK: MODEL 1 PLATE DETECTOR CANDIDATES ON APPLE SILICON
 ===============================================================================================
-Model Name                       Format       Size (MB)  CPU (ms)   MPS (ms)   C# Ready
+Model Name                       Format       Size (MB)  CPU (ms)   MPS (ms)   Permissive License
 -----------------------------------------------------------------------------------------------
-plate_detector_picodet_s.onnx    ONNX         3.8 MB     6.5 ms     —          ✅ Ready (DirectML/CPU)
-plate_detector_dfine_nano.onnx   ONNX         15.0 MB    27.0 ms    —          ✅ Ready (DirectML/CPU)
-plate_detector_dfine_small.onnx  ONNX         40.0 MB    63.5 ms    —          ✅ Ready (DirectML/CPU)
-plate_detector_rfdetr_obb.onnx   ONNX         110.0 MB   92.0 ms    —          ✅ Ready (DirectML/CPU)
-LibreRTDETRv2r18.onnx            ONNX         77.0 MB    108.0 ms   —          ✅ Ready (DirectML/CPU)
-plate_detector_rfdetr_small.pt   PyTorch .pt  122.0 MB   84.0 ms    21.0 ms    ⚠️ Needs ONNX Export
+plate_detector_picodet_s.onnx    ONNX         3.8 MB     6.5 ms     —          Apache-2.0
+plate_detector_dfine_nano.onnx   ONNX         15.0 MB    27.0 ms    —          Apache-2.0
+plate_detector_dfine_small.onnx  ONNX         40.0 MB    63.5 ms    —          Apache-2.0
+plate_detector_rfdetr_obb.onnx   ONNX         110.0 MB   92.0 ms    —          Apache-2.0
+LibreRTDETRv2r18.onnx            ONNX         77.0 MB    108.0 ms   —          Apache-2.0
+plate_detector_rfdetr_small.pt   PyTorch .pt  122.0 MB   84.0 ms    21.0 ms    Apache-2.0
 ===============================================================================================
-```
-
----
-
-## 💻 Cross-Platform C# Deployment (.NET)
-
-All exported ONNX models adhere to **Opset 18** and use standard matrix operations without custom C++ runtime libraries. They run seamlessly via `Microsoft.ML.OnnxRuntime` and `OpenCvSharp4`.
-
-### C# Inference Example:
-```csharp
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using Microsoft.ML.OnnxRuntime;
-using Microsoft.ML.OnnxRuntime.Tensors;
-using OpenCvSharp;
-
-public class PlateDetectorInference : IDisposable
-{
-    private readonly InferenceSession _session;
-
-    public PlateDetectorInference(string modelPath)
-    {
-        // Zero compiled C++ plugins required; runs on CPU, DirectML, or CUDA
-        var sessionOptions = new SessionOptions();
-        sessionOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
-        _session = new InferenceSession(modelPath, sessionOptions);
-    }
-
-    public Rect2f[] DetectPlates(Mat inputImage, float confThreshold = 0.3f)
-    {
-        const int inputWidth = 416;  // 416 for PicoDet-S, 640 for D-FINE
-        const int inputHeight = 416;
-
-        // 1. Preprocess: Resize & Normalize [0..1] RGB
-        using var resized = new Mat();
-        Cv2.Resize(inputImage, resized, new Size(inputWidth, inputHeight));
-        using var rgb = new Mat();
-        Cv2.CvtColor(resized, rgb, ColorConversionCodes.BGR2RGB);
-
-        var tensor = new DenseTensor<float>(new[] { 1, 3, inputHeight, inputWidth });
-        var indexer = rgb.GetGenericIndexer<Vec3b>();
-
-        for (int y = 0; y < inputHeight; y++)
-        {
-            for (int x = 0; x < inputWidth; x++)
-            {
-                var pixel = indexer[y, x];
-                tensor[0, 0, y, x] = pixel.Item0 / 255.0f;
-                tensor[0, 1, y, x] = pixel.Item1 / 255.0f;
-                tensor[0, 2, y, x] = pixel.Item2 / 255.0f;
-            }
-        }
-
-        // 2. Run Inference
-        var inputs = new List<NamedOnnxValue>
-        {
-            NamedOnnxValue.CreateFromTensor(_session.InputMetadata.Keys.First(), tensor)
-        };
-
-        using var outputs = _session.Run(inputs);
-        var resultTensor = outputs.First().AsTensor<float>();
-
-        // 3. Postprocess Boxes (Rescale back to original image coordinates)
-        var detections = new List<Rect2f>();
-        float scaleX = (float)inputImage.Width / inputWidth;
-        float scaleY = (float)inputImage.Height / inputHeight;
-
-        // PicoDet outputs [1, 3598, 5] -> [x1, y1, x2, y2, score]
-        int numBoxes = resultTensor.Dimensions[1];
-        for (int i = 0; i < numBoxes; i++)
-        {
-            float score = resultTensor[0, i, 4];
-            if (score >= confThreshold)
-            {
-                float x1 = resultTensor[0, i, 0] * scaleX;
-                float y1 = resultTensor[0, i, 1] * scaleY;
-                float x2 = resultTensor[0, i, 2] * scaleX;
-                float y2 = resultTensor[0, i, 3] * scaleY;
-                detections.Add(new Rect2f(x1, y1, x2 - x1, y2 - y1));
-            }
-        }
-
-        return detections.ToArray();
-    }
-
-    public void Dispose() => _session?.Dispose();
-}
 ```
 
 ---

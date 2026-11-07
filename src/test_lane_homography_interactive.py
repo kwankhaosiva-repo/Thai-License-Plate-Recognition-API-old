@@ -74,13 +74,15 @@ class InteractiveLaneTester:
         self.calib: Optional[RoadCalibration] = self._load_calibration()
         self.current_img_calib_path: Optional[Path] = None
 
-        # Stage 2: Free-License AI Wheel / Tire Detector (MIT License)
-        wheel_weights = self.weights_dir / "truck_wheel_detector_mit.pt"
+        # Stage 2: Free-License AI Wheel / Front Cab Detector (v6 / MIT License)
+        wheel_weights = self.weights_dir / "front_wheel_detector_v6.pt"
+        if not wheel_weights.exists():
+            wheel_weights = self.weights_dir / "truck_wheel_detector_mit.pt"
         if wheel_weights.exists():
             try:
                 from src.lane_engine import TruckWheelDetector
                 self.tire_detector = TruckWheelDetector(wheel_weights, conf_threshold=0.10, device=self.device)
-                print(f"🛞 Loaded Stage 2 Wheel Detector: {wheel_weights.name} (MIT License)")
+                print(f"🛞 Loaded Stage 2 Wheel & Cab Detector: {wheel_weights.name}")
             except Exception as e:
                 print(f"⚠️ Could not load wheel detector: {e}")
                 self.tire_detector = None
@@ -101,6 +103,9 @@ class InteractiveLaneTester:
         self.temp_points: List[Point2D] = []
         self.dragging_corner_idx: Optional[int] = None
         self.mouse_cursor_pos: Optional[Tuple[int, int]] = None
+
+        # Display Mode: 0=ALL BBoxes, 1=FINAL ONLY (2 Wheel Dots + Lanes), 2=Cab Face + Wheels
+        self.display_mode: int = 1
 
     def _load_detector(self, size: str) -> FreeLicenseVehicleDetector:
         target_name = "LibreDFINEn.pt" if size == "nano" else "LibreDFINEs.pt"
@@ -229,10 +234,38 @@ class InteractiveLaneTester:
             self.calib_backup = None
         print(f"\n🔧 ENTERING LANE CORRIDOR CALIBRATION ({w}x{h}):")
         print("  - Drag any of the 4 yellow corners to align with road lane lines")
+        print("  - Press [S] to auto-square / level depth (removes axle slant & shear distortion)")
         print("  - Press [ENTER] or [C] to save & exit")
         print("  - Press [ESC] to cancel changes (revert)")
         print("  - Press [R] to redraw 4 fresh corners")
         print("  - Press [D] for camera golden defaults (35m corridor)\n")
+
+    def auto_square_calibration(self) -> None:
+        """Auto-align transverse depths (G1-G2 far, G4-G3 near) to eliminate homography shear."""
+        if not self.calib or not self.calib.ground_quad or len(self.calib.ground_quad) != 4:
+            print("⚠️ Calibration corridor has not been configured yet.")
+            return
+
+        q = self.calib.ground_quad
+        # Level far depth baseline (G1 Far-Left, G2 Far-Right)
+        # Level near depth baseline (G4 Near-Left, G3 Near-Right)
+        y_far = float((q[0].y + q[1].y) / 2.0)
+        y_near = float((q[3].y + q[2].y) / 2.0)
+
+        new_quad = [
+            Point2D(x=q[0].x, y=y_far),
+            Point2D(x=q[1].x, y=y_far),
+            Point2D(x=q[2].x, y=y_near),
+            Point2D(x=q[3].x, y=y_near),
+        ]
+        self.calib.ground_quad = new_quad
+        self.calib.lanes = {
+            "left": [new_quad[0], new_quad[3]],
+            "right": [new_quad[1], new_quad[2]],
+        }
+        self.calib.compute_homography()
+        self.just_calibrated = True
+        print(f"📐 Auto-squared lane corridor: Far Y leveled at {y_far:.1f}, Near Y leveled at {y_near:.1f}. Perspective shear removed!")
 
     def finish_calibration(self) -> None:
         if self.calib_mode:
@@ -442,15 +475,16 @@ class InteractiveLaneTester:
         h, w = img.shape[:2]
         active_calib = self.calib.rescale_to_image(w, h)
 
-        # Ground Quad
-        quad_pts = np.int32([p.to_tuple() for p in active_calib.ground_quad])
-        cv2.polylines(img, [quad_pts], isClosed=True, color=(255, 200, 0), thickness=2)
-        for i, pt in enumerate(active_calib.ground_quad):
-            cv2.circle(img, pt.to_tuple(), 5, (255, 255, 0), -1)
-            cv2.putText(img, f"G{i+1}", (pt.to_tuple()[0] + 6, pt.to_tuple()[1] - 6),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+        # Ground Quad (Hidden in Mode 1: FINAL ONLY)
+        if getattr(self, "display_mode", 0) != 1:
+            quad_pts = np.int32([p.to_tuple() for p in active_calib.ground_quad])
+            cv2.polylines(img, [quad_pts], isClosed=True, color=(255, 200, 0), thickness=2)
+            for i, pt in enumerate(active_calib.ground_quad):
+                cv2.circle(img, pt.to_tuple(), 5, (255, 255, 0), -1)
+                cv2.putText(img, f"G{i+1}", (pt.to_tuple()[0] + 6, pt.to_tuple()[1] - 6),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
 
-        # Lane Boundaries
+        # Lane Boundaries (Shown in all modes!)
         for lane_name, color in [("left", (0, 0, 255)), ("right", (0, 0, 255))]:
             pts = active_calib.lanes.get(lane_name)
             if pts and len(pts) >= 2:
@@ -470,13 +504,21 @@ class InteractiveLaneTester:
 
         if n_pts == 0 and self.calib and len(self.calib.ground_quad) == 4:
             prompt = "CALIBRATION MODE: Drag yellow corners to align with road lane lines"
-            hint = "Tip: Press [ENTER] or [C] to save & exit | [ESC] to cancel | [D] golden defaults | [R] redraw"
+            hint = "Tip: [ENTER]/[C] save & exit | [S] Auto-Level (removes axle tilt) | [D] golden defaults | [R] redraw"
         else:
             prompt = f"LANE CORRIDOR SETUP: Click 4 Corners [{n_pts}/4]"
-            hint = "Click: 1.Far-Left -> 2.Far-Right -> 3.Near-Right -> 4.Near-Left. Auto-aligns BEV map!"
+            hint = "Click: 1.Far-Left -> 2.Far-Right -> 3.Near-Right -> 4.Near-Left. [S] to Auto-Level depth."
 
         cv2.putText(img, prompt, (25, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (0, 255, 255), 2)
         cv2.putText(img, hint, (25, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (200, 200, 200), 1)
+
+        # Draw Level Alignment Guides when 4 corners exist
+        if len(pts_to_draw) == 4:
+            y_far = int(round((pts_to_draw[0].y + pts_to_draw[1].y) / 2.0))
+            y_near = int(round((pts_to_draw[3].y + pts_to_draw[2].y) / 2.0))
+            # Faint depth level guides
+            cv2.line(img, (0, y_far), (img.shape[1], y_far), (100, 100, 100), 1, cv2.LINE_AA)
+            cv2.line(img, (0, y_near), (img.shape[1], y_near), (100, 100, 100), 1, cv2.LINE_AA)
 
         # Draw Corridor Polygon if 2 or more points exist (prevent crossing into an X)
         if len(pts_to_draw) > 1:
@@ -523,22 +565,22 @@ class InteractiveLaneTester:
         is_viol = res.assessment.is_straddling
         box_color = (0, 0, 255) if is_viol else (0, 255, 0)
 
-        # Bounding box
-        cv2.rectangle(img, (bbox[0], bbox[1]), (bbox[2], bbox[3]), box_color, 2)
+        # Outer vehicle bounding box (Mode 0: ALL only)
+        if self.display_mode == 0:
+            cv2.rectangle(img, (bbox[0], bbox[1]), (bbox[2], bbox[3]), box_color, 2)
 
-        # Wheel ground contact baseline and points
-        contact = res.ground_contact
-        p_left = contact.left_wheel.to_tuple()
-        p_right = contact.right_wheel.to_tuple()
+        # Draw front cab face box if available (Modes 0 and 2)
+        if self.display_mode in (0, 2) and getattr(res.ground_contact, "cab_face", None) is not None:
+            cb = [int(v) for v in res.ground_contact.cab_face]
+            cv2.rectangle(img, (cb[0], cb[1]), (cb[2], cb[3]), (0, 255, 128), 2)
+            cv2.putText(img, "Cab Face (No Mirror)", (cb[0], max(12, cb[1] - 4)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 128), 1)
 
-        # Green or red baseline along wheels
-        cv2.line(img, p_left, p_right, (0, 255, 255), 2)
-        cv2.circle(img, p_left, 6, box_color, -1)
-        cv2.circle(img, p_right, 6, box_color, -1)
-
-        # Draw detected AI front steer tires only (Cyan boxes + contact dots)
-        if getattr(res, "detected_tires", None):
+        # Draw detected AI front steer tire bounding boxes (Mode 0: ALL only)
+        if self.display_mode == 0 and getattr(res, "detected_tires", None):
             for t in res.detected_tires:
+                if t.get("class_name") == "cab_face":
+                    continue
                 tb = [int(v) for v in t["bbox"]]
                 t_color = (255, 255, 0)
                 cv2.rectangle(img, (tb[0], tb[1]), (tb[2], tb[3]), t_color, 2)
@@ -546,16 +588,32 @@ class InteractiveLaneTester:
                 label = f"Front Tire {t['conf']:.2f}"
                 cv2.putText(img, label, (tb[0], max(10, tb[1] - 3)), cv2.FONT_HERSHEY_SIMPLEX, 0.40, t_color, 1)
 
-        # Status Badge
-        badge_text = f"{res.class_name} {res.confidence:.2f} | {res.assessment.status_label}"
-        if is_viol:
-            badge_text += f" ({res.assessment.straddle_depth_cm:.1f}cm)"
+        # Wheel ground contact baseline and 2 Contact Dots (Shown in ALL modes!)
+        contact = res.ground_contact
+        p_left = contact.left_wheel.to_tuple()
+        p_right = contact.right_wheel.to_tuple()
 
-        (tw, th), _ = cv2.getTextSize(badge_text, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
-        by1 = max(0, bbox[1] - th - 8)
-        cv2.rectangle(img, (bbox[0], by1), (bbox[0] + tw + 10, by1 + th + 8), box_color, -1)
-        cv2.putText(img, badge_text, (bbox[0] + 5, by1 + th + 3),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255) if is_viol else (0, 0, 0), 2)
+        cv2.line(img, p_left, p_right, (0, 255, 255), 2)
+        dot_color_l = (0, 0, 255) if res.assessment.violation_side == "LEFT" else (0, 255, 255)
+        dot_color_r = (0, 0, 255) if res.assessment.violation_side == "RIGHT" else (0, 255, 255)
+        cv2.circle(img, p_left, 7, dot_color_l, -1)
+        cv2.circle(img, p_right, 7, dot_color_r, -1)
+        cv2.circle(img, p_left, 8, (0, 0, 0), 1)
+        cv2.circle(img, p_right, 8, (0, 0, 0), 1)
+
+        # Status Badge (Hidden in Mode 1: FINAL ONLY)
+        if self.display_mode != 1:
+            badge_text = f"{res.class_name} {res.confidence:.2f} | {res.assessment.status_label}"
+            if is_viol:
+                badge_text += f" ({res.assessment.straddle_depth_cm:.1f}cm)"
+
+            (tw, th), _ = cv2.getTextSize(badge_text, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
+            badge_y = bbox[1] if self.display_mode == 0 else min(p_left[1], p_right[1]) - 16
+            by1 = max(0, badge_y - th - 8)
+            bx1 = bbox[0] if self.display_mode == 0 else min(p_left[0], p_right[0])
+            cv2.rectangle(img, (bx1, by1), (bx1 + tw + 10, by1 + th + 8), box_color, -1)
+            cv2.putText(img, badge_text, (bx1 + 5, by1 + th + 3),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255) if is_viol else (0, 0, 0), 2)
 
     def _render_bev_panel(self, frame_bgr: np.ndarray, results: List[VehicleLaneResult]) -> np.ndarray:
         bev_w, bev_h = 380, 720
@@ -651,10 +709,12 @@ class InteractiveLaneTester:
         left_str = f"{title_info} | LibreDFINE-{self.model_size.upper()} ({latency_ms:.0f}ms)"
         cv2.putText(header, left_str, (15, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 1)
 
-        # Center/Dynamic: Confidence & Target Badge
+        # Center/Dynamic: Confidence, View Mode & Target Badge
         target_mode_str = "NEAREST [T]" if getattr(self, "target_nearest", True) else "ALL [T]"
         tire_ai_str = "Tire-AI: ON" if getattr(self, "tire_detector", None) is not None else "Tire-AI: OFF"
-        conf_str = f"Conf: {self.conf_thresh:.2f} [Keys: +/-] | Target: {target_mode_str} | {tire_ai_str}"
+        disp_mode_names = ["ALL [V]", "FINAL ONLY [V]", "CAB+WHEEL [V]"]
+        disp_str = disp_mode_names[getattr(self, "display_mode", 0)]
+        conf_str = f"Conf: {self.conf_thresh:.2f} [+/-] | {disp_str} | {target_mode_str}"
         (lw, _), _ = cv2.getTextSize(left_str, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 1)
         conf_x = max(lw + 20, img.shape[1] // 2 - 180)
         cv2.putText(header, conf_str, (conf_x, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 255), 1)
@@ -687,12 +747,16 @@ def is_video_file(path_str: str) -> bool:
 
 def main():
     parser = argparse.ArgumentParser(description="Interactive Lane Straddling Detection via Homography (BEV)")
-    parser.add_argument("input_path", type=str, nargs="?", default="datasets/lane_test_samples",
+    parser.add_argument("input_path", type=str, nargs="?", default=None,
                         help="Folder of images, single image, or video file to test")
+    parser.add_argument("--input", "-i", dest="input_flag", type=str, default=None,
+                        help="Folder of images, single image, or video file to test (alias for input_path)")
     parser.add_argument("--model", type=str, choices=["nano", "small"], default="nano",
                         help="Model size: 'nano' (fastest) or 'small' (higher accuracy)")
     parser.add_argument("--conf", type=float, default=0.35, help="Confidence threshold for vehicle detection (default: 0.35)")
-    parser.add_argument("--device", type=str, default="cpu", help="Device to run on ('cpu' or 'mps')")
+    import torch
+    default_device = "mps" if (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()) else "cpu"
+    parser.add_argument("--device", type=str, default=default_device, help="Device to run on ('cpu' or 'mps')")
     parser.add_argument("--calib", type=str, default="lane_calibration.json", help="Path to lane calibration JSON")
     parser.add_argument("--save-all", action="store_true", help="Non-interactive batch mode: process and save snapshots")
     parser.add_argument("--out-dir", type=str, default=None, help="Directory to save output snapshots")
@@ -711,7 +775,12 @@ def main():
         device=args.device,
     )
 
-    input_str = args.input_path
+    input_str = args.input_flag or args.input_path or "datasets/lane_test_samples"
+    # Auto-repair paths broken by unquoted spaces in terminal arguments
+    if args.input_flag and args.input_path:
+        joined_path = f"{args.input_flag} {args.input_path}"
+        if Path(joined_path).exists():
+            input_str = joined_path
 
     # --- VIDEO MODE ---
     if is_video_file(input_str):
@@ -802,6 +871,8 @@ def main():
     print("  [D]              : Apply Camera 01 Default Golden Calibration")
     print("  [R]              : Reset calibration")
     print("  [+] / [-]        : Increase / Decrease Confidence Threshold (0.05 steps)")
+    print("  [V]              : Toggle Display Mode (ALL BBoxes -> FINAL ONLY (2 Wheel Dots + Lanes) -> Cab Face)")
+    print("  [T]              : Toggle Vehicle Target (NEAREST ONLY <-> ALL VEHICLES)")
     print("  [M]              : Toggle Model (Nano <-> Small)")
     print("  [S]              : Save snapshot")
     print("  [Q] / [ESC]      : Quit\n")
@@ -857,6 +928,9 @@ def main():
                 elif key in (ord("d"), ord("D")):
                     tester.apply_camera_default_calibration()
                     need_reprocess = True
+                elif key in (ord("s"), ord("S")):
+                    tester.auto_square_calibration()
+                    need_reprocess = True
                 continue
 
             # Standard Navigation Mode key handling
@@ -876,6 +950,15 @@ def main():
                 need_reprocess = True
             elif key in (ord("r"), ord("R")):
                 tester.reset_calibration_in_progress()
+                need_reprocess = True
+            elif key in (ord("v"), ord("V")):
+                tester.display_mode = (tester.display_mode + 1) % 3
+                mode_names = [
+                    "ALL BBoxes (Full Vehicle + Cab Face + Tires)",
+                    "FINAL ONLY (2 Wheel Dots + Baseline + Lanes)",
+                    "Cab Face + 2 Wheel Dots + Lanes",
+                ]
+                print(f"👁️ Switched Display Mode: [{tester.display_mode}] {mode_names[tester.display_mode]}")
                 need_reprocess = True
             elif key in (ord("t"), ord("T")):
                 tester.target_nearest = not getattr(tester, "target_nearest", True)
