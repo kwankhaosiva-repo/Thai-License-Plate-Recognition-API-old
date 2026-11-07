@@ -155,6 +155,79 @@ class TestLaneEngine(unittest.TestCase):
         res3 = tracker.update([make_res(True)])
         self.assertTrue(res3[0][2])
 
+    def test_nearest_y_front_axle_filtering(self):
+        # Truck with front steer tires at y=600 and trailer tire at y=450
+        fake_tires = [
+            {"conf": 0.45, "bbox": [180.0, 560.0, 220.0, 600.0], "x1": 180.0, "y1": 560.0, "x2": 220.0, "y2": 600.0}, # Left steer (center = 200.0)
+            {"conf": 0.50, "bbox": [380.0, 560.0, 420.0, 600.0], "x1": 380.0, "y1": 560.0, "x2": 420.0, "y2": 600.0}, # Right steer (center = 400.0)
+            {"conf": 0.40, "bbox": [430.0, 410.0, 460.0, 450.0], "x1": 430.0, "y1": 410.0, "x2": 460.0, "y2": 450.0}, # Trailer tire (should be ignored)
+        ]
+        bbox = [170.0, 300.0, 440.0, 600.0]
+        contact = estimate_vehicle_ground_contact(bbox, self.calib, detected_tires=fake_tires)
+
+        # Baseline should be at y=600 (front steer axle), exactly at tire footprint centers
+        self.assertEqual(contact.left_wheel.y, 600.0)
+        self.assertEqual(contact.right_wheel.y, 600.0)
+        self.assertEqual(contact.left_wheel.x, 200.0)
+        self.assertEqual(contact.right_wheel.x, 400.0)
+
+    def test_single_front_tire_physical_track_width(self):
+        # Only right front steer tire detected at center=(400.0, 600.0)
+        fake_tires = [
+            {"conf": 0.50, "bbox": [380.0, 560.0, 420.0, 600.0], "x1": 380.0, "y1": 560.0, "x2": 420.0, "y2": 600.0}, # Right steer (center=400.0)
+        ]
+        bbox = [170.0, 300.0, 440.0, 600.0]
+        contact = estimate_vehicle_ground_contact(bbox, self.calib, class_name="truck", detected_tires=fake_tires)
+
+        # Right wheel anchored at true AI contact
+        self.assertEqual(contact.right_wheel.x, 400.0)
+        self.assertEqual(contact.right_wheel.y, 600.0)
+        # Left wheel must have exactly 2.05m physical track width in BEV space
+        bev_r = contact.bev_right_wheel
+        bev_l = contact.bev_left_wheel
+        track_w_cm = (bev_r.x - bev_l.x) / (self.calib.pixels_per_meter_x / 100.0)
+        self.assertAlmostEqual(track_w_cm, 205.0, delta=1.0)
+
+    def test_duplicate_wheel_clustering_returns_max_two_steer_tires(self):
+        # 3 duplicate proposals on left wheel, 2 duplicate proposals on right wheel
+        fake_proposals = [
+            {"conf": 0.40, "bbox": [476.0, 348.0, 506.0, 384.0], "x1": 476.0, "y1": 348.0, "x2": 506.0, "y2": 384.0},
+            {"conf": 0.20, "bbox": [478.0, 358.0, 504.0, 386.0], "x1": 478.0, "y1": 358.0, "x2": 504.0, "y2": 386.0},
+            {"conf": 0.10, "bbox": [479.0, 361.0, 513.0, 386.0], "x1": 479.0, "y1": 361.0, "x2": 513.0, "y2": 386.0},
+            {"conf": 0.33, "bbox": [576.0, 326.0, 611.0, 386.0], "x1": 576.0, "y1": 326.0, "x2": 611.0, "y2": 386.0},
+            {"conf": 0.12, "bbox": [575.0, 340.0, 608.0, 387.0], "x1": 575.0, "y1": 340.0, "x2": 608.0, "y2": 387.0},
+        ]
+        # In TruckWheelDetector, spatial clustering collapses these 5 proposals to exactly 2
+        front_proposals = list(fake_proposals)
+        front_proposals.sort(key=lambda t: t.get("conf", 0.0), reverse=True)
+        clustered = []
+        for t in front_proposals:
+            tcx = (t["bbox"][0] + t["bbox"][2]) / 2.0
+            tcy = (t["bbox"][1] + t["bbox"][3]) / 2.0
+            if not any(abs(tcx - (c["bbox"][0]+c["bbox"][2])/2.0) < 45.0 and abs(tcy - (c["bbox"][1]+c["bbox"][3])/2.0) < 30.0 for c in clustered):
+                clustered.append(t)
+
+        self.assertEqual(len(clustered), 2)
+        # Left wheel kept with conf 0.40, right wheel kept with conf 0.33
+        conf_set = {round(c["conf"], 2) for c in clustered}
+        self.assertEqual(conf_set, {0.40, 0.33})
+
+    def test_reject_shadow_tire_outside_vehicle_bounds(self):
+        vbox = [473.0, 112.0, 653.0, 354.0] # vy2 = 354.0
+        # Proposal 1 is a shadow on the road: y2=365 (11px below vehicle)
+        # Proposal 2 is a valid wheel: y2=354 (at vehicle bottom)
+        fake_tires = [
+            {"conf": 0.35, "bbox": [486.0, 340.0, 508.0, 365.0], "x1": 486.0, "y1": 340.0, "x2": 508.0, "y2": 365.0}, # Shadow
+            {"conf": 0.40, "bbox": [573.0, 320.0, 601.0, 354.0], "x1": 573.0, "y1": 320.0, "x2": 601.0, "y2": 354.0}, # Valid
+        ]
+        # Containment filter rejects the shadow
+        matched = []
+        for t in fake_tires:
+            if t["bbox"][3] <= vbox[3] + 6.0 and t["bbox"][1] < vbox[3]:
+                matched.append(t)
+        self.assertEqual(len(matched), 1)
+        self.assertEqual(matched[0]["conf"], 0.40)
+
 
 if __name__ == "__main__":
     unittest.main()

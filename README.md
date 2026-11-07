@@ -23,6 +23,7 @@ The entire pipeline is built with **100% commercially permissive architectures (
 - [Google Cloud Platform Integration (Firestore & BigQuery)](#-google-cloud-platform-integration-firestore--bigquery)
 - [Training Pipeline](#-unified-candidate-training-pipeline)
 - [V2 Recognition Retrain Pipeline](#-v2-recognition-retrain-pipeline-trainserve-distribution-match--leak-free-split)
+- [Multi-Country LPR Accuracy & Cloud Latency Summary](#-multi-country-lpr-accuracy--cloud-latency-summary)
 - [Current Accuracy & Full Retrain Plan](#-current-accuracy-snapshot--full-retrain-plan-as-of-2026-09-26)
 - [Benchmarking Suite](#-automated-benchmarking-suite)
 - [Cross-Platform C# (.NET) Integration](#-cross-platform-c-deployment-net)
@@ -522,6 +523,71 @@ python src/train_grayscale_province_thai.py --data-dir datasets/Thai/recognition
 > `--tag v2` (writes `character_classifier_v2.pth` / `province_model_grayscale_thai_v2.pth`)
 > or an explicit `--save-name`. Combined with `--data-dir` you can train a new
 > variant on any split root while keeping the production weights untouched.
+
+---
+
+## 📊 Multi-Country LPR Accuracy & Cloud Latency Summary
+
+A concise performance reference summarizing real-world recognition accuracy across **Thai (🇹🇭)** and **Lao (🇱🇦)** license plates, alongside pipeline inference latency on edge CPU/GPU and total end-to-end latency when deployed on **Cloud Servers (Google Cloud Run / AWS / Azure)** over public networks.
+
+### 1. 🎯 Accuracy Benchmark Summary (Thai vs. Lao)
+
+| Target / Stage | Sub-Component | Model Architecture | Validation Accuracy (Isolated) | End-to-End Accuracy (Full Vehicle Scene) | Key Observations & Notes |
+| :--- | :--- | :--- | :---: | :---: | :--- |
+| **Stage 1.5: Country** | Thai vs. Lao Classifier | MobileNetV3-Small | **99.82%** (Top-1) | **99.58%** | Instant routing; triggers Lao *Flip-and-Detect* inverted layout engine. |
+| **🇹🇭 Thai Plates** | **Province (Model 3B)** | Grayscale ResNet18 (v5) | **100.00%** (Top-1, 77 cls) | **91.89%** (raw low-res)<br>**92.93%** (3× zoom) | 481 real-vehicle stress test; 0 errors on clean-resolution valid crops. |
+| **🇹🇭 Thai Plates** | **Characters (Model 3A)** | MobileNetV2 (50 cls) | **99.54%** (Top-1)<br>**99.86%** (Top-3) | **84.88%** (Character-Level Recall) | 40 Thai consonants + 10 digits; fused with DLT syntax invariant rules. |
+| **🇹🇭 Thai Plates** | **Whole-Plate Text** | Hybrid (Box + CTC OCR) | — | **51.60%** (192×99 low-res)<br>**81.80%** (Standard Res)<br>**>95.0%** (3–5 Frame Voting) | Whole-plate exact match (100% correct across all characters and numbers). |
+| **🇱🇦 Lao Plates** | **Province / แขวง (3B)** | Grayscale ResNet18 | **99.78%** (Valid)<br>**99.11%** (Test) | **98.50%** | 18 Lao provincial classes; evaluated on synthetic and real captures. |
+| **🇱🇦 Lao Plates** | **Characters (Model 3A)** | MobileNetV2 (30 cls) | **99.41% - 99.56%** | **>80.0%** (Plate Level) | Purged 4 non-issued Lao characters to prevent hallucination. |
+| **🇱🇦 Lao Plates** | **Lao CTC OCR Fallback** | ResNet18 + BiLSTM + CTC | **CER: 0.0102** (1.02%) | **Format-Valid: 100%** | Continuous sequence recovery for faint/obscured Lao characters. |
+
+---
+
+### 2. ⚡ Latency Breakdown: Edge Compute vs. Cloud Server Deployment
+
+When deploying LPR APIs to cloud services (e.g. Google Cloud Run, AWS ECS/EC2, or Azure App Services), total user-perceived latency comprises **Pure Model Inference**, **Network Payload Transmission**, **Round-Trip Time (RTT)**, and **Database Serialization**.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Cam as 📷 Edge CCTV / Client
+    participant Net as 🌐 Public Network (4G / Fiber)
+    participant Cloud as ☁️ Cloud API Server (FastAPI / CPU)
+    participant DB as 🗄️ Cloud Storage (Firestore & BigQuery)
+
+    Cam->>Net: Upload 1080p Frame (~300-500 KB JPEG) [15 - 60 ms]
+    Net->>Cloud: TLS Termination & Ingestion [5 - 10 ms]
+    Note over Cloud: Stage 1: Plate Localization (~6.5 - 27 ms)<br/>Stage 1.1: 4-Corner Warp (~3 ms)<br/>Stage 1.5: Country Route (~2 ms)<br/>Stage 2: Component Split (~18 ms)<br/>Stage 3A: Char Box & Cls (~25 ms)<br/>Stage 3B: Province Cls (~8 ms)<br/>Stage 4: DLT Validation (~2.5 ms)
+    Cloud-->>DB: Async Background Write (ThreadPool: 0 ms blocking)
+    Cloud->>Net: Return JSON Response (~2 KB) [5 - 15 ms]
+    Net->>Cam: Render Bbox & Recognition on Client
+```
+
+#### Detailed Latency Breakdown Table
+
+| Pipeline Segment | Component / Operation | Edge CPU (Local) | Cloud Server (CPU) | Cloud Server (GPU/MPS) | Network & Architecture Notes |
+| :--- | :--- | :---: | :---: | :---: | :--- |
+| **Stage 1** | Plate Localization | 6.5 ms (PicoDet-S)<br>27.0 ms (D-FINE) | 8.0 ms (PicoDet-S)<br>30.0 ms (D-FINE) | ~5.0 ms (PicoDet-S)<br>~18.0 ms (D-FINE) | 100% Permissive (Apache-2.0 / MIT); native 416×416 stretch tensor. |
+| **Stage 1.1** | 4-Corner Keypoint Regressor & Warp | ~3.0 ms | ~3.5 ms | ~2.0 ms | Subpixel 1-2px physical corner rectification via `cv2.warpPerspective`. |
+| **Stage 1.5** | Country / Layout Classifier | ~2.0 ms | ~2.0 ms | ~1.0 ms | MobileNetV3-Small (99.8% Acc) routes to Thai or Lao pipeline. |
+| **Stage 2** | Component Segmentation | ~18.0 ms | ~20.0 ms | ~8.0 ms | Extracts character block and province strip crops. |
+| **Stage 3A** | Character Box Localization | ~12.0 ms | ~14.0 ms | ~6.0 ms | D-FINE-Small / PicoDet with greedy IoU NMS (1-3% residual dupes). |
+| **Stage 3A** | Character Classification & CTC OCR | ~15.0 ms | ~18.0 ms | ~7.0 ms | MobileNetV2 (50 classes Thai / 30 classes Lao) + ResNet CTC OCR. |
+| **Stage 3B** | Province Classification | ~8.0 ms | ~9.0 ms | ~4.0 ms | Grayscale ResNet18 (77 Thai provinces / 18 Lao provinces). |
+| **Stage 4** | DLT Syntax, Regex & Output Formatting | ~2.5 ms | ~2.5 ms | ~2.0 ms | Spatial gap recovery + statutory syntax guard. |
+| **Persistence** | Async Database Sync | **0.0 ms** | **0.0 ms** | **0.0 ms** | `ThreadPoolExecutor(max_workers=4)` writes to Firestore & BigQuery in background. |
+| **Subtotal** | **Pure AI Inference Latency** | **~75 – 95 ms** | **~85 – 105 ms** | **~35 – 50 ms** | Pure server-side compute without network overhead. |
+| **Network** | Image Upload (1080p JPEG ~400 KB) | — | **+15 – 35 ms** (Fiber)<br>**+40 – 80 ms** (4G/5G) | **+15 – 35 ms** (Fiber)<br>**+40 – 80 ms** (4G/5G) | Client upload bandwidth dependent (50 Mbps fiber vs. 10 Mbps mobile uplink). |
+| **Network** | Network Round-Trip Time (RTT) & TLS | — | **+15 – 30 ms** (Domestic)<br>**+45 – 70 ms** (Regional) | **+15 – 30 ms** (Domestic)<br>**+45 – 70 ms** (Regional) | Domestic Bangkok gateway vs. Singapore regional cloud host. |
+| **Network** | JSON Response Download (~2 KB) | — | **+3 – 8 ms** | **+3 – 8 ms** | Lightweight JSON metadata payload. |
+| **TOTAL** | **User-Perceived Client-to-Client Latency** | **~75 – 95 ms** | **~120 – 175 ms** (Fiber)<br>**~180 – 265 ms** (4G/5G) | **~70 – 125 ms** (Fiber)<br>**~130 – 210 ms** (4G/5G) | **Well below industry real-time SLA threshold (<500 ms) under all network profiles.** |
+
+> [!TIP]
+> **Cloud Production Architecture Takeaways:**
+> 1. **Zero-Lag Async Cloud Storage:** By leveraging `ThreadPoolExecutor` for Google Cloud Firestore (plate thumbnails) and BigQuery (analytical records), cloud storage writes introduce **0.0 ms** blocking delay to the HTTP response cycle.
+> 2. **Bandwidth Optimization for CCTV:** Sending high-quality compressed JPEG (quality 85, ~350 KB) instead of uncompressed PNG saves ~120 ms of cellular uplink time on 4G/5G smart barrier cameras.
+> 3. **Real-Time Edge Gating:** Incorporating rain/motion-gating (MOG2 background subtraction) on the edge camera drops idle frame uploads to **0 ms**, invoking the cloud API only when vehicle-sized motion is confirmed.
 
 ---
 

@@ -74,6 +74,19 @@ class InteractiveLaneTester:
         self.calib: Optional[RoadCalibration] = self._load_calibration()
         self.current_img_calib_path: Optional[Path] = None
 
+        # Stage 2: Free-License AI Wheel / Tire Detector (MIT License)
+        wheel_weights = self.weights_dir / "truck_wheel_detector_mit.pt"
+        if wheel_weights.exists():
+            try:
+                from src.lane_engine import TruckWheelDetector
+                self.tire_detector = TruckWheelDetector(wheel_weights, conf_threshold=0.10, device=self.device)
+                print(f"🛞 Loaded Stage 2 Wheel Detector: {wheel_weights.name} (MIT License)")
+            except Exception as e:
+                print(f"⚠️ Could not load wheel detector: {e}")
+                self.tire_detector = None
+        else:
+            self.tire_detector = None
+
         # Viewport scale tracking for exact mouse coordinate mapping
         self.header_height = 50
         self.last_cam_w = 1
@@ -121,7 +134,8 @@ class InteractiveLaneTester:
         self.last_orig_w = w
         self.last_orig_h = h
 
-        if self.calib is not None and self.calib.ref_width == w and self.calib.ref_height == h:
+        target_key = f"{w}x{h}"
+        if self.calib is not None and f"{self.calib.ref_width}x{self.calib.ref_height}" == target_key:
             return
 
         if self.calib_path and self.calib_path.exists():
@@ -323,14 +337,34 @@ class InteractiveLaneTester:
         h, w = frame_bgr.shape[:2]
         active_calib = self.calib.rescale_to_image(w, h) if self.calib else None
 
+        # Stage 2: Full-frame AI wheel detection (native letterboxed resolution)
+        all_frame_tires = []
+        if getattr(self, "tire_detector", None) is not None:
+            try:
+                all_frame_tires = self.tire_detector.detect_all_tires(frame_bgr, conf=0.05)
+            except Exception as e:
+                all_frame_tires = []
+
         for det in raw_detections:
             bbox = det["bbox"]
             conf = det["conf"]
             cls_id = det["cls_id"]
             name = det["name"]
 
+            # Filter tires belonging to this vehicle and tag nearest-Y front steer axle
+            detected_tires = []
+            if getattr(self, "tire_detector", None) is not None:
+                try:
+                    detected_tires = self.tire_detector.detect_tires_on_vehicle(
+                        frame_bgr, bbox, all_tires=all_frame_tires
+                    )
+                except Exception as e:
+                    detected_tires = []
+
             if active_calib is not None:
-                contact = estimate_vehicle_ground_contact(bbox, active_calib, class_name=name)
+                contact = estimate_vehicle_ground_contact(
+                    bbox, active_calib, class_name=name, detected_tires=detected_tires
+                )
                 assessment = assess_lane_straddling(contact, active_calib, tolerance_cm=5.0)
             else:
                 p_dummy = Point2D(x=float((bbox[0] + bbox[2]) / 2), y=float(bbox[3]))
@@ -351,6 +385,7 @@ class InteractiveLaneTester:
                 class_name=name,
                 ground_contact=contact,
                 assessment=assessment,
+                detected_tires=detected_tires,
             ))
 
         if getattr(self, "target_nearest", True) and len(results) > 1:
@@ -501,6 +536,16 @@ class InteractiveLaneTester:
         cv2.circle(img, p_left, 6, box_color, -1)
         cv2.circle(img, p_right, 6, box_color, -1)
 
+        # Draw detected AI front steer tires only (Cyan boxes + contact dots)
+        if getattr(res, "detected_tires", None):
+            for t in res.detected_tires:
+                tb = [int(v) for v in t["bbox"]]
+                t_color = (255, 255, 0)
+                cv2.rectangle(img, (tb[0], tb[1]), (tb[2], tb[3]), t_color, 2)
+                cv2.circle(img, (int((tb[0] + tb[2]) / 2), tb[3]), 4, (0, 255, 255), -1)
+                label = f"Front Tire {t['conf']:.2f}"
+                cv2.putText(img, label, (tb[0], max(10, tb[1] - 3)), cv2.FONT_HERSHEY_SIMPLEX, 0.40, t_color, 1)
+
         # Status Badge
         badge_text = f"{res.class_name} {res.confidence:.2f} | {res.assessment.status_label}"
         if is_viol:
@@ -608,10 +653,11 @@ class InteractiveLaneTester:
 
         # Center/Dynamic: Confidence & Target Badge
         target_mode_str = "NEAREST [T]" if getattr(self, "target_nearest", True) else "ALL [T]"
-        conf_str = f"Conf: {self.conf_thresh:.2f} [Keys: +/-] | Target: {target_mode_str}"
+        tire_ai_str = "Tire-AI: ON" if getattr(self, "tire_detector", None) is not None else "Tire-AI: OFF"
+        conf_str = f"Conf: {self.conf_thresh:.2f} [Keys: +/-] | Target: {target_mode_str} | {tire_ai_str}"
         (lw, _), _ = cv2.getTextSize(left_str, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 1)
-        conf_x = max(lw + 25, img.shape[1] // 2 - 140)
-        cv2.putText(header, conf_str, (conf_x, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 255, 255), 1)
+        conf_x = max(lw + 20, img.shape[1] // 2 - 180)
+        cv2.putText(header, conf_str, (conf_x, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 255), 1)
 
         # Right: Violations count
         viol_count = sum(1 for r in results if r.assessment.is_straddling)
