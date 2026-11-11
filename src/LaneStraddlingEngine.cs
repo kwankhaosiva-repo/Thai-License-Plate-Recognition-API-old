@@ -85,6 +85,25 @@ namespace ThaiLPR.LaneSafety
             if (GroundQuad.Count != 4)
                 throw new InvalidOperationException("GroundQuad must contain exactly 4 points.");
 
+            // Auto-square: Level far depth baseline and near depth baseline to eliminate perspective shear
+            double yFar = (GroundQuad[0].Y + GroundQuad[1].Y) / 2.0;
+            double yNear = (GroundQuad[3].Y + GroundQuad[2].Y) / 2.0;
+            GroundQuad[0] = new Point2D(GroundQuad[0].X, yFar);
+            GroundQuad[1] = new Point2D(GroundQuad[1].X, yFar);
+            GroundQuad[2] = new Point2D(GroundQuad[2].X, yNear);
+            GroundQuad[3] = new Point2D(GroundQuad[3].X, yNear);
+
+            if (LeftLane.Count >= 2)
+            {
+                LeftLane[0] = GroundQuad[0];
+                LeftLane[1] = GroundQuad[3];
+            }
+            if (RightLane.Count >= 2)
+            {
+                RightLane[0] = GroundQuad[1];
+                RightLane[1] = GroundQuad[2];
+            }
+
             var srcPts = GroundQuad.Select(p => new Point2f((float)p.X, (float)p.Y)).ToArray();
             var dstPts = new Point2f[]
             {

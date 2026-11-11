@@ -212,7 +212,8 @@ class InteractiveLaneTester:
                     print(f"  ✅ Corner #{self.dragging_corner_idx + 1} adjusted to ({cur_pt.x:.1f}, {cur_pt.y:.1f})")
                     self.dragging_corner_idx = None
                     if self.calib and len(self.calib.ground_quad) == 4:
-                        self._finalize_4pt_calibration(self.calib.ground_quad)
+                        # Auto-square immediately so Far-pair and Near-pair stay perfectly horizontal
+                        self.auto_square_calibration()
 
         except Exception as e:
             print(f"❌ Error during calibration mouse interaction: {e}")
@@ -269,12 +270,14 @@ class InteractiveLaneTester:
 
     def finish_calibration(self) -> None:
         if self.calib_mode:
+            # Auto-square / level depths automatically before saving
+            self.auto_square_calibration()
             self.calib_mode = False
             self.temp_points = []
             self.dragging_corner_idx = None
             self.save_current_calibration()
             self.just_calibrated = True
-            print("💾 Calibration saved & exited calibration mode.")
+            print("💾 Calibration auto-squared & saved! Exited calibration mode.")
 
     def cancel_calibration(self) -> None:
         if self.calib_mode:

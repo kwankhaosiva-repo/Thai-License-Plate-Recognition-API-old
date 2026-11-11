@@ -23,7 +23,7 @@ class Point2D:
         return cls(x=float(pt[0]), y=float(pt[1]))
 
 
-def canonicalize_road_quad(points: List[Point2D]) -> List[Point2D]:
+def canonicalize_road_quad(points: List[Point2D], auto_square: bool = True) -> List[Point2D]:
     """
     Takes any 4 points clicked on the road surface in camera view (in ANY user order)
     and canonicalizes them to:
@@ -33,6 +33,10 @@ def canonicalize_road_quad(points: List[Point2D]) -> List[Point2D]:
       [3] Near-Left  (Lower-left, closest to camera)
     This completely eliminates user order dependency and guarantees the BEV
     is always upright, unrotated, and aligned with traffic flow.
+
+    When auto_square=True (default), transverse depths (Y) are automatically leveled
+    so Far-Left & Far-Right have identical Y, and Near-Left & Near-Right have identical Y.
+    This guarantees 100% horizontal alignment and eliminates perspective shear distortion.
     """
     if len(points) != 4:
         return points
@@ -44,6 +48,14 @@ def canonicalize_road_quad(points: List[Point2D]) -> List[Point2D]:
     p_far_right = far_pair[1]
     p_near_left = near_pair[0]
     p_near_right = near_pair[1]
+
+    if auto_square:
+        y_far = float((p_far_left.y + p_far_right.y) / 2.0)
+        y_near = float((p_near_left.y + p_near_right.y) / 2.0)
+        p_far_left = Point2D(x=p_far_left.x, y=y_far)
+        p_far_right = Point2D(x=p_far_right.x, y=y_far)
+        p_near_left = Point2D(x=p_near_left.x, y=y_near)
+        p_near_right = Point2D(x=p_near_right.x, y=y_near)
 
     return [p_far_left, p_far_right, p_near_right, p_near_left]
 
